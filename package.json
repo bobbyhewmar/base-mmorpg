@@ -1,0 +1,28 @@
+{
+  "name": "compact-mmorpg-mvp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "preview": "vite preview",
+    "backend:dev": "cd backend && go run ./cmd/server",
+    "backend:build": "cd backend && go build ./...",
+    "e2e": "playwright test",
+    "e2e:install": "playwright install chromium",
+    "e2e:docker": "node scripts/run-e2e-docker.mjs"
+  },
+  "dependencies": {
+    "three": "^0.179.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/three": "^0.179.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.2",
+    "vitest": "^3.2.4"
+  }
+}

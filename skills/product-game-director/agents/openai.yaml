@@ -1,0 +1,4 @@
+interface:
+  display_name: "Product Game Director"
+  short_description: "Shape scope, roadmap, and product tradeoffs"
+  default_prompt: "Use $product-game-director to define scope, priorities, and milestone tradeoffs for the compact MMORPG project."

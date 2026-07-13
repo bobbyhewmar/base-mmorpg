@@ -1,0 +1,4 @@
+interface:
+  display_name: "Solution Architect"
+  short_description: "Design service boundaries and technical decisions"
+  default_prompt: "Use $solution-architect to design service boundaries, runtime flows, and key technical decisions."

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.git/
+.vs/
+.tooling/
+art/
+backend/
+docs/
+e2e/
+ops/
+skills/
+playwright-report/
+test-results/
+backend/server.exe

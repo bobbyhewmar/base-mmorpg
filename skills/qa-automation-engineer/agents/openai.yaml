@@ -1,0 +1,4 @@
+interface:
+  display_name: "QA Automation Engineer"
+  short_description: "Test rules, regressions, and live quality signals"
+  default_prompt: "Use $qa-automation-engineer to define tests, simulations, and quality gates for gameplay and operations."

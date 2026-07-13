@@ -1,0 +1,4 @@
+interface:
+  display_name: "Backend Gameplay Engineer"
+  short_description: "Implement authoritative gameplay services in Go"
+  default_prompt: "Use $backend-gameplay-engineer to implement or review authoritative gameplay APIs, combat actions, region flows, and realtime behavior in Go."

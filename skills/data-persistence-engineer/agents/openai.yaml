@@ -1,0 +1,4 @@
+interface:
+  display_name: "Data Persistence Engineer"
+  short_description: "Model PostgreSQL data, jobs, and transactions"
+  default_prompt: "Use $data-persistence-engineer to design schemas, transaction boundaries, and persistence workflows in PostgreSQL."

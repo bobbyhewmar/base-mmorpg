@@ -1,0 +1,4 @@
+interface:
+  display_name: "DevOps Infra Engineer"
+  short_description: "Run Linux production with CI, metrics, and SLOs"
+  default_prompt: "Use $devops-infra-engineer to plan Linux production, deployment, observability, and operational safeguards."

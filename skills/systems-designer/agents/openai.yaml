@@ -1,0 +1,4 @@
+interface:
+  display_name: "Systems Designer"
+  short_description: "Design rules, balance, and core gameplay loops"
+  default_prompt: "Use $systems-designer to define or critique combat, economy, progression, and city-to-field gameplay loops."

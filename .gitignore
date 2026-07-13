@@ -1,0 +1,8 @@
+.env
+node_modules/
+dist/
+.vs/
+.tooling/
+backend/server.exe
+playwright-report/
+test-results/

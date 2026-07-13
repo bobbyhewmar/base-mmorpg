@@ -1,0 +1,370 @@
+# Online Slice Now / Next / Later
+
+## Objective
+
+Keep the online backlog aligned with the code that already exists in the repository and with the execution order frozen by `TRAE_SOLO_MASTER_PROMPT.md`.
+
+This document now distinguishes between:
+
+- what is already implemented in the first authoritative online slice
+- what is partially implemented and still below public-readiness
+- what comes next without reopening authority boundaries
+
+## Current Status
+
+The first authoritative online slice is no longer only planned. It is implemented end to end and ready to advance to the next roadmap phase.
+
+### Already Implemented
+
+The repository already contains these online capabilities:
+
+- registration and login
+- pending-verification and recovery UI hooks
+- character list retrieval
+- authoritative character creation by race, base class, sex, hairstyle, hair color, face, and name
+- `POST /v1/world/enter`
+- durable gameplay-session records
+- WebSocket attach and `region_context`
+- authoritative command envelope and command lifecycle
+- revision and region-revision handling
+- movement with authoritative backend acceptance and client-side presentation
+- `select_target`
+- `use_skill`
+- runtime cooldown handling
+- mob death and respawn
+- player death and simple respawn
+- explicit respawn checkpoint persistence across disconnect and restart for the current simple death flow
+- loot spawn, pickup, contention handling, and regional loot fan-out
+- persistent inventory and equipment
+- bcrypt-backed password storage with legacy SHA-256 upgrade on successful login
+- durable account access sessions with expiry in PostgreSQL-backed mode
+- minimum rate limiting on auth and attach entry points
+- configurable HTTP CORS handling for direct cross-origin access
+- durable gameplay command dedup keyed by `session_id + command_seq`
+- browser E2E over Docker Compose for bootstrap, movement, target, skill, loot, and equip/unequip
+- derived equipment stats in `world/enter.self_state` and `delta.self.stats`
+- authoritative player HP in `self_state` and `delta.self`
+- minimum defense-based mitigation on incoming player damage
+- durable HP/MP, XP/level, and cooldown end timestamps reflected through `world/enter`, attach-time runtime hydration, and restart-safe PostgreSQL state
+- minimum structured observability with `/metrics`, request latency, command latency, attach counters, outbound message counters, reject counters by `reason_code`, active socket gauges, attached-session gauges, region occupancy, and persistence error counters
+- PostgreSQL-backed accounts, credentials, characters, sessions, position, region, and item state when `L2BG_DATABASE_URL` is configured
+- multiplayer player presence between sessions, including in-region player appear, movement fan-out, and disconnect cleanup
+- class-specific learned skills and active or passive categorization
+- authoritative skill book projection and persistent hotbar snapshot in `world/enter` and runtime deltas
+- local and online HUD hotbar rendering from authoritative loadout instead of global hardcoded skill buttons
+- classic compact HUD presentation for player frame, target frame, chat, hotbar, inventory, and skill book
+- `ALT+V` inventory window closed by default, with icon-only item grid, footer currency readout, future weight readout, and working title-bar close control
+- `ALT+K` skill-book window with `Active` and `Passive` tabs, `32x32px` icon grid, hover/focus tooltips, and active-skill drag to hotbar through authoritative `set_hotbar_state`
+- `ALT+V` inventory item drag and `ALT+C` action drag to the shortcut/action bar through authoritative `set_hotbar_state`
+- additional equipment slots beyond only weapon and chest, with authoritative equip or unequip through the online path
+- authoritative inventory stack split and merge through command deltas instead of client-owned mutation
+- deterministic item-instance attributes flowing through persistence, deltas, online read-model projection, and HUD presentation
+- authoritative vendor purchase through `buy_item`, with backend-derived pricing and merchant-range validation
+- authoritative fixed merchant exchange through `exchange_item`, with backend-derived material requirements and reward validation
+- authoritative vendor sale through `sell_item`, with backend-derived valuation and inventory-only legality
+- authoritative private warehouse deposit and withdraw through dedicated storage commands and shared item-instance container truth
+- authoritative player-to-player trade with explicit offer, accept, and decline between nearby attached sessions
+- authoritative quest persistence with reconnect-safe snapshot hydration
+- authoritative NPC interaction services for quest acceptance, quest turn-in, merchant access, and warehouse access
+- authoritative `use_item` for consumables from inventory and hotbar shortcuts
+- authoritative pets, taming, summon or dismiss, and mount or dismount in a first vertical slice with persistent ownership and backend-owned mounted move speed
+- authoritative party invites, membership, leave or kick, and compact roster projection in a first social slice
+- authoritative social chat through `send_chat_message`, with `region`, `party`, and `whisper` fan-out plus minimum persisted history
+
+### Implemented But Still Incomplete For Public Readiness
+
+Remaining work:
+
+- richer economy variants beyond the current merchant, warehouse, and trade vertical slices
+- shared XP or loot rules plus broader online social systems on top of the stable movement and economy base
+- pet combat, pet inventory, pet equipment, breeding, and broader companion AI beyond the first authoritative slice
+
+## Agora
+
+The current execution priority should follow the master prompt and the real repository state:
+
+1. broader online social and progression content on top of the new companion slice
+2. shared XP or loot rules and broader social progression on top of the stable party plus chat foundation
+3. PvP, PK, and related legality or penalty rules only after social presence remains stable
+4. deeper anti-abuse automation and live investigation ergonomics on top of the current audit surfaces
+
+### Fase A - Consolidacao Imediata
+
+Focus:
+
+- remove outdated docs
+- align backlog wording with shipped code
+- add an explicit readiness checklist for the current online slice
+- align skill guidance with the master prompt
+
+## Depois
+
+### Fase D - E2E Docker Online
+
+Focus:
+
+- automate register/login/create/enter/attach
+- automate movement, targeting, combat, loot, and equipment
+- document how to run the suite locally
+
+Status:
+
+- concluida para o fluxo online atual
+
+### Fase E - Observabilidade Minima
+
+Focus:
+
+- structured logs
+- request and command latency
+- counters by `reason_code`
+- session, attach, region, and DB error visibility
+
+Status:
+
+- concluida para o slice online atual
+
+### Fase F - Persistencia de Progressao Online
+
+Focus:
+
+- durable HP/MP
+- durable XP/level
+- durable cooldown end timestamps
+- durable death or respawn checkpoints where needed
+- restart-safe `world/enter` behavior for these fields
+
+Status:
+
+- concluida para o slice online atual
+
+### Fase G - Multiplayer Presence Real
+
+Focus:
+
+- player entity appear/disappear
+- movement updates for other players in the same region
+- presence cleanup on disconnect or close
+- region occupancy metrics
+
+Status:
+
+- concluida para o slice online atual
+
+### Fase H - Conteudo de classe/skill/hotbar
+
+Focus:
+
+- class definitions and template stats
+- active and passive skill definitions
+- learned-skill unlocking rules by class and level
+- persistent hotbar state
+- authoritative HUD skill book and hotbar projection
+- classic HUD skill-book and hotbar visuals with `32x32px` slots
+- authoritative `skill`, `item`, and `action` drag-to-hotbar persistence through `set_hotbar_state`
+
+Status:
+
+- concluida para o slice online atual
+- `use_item` autoritativo agora cobre consumiveis no inventario e na hotbar
+- actions futuras alem de `basic_attack`/`pick_up_nearby` continuam como expansao separada
+
+### Fase I - Inventario e economia ampliados
+
+Focus:
+
+- additional equipment slots
+- item attributes
+- stack split or merge
+- vendors and backend-derived pricing
+
+Status:
+
+- em andamento
+- additional slots are now implemented for gloves and boots
+- stack split and merge are now implemented with authoritative inventory deltas
+- item attributes are now implemented in a first vertical slice through deterministic starter-glove bonuses
+- vendor buy is now implemented in a first vertical slice with one plaza merchant offer and backend-derived pricing
+- vendor buy now also ships a stackable salvage-material bundle, proving the same authoritative pricing flow for stackable non-currency inventory
+- fixed merchant exchange is now implemented in a first vertical slice with one plaza recipe and authoritative material consumption
+- fixed merchant exchange now also ships a shard-driven boots recipe, proving stackable-material consumption and upgraded-equipment rewards through the same authoritative path
+- vendor sell is now implemented in a first vertical slice with one plaza merchant deriving sell value from the backend
+- private warehouse deposit and withdraw are now implemented in a first vertical slice with one plaza vaultkeeper and authoritative container transfers
+- warehouse coverage now explicitly includes partial storage and retrieval of stackable non-currency material, not only Duskgold
+- a minimum persisted economy audit trail now exists for the shipped vendor and warehouse mutations
+- minimum persisted economy auditability now exists through `action_logs` for vendor buy, exchange, and sell plus `storage_transfer_records` for warehouse deposit and withdraw
+- player-to-player trade is now implemented in a first vertical slice with explicit consent, proximity validation, and atomic inventory mutation
+- player-trade auditability now exists through paired `action_logs` rows for sender and recipient
+- economy auditability is now expanded with stable `action_type` coverage for vendor, exchange, warehouse, and trade lifecycle events plus actor/account, quantity, before/after, currency delta, and command metadata where available
+- a token-gated internal read-only investigation surface now exists through `/internal/economy/events`, `/internal/economy/warehouse-transfers`, and `/internal/economy/trades`
+
+### Fase I.5 - Server Terrain, Geodata e Pathfinding
+
+Focus:
+
+- server-owned region geodata
+- static blockers for rocks, walls, ruins, fences, cliffs, and similar obstacles
+- backend pathfinding that generates alternate routes around blockers
+- destination snapping or rejection with stable movement reason codes
+- authoritative route output through the existing command lifecycle
+- immediate browser movement prediction plus pending versus accepted routes
+- smooth blend from local prediction to authoritative server path
+
+Status:
+
+- concluida para o slice online atual
+- `dawn_plaza` ships with server-owned `geodata_version`, static blockers, deterministic pathfinding, bounded cancellation, immediate local prediction, prediction leash, and smooth browser reconciliation from pending to authoritative route
+
+Delivered implementation shape:
+
+- keep `move_intent` destination-point based
+- reject client-supplied paths, waypoints, collision results, or geodata overrides
+- start local predicted locomotion immediately after terrain click/dispatch
+- use a prediction leash to avoid large visual drift before authority arrives
+- blend predicted locomotion to the authoritative route when the server responds
+- keep route state in runtime memory, not as per-frame PostgreSQL writes
+- make the pathfinding core deterministic and testable without network or database dependencies
+- keep backend pathfinding bounded, cancelable, and non-blocking from the player's point of view
+- add integration or E2E coverage for moving around a blocker and failing against an unreachable destination
+- add client or E2E coverage proving click-to-move begins locally before the authoritative route response
+
+### Fase J - Quests e NPC services
+
+Focus:
+
+- quest definitions
+- persistent quest state
+- authoritative NPC interaction commands
+- authoritative rewards
+- client-projected dialog with backend-owned quest truth
+- quest tracker only when real quest data exists
+
+Status:
+
+- concluida para o slice online atual
+- quest state rehydrates through `world/enter.self_state.quest`
+- NPC interactions project merchant, warehouse, and wardkeeper dialog states from authoritative snapshots
+- quest accept and turn-in remain replay-safe and do not duplicate rewards
+
+### Fase K - Pets, taming e mounts
+
+Focus:
+
+- tameable monster-to-companion templates
+- persistent pet ownership
+- authoritative tame, summon, dismiss, mount, and dismount commands
+- runtime companion presence in the known-set
+- backend-owned mounted move speed
+- classic HUD and scene projection without local success fallbacks
+
+Status:
+
+- concluida para o primeiro slice online autoritativo
+- `mireling_strider` now ships as the canonical `pet_mount` template derived from a tameable `mireling`
+- pet ownership persists in `character_pets` and rehydrates through `world/enter`, attach-time runtime load, and restart-safe PostgreSQL state
+- summoned companions now appear as authoritative `pet` entities in `region_context`, `entity_appear`, `entity_disappear`, and read-model projection
+- mount state now derives player move speed from backend pet state instead of client-owned presentation logic
+- `ALT+C` now exposes authoritative `tame_target`, `summon_pet`, `dismiss_pet`, `mount_pet`, and `dismount_pet` shortcuts
+- advanced pet combat, pet inventory, pet equipment, breeding, and large companion AI remain intentionally out of scope for this slice
+
+### Fase L - Social core
+
+Focus:
+
+- authoritative party membership, invites, and leader rules
+- runtime and `world/enter` party projection
+- compact HUD party roster and invite affordances without fake local success
+- authoritative social chat for `region`, `party`, and `whisper`
+- stable notices for invite, join, decline, leave, kick, and leader transfer
+
+Status:
+
+- concluida para o primeiro slice de `party`
+- `parties`, `party_members`, and `party_invites` now persist the canonical party state with invite expiry
+- `invite_party_member`, `accept_party_invite`, `decline_party_invite`, `leave_party`, and `kick_party_member` now run through the authoritative command lifecycle and durable dedup
+- attach-time runtime load plus `world/enter.self_state.party` and `party_invites` now rehydrate roster truth and pending invites
+- the HUD now renders a compact party frame for invites, roster, leave, and leader kick actions
+- `send_chat_message` now validates `region`, `party`, and `whisper` on the backend, trims or bounds text, rate-limits burst spam, and rejects unknown channels with stable `chat.*` reason codes
+- `chat_message` now fans out only to same-region sessions, online party members, or the named whisper target plus sender, without trusting client-side scope or delivery success
+- `chat_messages` now persist minimum history in PostgreSQL or memory with actor, account, target, region, sanitized text, and command metadata for future auditability
+- the bottom-left classic chat panel now renders safe escaped text plus a compact authoritative composer instead of fake local chat success
+- dead actors remain allowed to use this first social chat slice; social chat is not blocked by combat death state in the current phase
+- `local` remains reserved for a later distinct scope and is not exposed as a separate functional channel from `region` in the current slice
+- party reward sharing now exists in the minimum authoritative form: same-party, online/attached, same-region, alive members split kill XP deterministically, and party-owned loot allows pickup only for the eligible kill-time party subset
+- party reward pickup keeps the existing persistent `character_items` path and the same first-valid-pickup-wins contention rule inside the eligible subset
+- round-robin, master loot, dice or distribution UI, clan or alliance reward sharing, siege, party finder, matchmaking, offline mail, and advanced moderation remain intentionally out of scope for this slice
+
+## Later
+
+After the online foundation becomes secure, replay-safe, and observable, the roadmap can continue into:
+
+- broader vendor and warehouse variants
+- observe and harden the first shared XP and party-loot slice before adding broader social reward rules
+- PvP and PK
+- clan
+- deeper anti-abuse automation, correlation, and alerting on top of the current audit queries
+- instances and competitive endgame systems
+
+## Current Online Slice Checklist
+
+This checklist reflects the current state of the repository rather than the original pre-implementation plan.
+
+### Implementado
+
+- [x] The client cannot enter the online world without login, character entry, and `region_context`.
+- [x] Gameplay commands use the official envelope.
+- [x] The gameplay actor is derived from the authenticated session binding.
+- [x] `ack`, `reject`, and `delta` are distinct.
+- [x] Early rejects and semantic rejects exist.
+- [x] Movement is authoritative on the server.
+- [x] `known-set` gates entity-referencing commands.
+- [x] `use_skill` is authoritative.
+- [x] Loot pickup is authoritative and atomic, including server-owned approach movement when the drop is outside immediate range.
+- [x] Inventory and equipment are durable.
+- [x] Equipment-derived stats are authoritative.
+- [x] Player HP and death state are reflected by authoritative snapshot and delta.
+- [x] Quest state, NPC interactions, and consumable use remain backend-authoritative.
+
+### Parcial
+
+- [x] Password storage meets the minimum staging bar.
+- [x] Access tokens are durable or otherwise restart-safe by documented design.
+- [x] Command replay safety is durable across retries and restart boundaries.
+- [x] Metrics and structured logging cover the main online paths.
+- [x] E2E automation proves the browser flow over Docker.
+- [x] Durable progression state covers more than inventory, equipment, and position.
+- [x] Durable death or respawn checkpoints are explicit and restart-safe.
+- [x] Other players appear, move, and disappear authoritatively in-region.
+
+### Pendente
+
+- [x] Movement is backed by server-owned terrain/geodata and pathfinding.
+- [x] Static blockers cannot be crossed by client movement.
+- [x] The server can generate alternate routes around common obstacles.
+- [x] Browser movement reconciles pending path to authoritative route.
+- [x] The local player starts moving immediately after terrain click with bounded prediction and smooth reconciliation.
+
+## Fora
+
+The following items remain explicitly out of scope for the current consolidation and hardening phases:
+
+- microservices
+- Redis in the gameplay truth path
+- event sourcing
+- reconnect sophistication
+- seamless-world expansion
+- per-frame persistence of movement
+- generic fallback between local and online authority
+- party, clan, alliance, and broad social systems before presence is stable
+- broad PvP, siege, olympiad, and other endgame systems before auth, dedup, and observability are ready
+- client-side-only collision or pathfinding as gameplay truth
+- client-supplied paths, waypoints, or collision results in gameplay commands
+- client-side retry loops for loot pickup, combat approach, or other interaction legality
+
+## Acceptance Criteria For This Backlog Update
+
+- The document no longer claims that combat, loot, inventory, and equipment are still unimplemented.
+- The document clearly separates shipped behavior from public-readiness gaps.
+- The next execution priorities match `TRAE_SOLO_MASTER_PROMPT.md`.
+- The terrain/geodata/pathfinding slice is explicit before expanding more gameplay systems on top of movement.
+- The anti-scope remains explicit.

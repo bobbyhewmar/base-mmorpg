@@ -1,0 +1,771 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+const (
+	partyNoticeKind                    = "party_notice"
+	partyNoticeStatusInviteSent        = "invite_sent"
+	partyNoticeStatusInviteReceived    = "invite_received"
+	partyNoticeStatusInviteAccepted    = "invite_accepted"
+	partyNoticeStatusInviteDeclined    = "invite_declined"
+	partyNoticeStatusInviteExpired     = "invite_expired"
+	partyNoticeStatusMemberJoined      = "member_joined"
+	partyNoticeStatusMemberLeft        = "member_left"
+	partyNoticeStatusMemberKicked      = "member_kicked"
+	partyNoticeStatusLeaderTransferred = "leader_transferred"
+	partyNoticeStatusPartyDissolved    = "party_dissolved"
+)
+
+func partyNoticeMessage(
+	status string,
+	partyID string,
+	inviteID string,
+	actorCharacterID string,
+	actorName string,
+	targetCharacterID string,
+	targetName string,
+	message string,
+) map[string]any {
+	payload := map[string]any{
+		"kind":          partyNoticeKind,
+		"emitted_at_ms": time.Now().UnixMilli(),
+		"status":        status,
+		"message":       message,
+	}
+	if partyID != "" {
+		payload["party_id"] = partyID
+	}
+	if inviteID != "" {
+		payload["invite_id"] = inviteID
+	}
+	if actorCharacterID != "" {
+		payload["actor_character_id"] = actorCharacterID
+	}
+	if actorName != "" {
+		payload["actor_name"] = actorName
+	}
+	if targetCharacterID != "" {
+		payload["target_character_id"] = targetCharacterID
+	}
+	if targetName != "" {
+		payload["target_name"] = targetName
+	}
+	return payload
+}
+
+func partyMemberSnapshotFromCharacter(character *Character, isLeader bool) CharacterPartyMemberSnapshot {
+	if character == nil {
+		return CharacterPartyMemberSnapshot{IsLeader: isLeader}
+	}
+	return CharacterPartyMemberSnapshot{
+		CharacterID: character.ID,
+		Name:        character.Name,
+		Level:       character.Level,
+		BaseClass:   character.BaseClass,
+		HP:          character.CurrentHP,
+		MP:          character.CurrentMP,
+		Online:      false,
+		IsLeader:    isLeader,
+	}
+}
+
+func (s *Server) buildPartySnapshot(ctx context.Context, party *Party) (*CharacterPartySnapshot, error) {
+	if s == nil || s.store == nil || s.store.Parties == nil || party == nil {
+		return nil, nil
+	}
+
+	members, err := s.store.Parties.ListMembers(ctx, party.ID)
+	if err != nil {
+		if errors.Is(err, errRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	snapshot := &CharacterPartySnapshot{
+		PartyID:           party.ID,
+		LeaderCharacterID: party.LeaderCharacterID,
+		Members:           make([]CharacterPartyMemberSnapshot, 0, len(members)),
+	}
+	for _, member := range members {
+		isLeader := member.CharacterID == party.LeaderCharacterID
+		if attached := s.attachedSessionByCharacterID(member.CharacterID); attached != nil && attached.runtime != nil {
+			snapshot.Members = append(snapshot.Members, attached.runtime.partyRosterMemberSnapshot(isLeader))
+			continue
+		}
+		character, err := s.store.Characters.GetByID(ctx, member.CharacterID)
+		if err != nil {
+			if errors.Is(err, errRecordNotFound) {
+				snapshot.Members = append(snapshot.Members, CharacterPartyMemberSnapshot{
+					CharacterID: member.CharacterID,
+					Name:        member.CharacterID,
+					IsLeader:    isLeader,
+				})
+				continue
+			}
+			return nil, err
+		}
+		snapshot.Members = append(snapshot.Members, partyMemberSnapshotFromCharacter(character, isLeader))
+	}
+	sortPartyMemberSnapshots(snapshot.Members)
+	return snapshot, nil
+}
+
+func (s *Server) loadCharacterPartyState(
+	ctx context.Context,
+	characterID string,
+	now time.Time,
+) (*CharacterPartySnapshot, []CharacterPartyInviteSnapshot, error) {
+	if s == nil || s.store == nil || s.store.Parties == nil || characterID == "" {
+		return nil, nil, nil
+	}
+	if err := s.store.Parties.ExpireInvites(ctx, now); err != nil {
+		return nil, nil, err
+	}
+
+	var partySnapshot *CharacterPartySnapshot
+	party, err := s.store.Parties.GetByCharacterID(ctx, characterID)
+	if err == nil {
+		partySnapshot, err = s.buildPartySnapshot(ctx, party)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else if !errors.Is(err, errRecordNotFound) {
+		return nil, nil, err
+	}
+
+	invites := make([]CharacterPartyInviteSnapshot, 0)
+	pendingInvites, err := s.store.Parties.ListPendingInvitesByInvitee(ctx, characterID, now)
+	if err != nil && !errors.Is(err, errRecordNotFound) {
+		return nil, nil, err
+	}
+	for _, invite := range pendingInvites {
+		inviterName := invite.InviterCharacterID
+		if attached := s.attachedSessionByCharacterID(invite.InviterCharacterID); attached != nil && attached.runtime != nil {
+			inviterName = attached.runtime.partyRosterMemberSnapshot(false).Name
+		} else if character, err := s.store.Characters.GetByID(ctx, invite.InviterCharacterID); err == nil && character.Name != "" {
+			inviterName = character.Name
+		}
+		invites = append(invites, CharacterPartyInviteSnapshot{
+			InviteID:           invite.ID,
+			PartyID:            invite.PartyID,
+			InviterCharacterID: invite.InviterCharacterID,
+			InviterName:        inviterName,
+			ExpiresAtMS:        invite.ExpiresAt.UnixMilli(),
+		})
+	}
+	return partySnapshot, invites, nil
+}
+
+func (s *Server) sendPartyStateRefresh(ctx context.Context, characterID string) {
+	if characterID == "" {
+		return
+	}
+	attached := s.attachedSessionByCharacterID(characterID)
+	if attached == nil || attached.runtime == nil {
+		return
+	}
+	party, invites, err := s.loadCharacterPartyState(ctx, characterID, time.Now().UTC())
+	if err != nil {
+		s.recordStoreError("parties.load_character_state", err, errRecordNotFound)
+		return
+	}
+	_ = attached.dispatchAll(func(runtime *attachedRuntime) []map[string]any {
+		return []map[string]any{runtime.partyDeltaMessage(party, invites)}
+	})
+}
+
+func (s *Server) refreshPartyStates(ctx context.Context, characterIDs []string) {
+	seen := map[string]struct{}{}
+	for _, characterID := range characterIDs {
+		if characterID == "" {
+			continue
+		}
+		if _, exists := seen[characterID]; exists {
+			continue
+		}
+		seen[characterID] = struct{}{}
+		s.sendPartyStateRefresh(ctx, characterID)
+	}
+}
+
+func (s *Server) refreshPartyStatesExcept(ctx context.Context, characterIDs []string, exceptCharacterID string) {
+	filtered := make([]string, 0, len(characterIDs))
+	for _, characterID := range characterIDs {
+		if characterID == exceptCharacterID {
+			continue
+		}
+		filtered = append(filtered, characterID)
+	}
+	s.refreshPartyStates(ctx, filtered)
+}
+
+func (s *Server) fanOutPartyStateForCharacterExcept(ctx context.Context, characterID string, exceptCharacterID string) {
+	if s == nil || s.store == nil || s.store.Parties == nil || characterID == "" {
+		return
+	}
+
+	affected := []string{characterID}
+	party, err := s.store.Parties.GetByCharacterID(ctx, characterID)
+	if err == nil {
+		members, membersErr := s.store.Parties.ListMembers(ctx, party.ID)
+		if membersErr == nil {
+			for _, member := range members {
+				affected = append(affected, member.CharacterID)
+			}
+		}
+	} else if !errors.Is(err, errRecordNotFound) {
+		s.recordStoreError("parties.get_by_character", err, errRecordNotFound)
+		return
+	}
+
+	s.refreshPartyStatesExcept(ctx, affected, exceptCharacterID)
+}
+
+func (s *Server) fanOutPartyStateForCharacter(ctx context.Context, characterID string) {
+	s.fanOutPartyStateForCharacterExcept(ctx, characterID, "")
+}
+
+func (s *Server) rejectPartyCommandWithRefresh(
+	ctx context.Context,
+	outbound []map[string]any,
+	runtime *attachedRuntime,
+	characterID string,
+	command commandEnvelope,
+	reasonCode string,
+	message string,
+) []map[string]any {
+	if runtime == nil {
+		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, reasonCode, message))
+	}
+
+	next := append(outbound, rejectMessage(command.CommandID, command.CommandSeq, reasonCode, message))
+	party, invites, err := s.loadCharacterPartyState(ctx, characterID, time.Now().UTC())
+	if err != nil {
+		s.recordStoreError("parties.load_character_state", err, errRecordNotFound)
+		return next
+	}
+	next = append(next, runtime.partyDeltaMessage(party, invites))
+	return next
+}
+
+func containsPartyMember(members []PartyMember, characterID string) bool {
+	for _, member := range members {
+		if member.CharacterID == characterID {
+			return true
+		}
+	}
+	return false
+}
+
+func selectDeterministicPartyLeader(members []PartyMember) string {
+	normalized := normalizePartyMembers(members)
+	if len(normalized) == 0 {
+		return ""
+	}
+	return normalized[0].CharacterID
+}
+
+func (s *Server) processPartyCommand(ctx context.Context, session *Session, runtime *attachedRuntime, command commandEnvelope) []map[string]any {
+	if session == nil || runtime == nil || s == nil || s.store == nil || s.store.Parties == nil {
+		return []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "internal.unexpected_error", "Gameplay party pipeline is unavailable.")}
+	}
+
+	s.partyMu.Lock()
+	defer s.partyMu.Unlock()
+
+	runtime.mu.Lock()
+	runtime.advanceMovementLocked(time.Now())
+	parsed, reject := runtime.preValidate(command)
+	if reject != nil {
+		runtime.mu.Unlock()
+		return []map[string]any{reject}
+	}
+
+	runtime.expectedCommandSeq++
+	outbound := []map[string]any{ackMessage(command.CommandID, command.CommandSeq)}
+	if runtime.isPlayerDead() {
+		runtime.mu.Unlock()
+		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "combat.actor_dead", "Actor is currently dead."))
+	}
+
+	actorCharacterID := runtime.characterID
+	actorName := runtime.characterName
+	actorRegionID := runtime.regionID
+	knownTarget, targetKnown := runtime.knownEntities[parsed.targetID]
+	runtime.mu.Unlock()
+
+	now := time.Now().UTC()
+	if err := s.store.Parties.ExpireInvites(ctx, now); err != nil {
+		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist party state."))
+	}
+
+	switch parsed.commandType {
+	case "invite_party_member":
+		if parsed.targetID == "" || !targetKnown || knownTarget.EntityType != "player" {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.target_not_known", "Referenced player is not in the current known-set."))
+		}
+		if parsed.targetID == actorCharacterID {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.target_invalid", "Character cannot invite itself to a party."))
+		}
+
+		targetAttached := s.attachedSessionByCharacterID(parsed.targetID)
+		if targetAttached == nil || targetAttached.runtime == nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.target_not_online", "Referenced player is not currently available for party invitation."))
+		}
+		if targetAttached.runtime.regionIDValue() != actorRegionID {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.target_not_online", "Referenced player is not currently available for party invitation."))
+		}
+
+		if _, err := s.store.Parties.GetByCharacterID(ctx, parsed.targetID); err == nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.target_already_in_party", "Referenced player is already in a party."))
+		} else if !errors.Is(err, errRecordNotFound) {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect party state."))
+		}
+
+		currentParty, err := s.store.Parties.GetByCharacterID(ctx, actorCharacterID)
+		if err != nil && !errors.Is(err, errRecordNotFound) {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect party state."))
+		}
+		if err == nil && currentParty.LeaderCharacterID != actorCharacterID {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.leader_required", "Only the party leader can invite a new member."))
+		}
+
+		createdPartyThisCommand := false
+		if currentParty == nil {
+			currentParty = &Party{
+				ID:                randomID("party"),
+				LeaderCharacterID: actorCharacterID,
+				CreatedAt:         now,
+				UpdatedAt:         now,
+			}
+			if err := s.store.Parties.Create(ctx, currentParty, PartyMember{
+				PartyID:     currentParty.ID,
+				CharacterID: actorCharacterID,
+				JoinedAt:    now,
+				CreatedAt:   now,
+				UpdatedAt:   now,
+			}); err != nil {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist party state."))
+			}
+			createdPartyThisCommand = true
+		}
+
+		invite := &PartyInvite{
+			ID:                 randomID("party_invite"),
+			PartyID:            currentParty.ID,
+			InviterCharacterID: actorCharacterID,
+			InviteeCharacterID: parsed.targetID,
+			ExpiresAt:          now.Add(partyInviteTTL),
+			CreatedAt:          now,
+			UpdatedAt:          now,
+		}
+		if err := s.store.Parties.CreateInvite(ctx, invite); err != nil {
+			if createdPartyThisCommand {
+				_ = s.store.Parties.Delete(ctx, currentParty.ID)
+			}
+			if errors.Is(err, errRecordConflict) {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.invite_already_pending", "Referenced player already has a pending party invite."))
+			}
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist party invite state."))
+		}
+
+		actorParty, actorInvites, err := s.loadCharacterPartyState(ctx, actorCharacterID, now)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to project party state."))
+		}
+		targetParty, targetInvites, err := s.loadCharacterPartyState(ctx, parsed.targetID, now)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to project party state."))
+		}
+
+		targetName := parsed.targetID
+		if attached := s.attachedSessionByCharacterID(parsed.targetID); attached != nil && attached.runtime != nil {
+			targetName = attached.runtime.partyRosterMemberSnapshot(false).Name
+		}
+		if targetAttached != nil {
+			_ = targetAttached.dispatchAll(func(targetRuntime *attachedRuntime) []map[string]any {
+				return []map[string]any{
+					targetRuntime.partyDeltaMessage(targetParty, targetInvites),
+					partyNoticeMessage(
+						partyNoticeStatusInviteReceived,
+						currentParty.ID,
+						invite.ID,
+						actorCharacterID,
+						actorName,
+						parsed.targetID,
+						targetName,
+						actorName+" invited you to a party.",
+					),
+				}
+			})
+		}
+
+		outbound = append(outbound, runtime.partyDeltaMessage(actorParty, actorInvites))
+		outbound = append(outbound, partyNoticeMessage(
+			partyNoticeStatusInviteSent,
+			currentParty.ID,
+			invite.ID,
+			actorCharacterID,
+			actorName,
+			parsed.targetID,
+			targetName,
+			"Party invite sent to "+targetName+".",
+		))
+		return outbound
+	case "accept_party_invite":
+		invite, err := s.store.Parties.GetInviteByID(ctx, parsed.inviteID)
+		if err != nil {
+			return s.rejectPartyCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "party.invite_not_found", "Party invite is not available.")
+		}
+		if invite.InviteeCharacterID != actorCharacterID {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.invite_not_recipient", "Party invite is not assigned to this actor."))
+		}
+		if !invite.ExpiresAt.After(now) {
+			_ = s.store.Parties.DeleteInvite(ctx, invite.ID)
+			return s.rejectPartyCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "party.invite_expired", "Party invite has expired.")
+		}
+		if _, err := s.store.Parties.GetByCharacterID(ctx, actorCharacterID); err == nil {
+			_ = s.store.Parties.DeleteInvite(ctx, invite.ID)
+			return s.rejectPartyCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "party.already_in_party", "Character is already in a party.")
+		} else if !errors.Is(err, errRecordNotFound) {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect party state."))
+		}
+
+		party, err := s.store.Parties.GetByID(ctx, invite.PartyID)
+		if err != nil {
+			_ = s.store.Parties.DeleteInvite(ctx, invite.ID)
+			return s.rejectPartyCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "party.invite_not_found", "Party invite is no longer valid.")
+		}
+
+		members, err := s.store.Parties.ListMembers(ctx, party.ID)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect party members."))
+		}
+		if containsPartyMember(members, actorCharacterID) {
+			_ = s.store.Parties.DeleteInvite(ctx, invite.ID)
+			return s.rejectPartyCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "party.already_in_party", "Character is already in a party.")
+		}
+
+		if err := s.store.Parties.AddMember(ctx, &PartyMember{
+			PartyID:     party.ID,
+			CharacterID: actorCharacterID,
+			JoinedAt:    now,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}); err != nil {
+			if errors.Is(err, errRecordConflict) {
+				_ = s.store.Parties.DeleteInvite(ctx, invite.ID)
+				return s.rejectPartyCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "party.already_in_party", "Character is already in a party.")
+			}
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist party membership."))
+		}
+		_ = s.store.Parties.DeleteInvite(ctx, invite.ID)
+
+		updatedMembers, err := s.store.Parties.ListMembers(ctx, party.ID)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect updated party members."))
+		}
+		affected := make([]string, 0, len(updatedMembers))
+		for _, member := range updatedMembers {
+			affected = append(affected, member.CharacterID)
+		}
+
+		actorParty, actorInvites, err := s.loadCharacterPartyState(ctx, actorCharacterID, now)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to project party state."))
+		}
+		s.refreshPartyStatesExcept(ctx, affected, actorCharacterID)
+
+		for _, member := range updatedMembers {
+			if member.CharacterID == actorCharacterID {
+				continue
+			}
+			if attached := s.attachedSessionByCharacterID(member.CharacterID); attached != nil {
+				_ = attached.sendSerialized(partyNoticeMessage(
+					partyNoticeStatusMemberJoined,
+					party.ID,
+					invite.ID,
+					actorCharacterID,
+					actorName,
+					"",
+					"",
+					actorName+" joined the party.",
+				))
+			}
+		}
+
+		outbound = append(outbound, runtime.partyDeltaMessage(actorParty, actorInvites))
+		outbound = append(outbound, partyNoticeMessage(
+			partyNoticeStatusInviteAccepted,
+			party.ID,
+			invite.ID,
+			actorCharacterID,
+			actorName,
+			"",
+			"",
+			"You join the party.",
+		))
+		return outbound
+	case "decline_party_invite":
+		invite, err := s.store.Parties.GetInviteByID(ctx, parsed.inviteID)
+		if err != nil {
+			return s.rejectPartyCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "party.invite_not_found", "Party invite is not available.")
+		}
+		if invite.InviteeCharacterID != actorCharacterID {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.invite_not_recipient", "Party invite is not assigned to this actor."))
+		}
+		if !invite.ExpiresAt.After(now) {
+			_ = s.store.Parties.DeleteInvite(ctx, invite.ID)
+			return s.rejectPartyCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "party.invite_expired", "Party invite has expired.")
+		}
+		if err := s.store.Parties.DeleteInvite(ctx, invite.ID); err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist party invite state."))
+		}
+
+		actorParty, actorInvites, err := s.loadCharacterPartyState(ctx, actorCharacterID, now)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to project party state."))
+		}
+		if attached := s.attachedSessionByCharacterID(invite.InviterCharacterID); attached != nil {
+			_ = attached.sendSerialized(partyNoticeMessage(
+				partyNoticeStatusInviteDeclined,
+				invite.PartyID,
+				invite.ID,
+				actorCharacterID,
+				actorName,
+				"",
+				"",
+				actorName+" declined your party invite.",
+			))
+		}
+
+		outbound = append(outbound, runtime.partyDeltaMessage(actorParty, actorInvites))
+		outbound = append(outbound, partyNoticeMessage(
+			partyNoticeStatusInviteDeclined,
+			invite.PartyID,
+			invite.ID,
+			actorCharacterID,
+			actorName,
+			"",
+			"",
+			"Party invite declined.",
+		))
+		return outbound
+	case "leave_party":
+		party, err := s.store.Parties.GetByCharacterID(ctx, actorCharacterID)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.not_in_party", "Character is not currently in a party."))
+		}
+		members, err := s.store.Parties.ListMembers(ctx, party.ID)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect party members."))
+		}
+
+		pendingInvites, _ := s.store.Parties.ListPendingInvitesByParty(ctx, party.ID, now)
+		pendingInviteTargets := make([]string, 0, len(pendingInvites))
+		for _, invite := range pendingInvites {
+			pendingInviteTargets = append(pendingInviteTargets, invite.InviteeCharacterID)
+		}
+
+		if len(members) <= 1 {
+			_ = s.store.Parties.DeleteInvitesByParty(ctx, party.ID)
+			if err := s.store.Parties.Delete(ctx, party.ID); err != nil {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist party state."))
+			}
+			s.refreshPartyStatesExcept(ctx, append([]string{actorCharacterID}, pendingInviteTargets...), actorCharacterID)
+			for _, inviteeCharacterID := range pendingInviteTargets {
+				if attached := s.attachedSessionByCharacterID(inviteeCharacterID); attached != nil {
+					_ = attached.sendSerialized(partyNoticeMessage(
+						partyNoticeStatusInviteExpired,
+						party.ID,
+						"",
+						actorCharacterID,
+						actorName,
+						"",
+						"",
+						"Party invite expired because the party dissolved.",
+					))
+				}
+			}
+			outbound = append(outbound, runtime.partyDeltaMessage(nil, nil))
+			outbound = append(outbound, partyNoticeMessage(
+				partyNoticeStatusPartyDissolved,
+				party.ID,
+				"",
+				actorCharacterID,
+				actorName,
+				"",
+				"",
+				"You leave the party and it dissolves.",
+			))
+			return outbound
+		}
+
+		if err := s.store.Parties.RemoveMember(ctx, party.ID, actorCharacterID); err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist party membership."))
+		}
+
+		noticeStatus := partyNoticeStatusMemberLeft
+		noticeMessage := actorName + " left the party."
+		if party.LeaderCharacterID == actorCharacterID {
+			remainingMembers, err := s.store.Parties.ListMembers(ctx, party.ID)
+			if err != nil {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect party members."))
+			}
+			nextLeaderID := selectDeterministicPartyLeader(remainingMembers)
+			if nextLeaderID == "" {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to select the next party leader."))
+			}
+			if err := s.store.Parties.UpdateLeader(ctx, party.ID, nextLeaderID); err != nil {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist party leadership."))
+			}
+			_ = s.store.Parties.DeleteInvitesByParty(ctx, party.ID)
+			noticeStatus = partyNoticeStatusLeaderTransferred
+			noticeMessage = actorName + " left the party. Leadership transfers to the next member."
+			for _, inviteeCharacterID := range pendingInviteTargets {
+				if attached := s.attachedSessionByCharacterID(inviteeCharacterID); attached != nil {
+					_ = attached.sendSerialized(partyNoticeMessage(
+						partyNoticeStatusInviteExpired,
+						party.ID,
+						"",
+						actorCharacterID,
+						actorName,
+						"",
+						"",
+						"Party invite expired because the party leader left.",
+					))
+				}
+			}
+		}
+
+		updatedMembers, err := s.store.Parties.ListMembers(ctx, party.ID)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect updated party members."))
+		}
+		affected := []string{actorCharacterID}
+		for _, member := range updatedMembers {
+			affected = append(affected, member.CharacterID)
+		}
+		s.refreshPartyStatesExcept(ctx, affected, actorCharacterID)
+
+		for _, member := range updatedMembers {
+			if attached := s.attachedSessionByCharacterID(member.CharacterID); attached != nil {
+				_ = attached.sendSerialized(partyNoticeMessage(
+					noticeStatus,
+					party.ID,
+					"",
+					actorCharacterID,
+					actorName,
+					"",
+					"",
+					noticeMessage,
+				))
+			}
+		}
+
+		outbound = append(outbound, runtime.partyDeltaMessage(nil, nil))
+		outbound = append(outbound, partyNoticeMessage(
+			partyNoticeStatusMemberLeft,
+			party.ID,
+			"",
+			actorCharacterID,
+			actorName,
+			"",
+			"",
+			"You leave the party.",
+		))
+		return outbound
+	case "kick_party_member":
+		if parsed.targetID == "" {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.member_not_found", "Referenced party member is not available."))
+		}
+		if parsed.targetID == actorCharacterID {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.cannot_kick_self", "Party leader cannot kick itself."))
+		}
+		party, err := s.store.Parties.GetByCharacterID(ctx, actorCharacterID)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.not_in_party", "Character is not currently in a party."))
+		}
+		if party.LeaderCharacterID != actorCharacterID {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.leader_required", "Only the party leader can remove a member."))
+		}
+		members, err := s.store.Parties.ListMembers(ctx, party.ID)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect party members."))
+		}
+		if !containsPartyMember(members, parsed.targetID) {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.member_not_found", "Referenced party member is not currently in the party."))
+		}
+		if err := s.store.Parties.RemoveMember(ctx, party.ID, parsed.targetID); err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist party membership."))
+		}
+
+		targetName := parsed.targetID
+		if attached := s.attachedSessionByCharacterID(parsed.targetID); attached != nil && attached.runtime != nil {
+			targetName = attached.runtime.partyRosterMemberSnapshot(false).Name
+		} else if character, err := s.store.Characters.GetByID(ctx, parsed.targetID); err == nil && character.Name != "" {
+			targetName = character.Name
+		}
+
+		updatedMembers, err := s.store.Parties.ListMembers(ctx, party.ID)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect updated party members."))
+		}
+		affected := []string{actorCharacterID, parsed.targetID}
+		for _, member := range updatedMembers {
+			affected = append(affected, member.CharacterID)
+		}
+		s.refreshPartyStatesExcept(ctx, affected, actorCharacterID)
+
+		for _, member := range updatedMembers {
+			if attached := s.attachedSessionByCharacterID(member.CharacterID); attached != nil {
+				_ = attached.sendSerialized(partyNoticeMessage(
+					partyNoticeStatusMemberKicked,
+					party.ID,
+					"",
+					actorCharacterID,
+					actorName,
+					parsed.targetID,
+					targetName,
+					targetName+" was removed from the party.",
+				))
+			}
+		}
+		if attached := s.attachedSessionByCharacterID(parsed.targetID); attached != nil {
+			_ = attached.sendSerialized(partyNoticeMessage(
+				partyNoticeStatusMemberKicked,
+				party.ID,
+				"",
+				actorCharacterID,
+				actorName,
+				parsed.targetID,
+				targetName,
+				"You were removed from the party by "+actorName+".",
+			))
+		}
+
+		actorParty, actorInvites, err := s.loadCharacterPartyState(ctx, actorCharacterID, now)
+		if err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to project party state."))
+		}
+		outbound = append(outbound, runtime.partyDeltaMessage(actorParty, actorInvites))
+		outbound = append(outbound, partyNoticeMessage(
+			partyNoticeStatusMemberKicked,
+			party.ID,
+			"",
+			actorCharacterID,
+			actorName,
+			parsed.targetID,
+			targetName,
+			targetName+" was removed from the party.",
+		))
+		return outbound
+	default:
+		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Unsupported gameplay command."))
+	}
+}

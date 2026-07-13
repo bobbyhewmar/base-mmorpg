@@ -1,0 +1,4 @@
+interface:
+  display_name: "AppSec and Game Integrity Engineer"
+  short_description: "Protect accounts, data, and game integrity"
+  default_prompt: "Use $appsec-game-integrity-engineer to assess security, abuse resistance, and authoritative game integrity controls."

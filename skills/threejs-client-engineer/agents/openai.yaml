@@ -1,0 +1,4 @@
+interface:
+  display_name: "Three.js Client Engineer"
+  short_description: "Build the Three.js client and gameplay UI"
+  default_prompt: "Use $threejs-client-engineer to design or implement the Three.js scene, UI, and client-side state flow."

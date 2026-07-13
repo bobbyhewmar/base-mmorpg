@@ -1,0 +1,311 @@
+# Interface Architecture
+
+## Direction
+
+Use a hybrid interface:
+
+- `Three.js` for the compact 3D world and world-space feedback
+- `HTML/CSS` for the main HUD and text-heavy controls
+
+This keeps the world immersive while preserving fast iteration, responsiveness, and clean UI layout for an MMORPG client.
+
+Read [source-material-reference.md](source-material-reference.md), [world-structure.md](world-structure.md), [combat-and-targeting.md](combat-and-targeting.md), [client-runtime-strategy.md](client-runtime-strategy.md), [specs/server-terrain-geodata-pathfinding.md](specs/server-terrain-geodata-pathfinding.md), [specs/hud-skills-and-hotbars.md](specs/hud-skills-and-hotbars.md), and [specs/hud-inventory-and-classic-windows.md](specs/hud-inventory-and-classic-windows.md) before changing client direction.
+
+## Visual Model
+
+### World View
+
+- Present the world in a high-readability three-quarter view.
+- Prefer a constrained elevated camera that supports the compact MMORPG feel.
+- Keep movement space, enemy clusters, NPCs, loot, and exits easy to read.
+- Preserve strong city-hub identity and short surrounding territories.
+- Keep ground-click destinations and targetable mobs visually unambiguous.
+- Keep blockers and walkable routes visually aligned with server geodata so pathfinding outcomes feel fair.
+- Use dark, mysterious ambience without relying on noisy or ultra-detailed textures.
+- Favor lowpoly readability, strong shapes, and lighting-driven mood over realistic material density.
+
+### World-Space UI In Three.js
+
+Keep only spatially meaningful feedback inside the scene:
+
+- selection rings
+- target markers
+- pending destination markers
+- authoritative path markers
+- ground-target previews
+- area-of-effect previews
+- loot markers
+- NPC interaction indicators
+- region-exit markers
+- damage, heal, and status feedback
+
+### Main HUD In HTML/CSS
+
+Keep layout-heavy and text-heavy UI outside the scene:
+
+- player frame and target frame
+- pet or companion frame when active
+- hotbar and skill cooldowns
+- cast-state and selected-skill feedback
+- inventory and equipment
+- quest tracker only when the quest system needs it; do not show a default task tracker in the combat HUD
+- minimap and region name
+- chat and system log
+- dialogs, vendors, storage, and settings
+
+The HUD shortcut/action surface must include:
+
+- one default horizontal hotbar with `12` slots
+- compact `32x32px` slots for skills, inventory items, consumables, or action bindings
+- an upward expand control that opens additional `12`-slot rows above the base row
+- support for up to `3` visible hotbar rows total
+- persistence of bound slot contents and visible hotbar count across disconnect
+- shared character-window shortcuts: `ALT+T` Status, `ALT+K` Skills, `ALT+C` Actions, `ALT+N` Clan, and `ALT+U` Quests
+- a skills panel opened by `ALT+K` inside the shared character-window family
+- top character-window navigation buttons that switch panels and never duplicate learned skill icons
+- skill-book categorization between `Active` and `Passive`
+- skill-book drag of active icons to hotbar through authoritative `set_hotbar_state` in online mode
+- inventory item drag to hotbar through authoritative `set_hotbar_state` in online mode
+- `ALT+C` action drag to hotbar through authoritative `set_hotbar_state` in online mode
+- dragged skill or item icon visually follows the cursor until dropped or cancelled
+- hover-driven skill tooltips instead of permanently expanded text blocks
+- cooldown overlay feedback directly above the icon
+
+The inventory and classic window surface must include:
+
+- inventory closed by default
+- `ALT+V` toggling the inventory window
+- square-corner dark window body with blue title bar
+- real clickable close controls
+- `32x32px` icon-only item and equipment slots
+- hover/focus item tooltips
+- footer currency amount and future weight readout
+
+### Pre-Game Screens In HTML/CSS
+
+Keep account and character-entry flows outside the 3D scene:
+
+- login
+- registration
+- email verification and password recovery feedback
+- character list
+- character creation
+- session-expired and forced-logout messaging
+
+The client may present creation choices, but the backend remains authoritative for:
+
+- whether an account may create another character
+- which races are enabled
+- which base classes are valid for the chosen race
+- whether the chosen sex is valid for the selected template
+- whether the chosen name is allowed and unique
+
+The character-creation UI must not invent missing catalog choices. If the catalog omits a race, class, sex option, or future appearance template, the UI must leave that choice unavailable and block submission until the authoritative source provides it.
+
+## Client Layer Separation
+
+### 1. Scene 3D
+
+Responsibilities:
+
+- render towns, field regions, enemies, NPCs, and drops
+- drive camera, movement presentation, and transient effects
+- convert terrain clicks into move targets and entity clicks into selected targets
+- start reversible local movement prediction immediately after terrain-click dispatch
+- present server-resolved paths and blocked movement feedback
+- make the target lock state unmistakable before hostile skill activation
+- visualize combat and interaction feedback
+- update the visible character model when equipped gear changes the silhouette or worn pieces
+
+Should not own:
+
+- business truth
+- inventory rules
+- progression rules
+- authoritative combat resolution
+
+### 2. HUD
+
+Responsibilities:
+
+- render player status, target status, hotbar, inventory, and quest information
+- render companion or mount status when relevant
+- host menus, dialogs, tooltips, and chat
+- present confirmations, failures, and interaction context clearly
+- host login, registration, character list, and character-creation flows before world entry
+- host the skill hotbar stack, skill-book popup, and cooldown readability layer
+- host classic inventory/equipment windows using shared visual primitives rather than one-off CSS recreations
+
+Should not own:
+
+- authoritative state transitions
+- hidden combat calculations
+- permanent copies of world truth that diverge from the backend
+- final validation of account, character-creation, or economy rules
+- final truth of learned skills, hotbar legality, or cooldown completion
+
+### 3. Interaction Controller
+
+Responsibilities:
+
+- bridge scene interactions and HUD-driven actions
+- manage current target, hover, selected skill, and pending interaction
+- dispatch target-point movement, combat, loot, and NPC commands
+- send movement destination intent only, never client-supplied waypoints or collision results
+- dispatch tame, summon, unsummon, mount, and dismount commands
+- dispatch login, registration, character creation, and character entry requests
+- dispatch hotbar binding intents through authoritative backend paths when online; current online rebinding uses `set_hotbar_state`
+- reconcile UI when authoritative updates invalidate local assumptions
+
+### 4. Client World State
+
+Responsibilities:
+
+- hold the latest authoritative character and nearby world state
+- expose derived view state for both scene and HUD
+- apply optimistic presentation only when reversible and low-risk
+- expose equipment-driven character appearance state cleanly enough for the renderer to swap visible parts without guessing
+- keep pre-game account and character-entry state separate from live gameplay state
+- hold the latest authoritative learned-skill set, hotbar bindings, and visible-bar configuration for HUD projection
+
+### 5. Platform Bridge
+
+Responsibilities:
+
+- expose runtime-specific capabilities behind internal client-facing contracts
+- isolate browser-only or desktop-only integration details
+- keep the rest of the client independent from Electron, Tauri, or any other shell
+
+## Interaction Flow
+
+### Entry Flow
+
+1. The player lands on login or registration UI, not directly inside the world.
+2. The client submits credentials or registration data to the backend over secure transport.
+3. The backend returns account status, verification requirements, and the authoritative character list.
+4. The player selects an existing character or opens the creation flow.
+5. The client requests the available race and base-class catalog from the backend.
+6. The player chooses race, base class, sex, hairstyle, hair color, face, and name.
+7. The backend validates the creation request and either rejects it with explicit reasons or persists the character.
+8. Only after successful character entry does the client transition into the online world scene.
+
+### Core Loop
+
+1. Player moves through a city or field region in the 3D scene.
+2. The scene and HUD surface nearby targets, loot, or NPC interactions.
+3. The player clicks terrain to move or clicks a mob to target it.
+4. For terrain clicks, the client immediately starts reversible predicted locomotion and may show a pending marker.
+5. The backend resolves the route without the client freezing the character in place.
+6. The backend returns the accepted route, snapped destination, correction, or rejection.
+7. The client blends predicted locomotion into the authoritative route or shows blocked/unreachable feedback.
+8. The player sees the selected target clearly in the HUD and world.
+9. The player triggers a skill through click context or hotbar input.
+10. If the skill requires a hostile target, the client only dispatches it against the current valid target.
+11. If the skill needs an area preview, the client shows the target-centered or self-centered shape, and only uses ground targeting for skills that explicitly support it.
+12. The client sends the action to the backend.
+13. The backend returns accepted state updates or rejection reasons.
+14. The client reconciles world state, target state, and cooldown or inventory feedback.
+
+### Skill HUD Flow
+
+1. The player sees one default `12`-slot horizontal hotbar in the HUD.
+2. The player may expand additional bars upward, up to `3` visible bars total.
+3. The player opens the character-window family with `ALT+T`, `ALT+K`, `ALT+C`, `ALT+N`, or `ALT+U`.
+4. The top row switches between Status, Skills, Actions, Clan, and Quests.
+5. The Skills panel uses `Active` and `Passive` tabs through compact icon grids.
+6. Hovering an icon reveals the skill tooltip with name, attributes, and description.
+7. Active skills may be dragged onto hotbar slots, with the icon following the cursor during drag.
+8. Inventory items may be dragged onto hotbar slots; equipable item shortcuts call equip, while consumables execute authoritative `use_item`.
+9. `ALT+C` actions may become hotbar shortcuts, including `basic_attack` and `pick_up_nearby`.
+10. `pick_up_nearby` selects a known loot id but does not perform local pickup retries; the backend owns approach movement, range validation, persistence, and loot disappearance.
+11. Online rebinding persists through `set_hotbar_state` before it is treated as durable truth.
+12. During cooldown, the icon shows a dark overlay that clears from top to bottom until reuse is available again.
+
+### Design Rules
+
+- Use the 3D scene for movement destination, target choice, ground targeting, and spatial awareness.
+- Use the 3D scene for immediate movement prediction and authoritative path presentation, but keep terrain collision authority in the backend.
+- Use the HUD for status, hotbar choice, inventory, quests, cast context, and confirmations.
+- Keep rejection messaging explicit in the HUD.
+- Keep state reconciliation graceful when latency or server authority corrects a local assumption.
+- Do not treat offensive skills as free-cast spot actions by default; target lock is the primary combat language.
+- Do not let the client invent item prices, total costs, or economy results locally.
+- Do not let the client invent learned skills, hotbar persistence, or cooldown completion locally in online mode.
+- Do not let the client invent movement paths, obstacle bypasses, or collision legality in online mode.
+- Do not let the client invent character appearance defaults in online mode; race, sex, base class, hairstyle, hair color, and face must come from the persisted character summary or server presence.
+
+## Initial Game-Screen Layout
+
+### Pre-Game
+
+- full-screen login and registration panels before world entry
+- character-selection panel after authentication
+- character-creation panel grouped by race, base class, sex, hairstyle, hair color, face, and name
+- character-creation preview renders only catalog-backed selected options; no temporary preview choice may be discarded when entering the world
+- explicit backend error surfaces for invalid login, unavailable name, invalid race-class combination, and expired session
+
+### Center
+
+- large 3D viewport for the current city or field region
+- left mouse button selects targets, picks/interacts where allowed, or sends terrain movement intent
+- right mouse button never selects targets and never opens the browser context menu while in the game world
+- right mouse drag rotates the camera horizontally around the player as the fixed orbit pivot
+- mouse wheel zooms the camera in and out within constrained limits
+
+### Top Left
+
+- player frame
+- target frame
+- short-lived status effects
+
+### Top Right
+
+- minimap
+- current region or city name
+- quest tracker or activity hints only when backed by an actual quest/activity system
+
+### Bottom Center
+
+- primary hotbar row with `12` horizontal `32x32px` slots
+- upward expand control for up to `3` stacked rows
+- cooldown visibility
+- skill or item feedback
+- cast mode and selected-skill feedback
+- mount-state feedback when mounted
+
+### Bottom Left
+
+- chat
+- system log
+- optional social notifications
+
+### Right Side
+
+- inventory, equipment, character sheet, and quest details in toggleable classic panels
+- inventory opens with `ALT+V` and is closed by default
+
+### Modal Layer
+
+- vendor interactions
+- storage
+- quest dialogs
+- settings
+- party or social prompts
+- skill-book popup opened by `ALT+K`
+
+## Responsiveness
+
+- Preserve the 3D viewport as the primary focus on desktop.
+- Keep the canonical interaction path viable in the browser without requiring a desktop shell.
+- Collapse secondary panels into drawers or tabs on smaller screens.
+- Keep combat-critical HUD elements visible without covering the player area excessively.
+
+## Testing Implications
+
+- Test HUD logic separately from the scene renderer when possible.
+- Test click-to-move, click-to-target, area previews, looting, and NPC interaction as contracts between scene, HUD, and backend.
+- Test that right-click does not select targets, does not move the player, and does not open browser context menu.
+- Test that right-drag rotates the camera around the player and wheel zoom stays bounded.
+- Test that the local player begins movement immediately after terrain click and later reconciles to the server path.
+- Test that blocked or unreachable movement produces clear UI state and does not desync from the server route.
+- Test that authoritative updates can replace stale local assumptions without leaving broken UI state.
