@@ -3,6 +3,10 @@ node_modules/
 dist/
 .vs/
 .tooling/
+art/
 backend/server.exe
 playwright-report/
 test-results/
+dist/
+docs/
+skills/
