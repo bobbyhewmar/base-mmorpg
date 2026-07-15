@@ -579,8 +579,8 @@ func TestGameplayCommandDedupPersistsAcrossStoreRestart(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Male",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "Dedup Persist",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {

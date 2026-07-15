@@ -46,6 +46,7 @@ type parsedCommand struct {
 	exchangeOfferID string
 	tradeOfferID    string
 	inviteID        string
+	clanName        string
 	chatChannel     string
 	chatText        string
 	chatTargetName  string
@@ -114,8 +115,8 @@ type attachedRuntime struct {
 	characterBaseClass      string
 	characterSex            string
 	characterHairStyle      int
-	characterHairColor      int
-	characterFace           int
+	characterHairColor      string
+	characterSkinType       int
 	characterLevel          int
 	currentXP               int
 	currentCP               int
@@ -140,6 +141,8 @@ type attachedRuntime struct {
 	questState              CharacterQuestState
 	party                   *CharacterPartySnapshot
 	partyInvites            []CharacterPartyInviteSnapshot
+	clan                    *CharacterClanSnapshot
+	clanInvites             []CharacterClanInviteSnapshot
 	pets                    []CharacterPet
 	characterItems          []CharacterItem
 	movementPlanner         movementPlanner
@@ -149,6 +152,7 @@ type attachedRuntime struct {
 	lastIdleRegenAt         time.Time
 	queuedSkill             *queuedRuntimeSkill
 	queuedBasicAttack       *queuedRuntimeBasicAttack
+	autoBasicAttack         *queuedRuntimeBasicAttack
 	queuedLootPickup        *queuedRuntimeLootPickup
 	pendingPartyRewards     []pendingPartyRewardEvent
 	chatRateWindowStartedAt time.Time
@@ -177,6 +181,9 @@ const (
 	basicAttackRange       = 2.2
 	basicAttackCooldown    = 750 * time.Millisecond
 	playerTemplateID       = "player_character"
+	startingRegionID       = "stonecross_plaza"
+	startingPositionX      = -8.0
+	startingPositionZ      = 0.0
 	idleRegenDelay         = 5 * time.Second
 	idleRegenTick          = time.Second
 	idleRegenPercent       = 0.03
@@ -276,63 +283,179 @@ var supportedSkills = map[string]skillDefinition{
 		BaseClass:   "Mage",
 		UnlockLevel: 1,
 	},
+	"thorn_jab": {
+		ID:             "thorn_jab",
+		Category:       skillCategoryActive,
+		BaseClass:      "Ranger",
+		UnlockLevel:    1,
+		TargetRequired: true,
+		TargetType:     "single_target_enemy",
+		Range:          8.5,
+		CooldownMS:     850,
+		MPCost:         6,
+		Power:          17,
+	},
+	"verdant_snare": {
+		ID:             "verdant_snare",
+		Category:       skillCategoryActive,
+		BaseClass:      "Ranger",
+		UnlockLevel:    2,
+		TargetRequired: true,
+		TargetType:     "target_centered_aoe",
+		Range:          9.5,
+		CooldownMS:     4400,
+		MPCost:         14,
+		Power:          36,
+		Radius:         7,
+		MaxTargets:     3,
+	},
+	"keen_senses": {
+		ID:          "keen_senses",
+		Category:    skillCategoryPassive,
+		BaseClass:   "Ranger",
+		UnlockLevel: 1,
+	},
+	"rift_cut": {
+		ID:             "rift_cut",
+		Category:       skillCategoryActive,
+		BaseClass:      "Reaver",
+		UnlockLevel:    1,
+		TargetRequired: true,
+		TargetType:     "single_target_enemy",
+		Range:          9,
+		CooldownMS:     920,
+		MPCost:         7,
+		Power:          19,
+	},
+	"nightfall_burst": {
+		ID:             "nightfall_burst",
+		Category:       skillCategoryActive,
+		BaseClass:      "Reaver",
+		UnlockLevel:    2,
+		TargetRequired: true,
+		TargetType:     "target_centered_aoe",
+		Range:          9.5,
+		CooldownMS:     4700,
+		MPCost:         16,
+		Power:          42,
+		Radius:         7,
+		MaxTargets:     3,
+	},
+	"grave_resolve": {
+		ID:          "grave_resolve",
+		Category:    skillCategoryPassive,
+		BaseClass:   "Reaver",
+		UnlockLevel: 1,
+	},
+}
+
+type runtimeMobSpawn struct {
+	ID          string
+	TemplateID  string
+	X           float64
+	Z           float64
+	Level       int
+	MaxHP       int
+	Personality mobPersonality
+}
+
+var stonecrossPlazaMobSpawns = []runtimeMobSpawn{
+	{ID: "mob_1", TemplateID: "mireling", X: -108, Z: 0, Level: 3, MaxHP: 54, Personality: mobPersonalityPassive},
+	{ID: "mob_2", TemplateID: "mireling", X: -6, Z: -78, Level: 4, MaxHP: 54, Personality: mobPersonalityPassive},
+	{ID: "mob_3", TemplateID: "mireling", X: 0, Z: 76, Level: 5, MaxHP: 54, Personality: mobPersonalityPassive},
+	{ID: "mob_4", TemplateID: "mireling", X: 104, Z: 0, Level: 6, MaxHP: 54, Personality: mobPersonalityPassive},
+	{ID: "mob_5", TemplateID: "gloom_wisp", X: -94, Z: -36, Level: 8, MaxHP: 68, Personality: mobPersonalityAggressive},
+	{ID: "mob_6", TemplateID: "gloom_wisp", X: -92, Z: 34, Level: 9, MaxHP: 68, Personality: mobPersonalityAggressive},
+	{ID: "mob_7", TemplateID: "ruin_stalker", X: 32, Z: -78, Level: 12, MaxHP: 84, Personality: mobPersonalityAggressive},
+	{ID: "mob_8", TemplateID: "ruin_stalker", X: 32, Z: 78, Level: 14, MaxHP: 84, Personality: mobPersonalityAggressive},
+	{ID: "mob_9", TemplateID: "stonebound_raider", X: 92, Z: -44, Level: 18, MaxHP: 96, Personality: mobPersonalityAggressive},
+	{ID: "mob_10", TemplateID: "stonebound_raider", X: 96, Z: 44, Level: 22, MaxHP: 96, Personality: mobPersonalityAggressive},
+	{ID: "mob_11", TemplateID: "stonebound_raider", X: -116, Z: -66, Level: 25, MaxHP: 96, Personality: mobPersonalityAggressive},
+	{ID: "mob_12", TemplateID: "stonebound_raider", X: -116, Z: 66, Level: 28, MaxHP: 96, Personality: mobPersonalityAggressive},
+	{ID: "mob_13", TemplateID: "ashen_howler", X: 116, Z: -72, Level: 32, MaxHP: 132, Personality: mobPersonalityAggressive},
+	{ID: "mob_14", TemplateID: "ashen_howler", X: 116, Z: 72, Level: 34, MaxHP: 132, Personality: mobPersonalityAggressive},
+	{ID: "mob_15", TemplateID: "gravewarden", X: -18, Z: -90, Level: 38, MaxHP: 176, Personality: mobPersonalityAggressive},
+	{ID: "mob_16", TemplateID: "gravewarden", X: -18, Z: 90, Level: 40, MaxHP: 176, Personality: mobPersonalityAggressive},
+}
+
+func regionMobSpawns(regionID string) []runtimeMobSpawn {
+	switch regionID {
+	case startingRegionID, "dawn_plaza":
+		return stonecrossPlazaMobSpawns
+	default:
+		return stonecrossPlazaMobSpawns
+	}
+}
+
+func newRuntimeNPC(entityID string, templateID string, x float64, z float64) runtimeEntity {
+	return runtimeEntity{
+		EntityID:   entityID,
+		EntityType: "npc",
+		TemplateID: templateID,
+		Position:   runtimePoint{X: x, Z: z},
+		State:      map[string]any{},
+	}
+}
+
+func newRuntimeMob(spawn runtimeMobSpawn) runtimeEntity {
+	return runtimeEntity{
+		EntityID:   spawn.ID,
+		EntityType: "mob",
+		TemplateID: spawn.TemplateID,
+		Position:   runtimePoint{X: spawn.X, Z: spawn.Z},
+		State: map[string]any{
+			"hp":          spawn.MaxHP,
+			"max_hp":      spawn.MaxHP,
+			"level":       spawn.Level,
+			"alive":       true,
+			"personality": string(spawn.Personality),
+			"ai_state":    string(mobAIStateIdle),
+			"spawn_x":     spawn.X,
+			"spawn_z":     spawn.Z,
+		},
+	}
+}
+
+func initialRegionEntities(regionID string) map[string]runtimeEntity {
+	entities := map[string]runtimeEntity{
+		"npc_wardkeeper":     newRuntimeNPC("npc_wardkeeper", "wardkeeper", -16, 7),
+		"npc_merchant":       newRuntimeNPC("npc_merchant", "merchant", -10, -3),
+		warehouseNPCEntityID: newRuntimeNPC(warehouseNPCEntityID, "warehouse_keeper", -5, 2.5),
+		"npc_gatekeeper":     newRuntimeNPC("npc_gatekeeper", "gatekeeper", 8, 1),
+		"npc_combat_trainer": newRuntimeNPC("npc_combat_trainer", "combat_trainer", 54, -19),
+		"npc_mystic_trainer": newRuntimeNPC("npc_mystic_trainer", "mystic_trainer", 42, 61),
+	}
+	for _, spawn := range regionMobSpawns(regionID) {
+		entities[spawn.ID] = newRuntimeMob(spawn)
+	}
+	return entities
+}
+
+func initialSpawnEntities(regionID string, entities map[string]runtimeEntity) map[string]runtimeEntity {
+	spawns := regionMobSpawns(regionID)
+	spawnEntities := make(map[string]runtimeEntity, len(spawns))
+	for _, spawn := range spawns {
+		spawnEntities[spawn.ID] = cloneRuntimeEntity(entities[spawn.ID])
+	}
+	return spawnEntities
 }
 
 func newAttachedRuntime(sessionID string, character *Character) *attachedRuntime {
+	return newAttachedRuntimeWithInitialEntities(sessionID, character, true)
+}
+
+func newCleanAttachedRuntime(sessionID string, character *Character) *attachedRuntime {
+	return newAttachedRuntimeWithInitialEntities(sessionID, character, false)
+}
+
+func newAttachedRuntimeWithInitialEntities(sessionID string, character *Character, includeFixtureEntities bool) *attachedRuntime {
 	state := persistedCharacterState(character)
 	now := time.Now()
-	knownEntities := map[string]runtimeEntity{
-		"npc_wardkeeper": {
-			EntityID:   "npc_wardkeeper",
-			EntityType: "npc",
-			TemplateID: "wardkeeper",
-			Position:   runtimePoint{X: -2, Z: 10},
-			State:      map[string]any{},
-		},
-		"npc_merchant": {
-			EntityID:   "npc_merchant",
-			EntityType: "npc",
-			TemplateID: "merchant",
-			Position:   runtimePoint{X: -10, Z: 8},
-			State:      map[string]any{},
-		},
-		warehouseNPCEntityID: {
-			EntityID:   warehouseNPCEntityID,
-			EntityType: "npc",
-			TemplateID: "warehouse_keeper",
-			Position:   runtimePoint{X: -13, Z: 4},
-			State:      map[string]any{},
-		},
-		"mob_1": {
-			EntityID:   "mob_1",
-			EntityType: "mob",
-			TemplateID: "mireling",
-			Position:   runtimePoint{X: 34, Z: 10},
-			State: map[string]any{
-				"hp":    54,
-				"alive": true,
-			},
-		},
-		"mob_2": {
-			EntityID:   "mob_2",
-			EntityType: "mob",
-			TemplateID: "mireling",
-			Position:   runtimePoint{X: 39, Z: 12},
-			State: map[string]any{
-				"hp":    54,
-				"alive": true,
-			},
-		},
-		"mob_3": {
-			EntityID:   "mob_3",
-			EntityType: "mob",
-			TemplateID: "mireling",
-			Position:   runtimePoint{X: 44, Z: 8},
-			State: map[string]any{
-				"hp":    54,
-				"alive": true,
-			},
-		},
+	knownEntities := map[string]runtimeEntity{}
+	spawnEntities := map[string]runtimeEntity{}
+	if includeFixtureEntities {
+		knownEntities = initialRegionEntities(state.LastRegionID)
+		spawnEntities = initialSpawnEntities(state.LastRegionID, knownEntities)
 	}
 
 	return &attachedRuntime{
@@ -344,7 +467,7 @@ func newAttachedRuntime(sessionID string, character *Character) *attachedRuntime
 		characterSex:       state.Sex,
 		characterHairStyle: state.HairStyle,
 		characterHairColor: state.HairColor,
-		characterFace:      state.Face,
+		characterSkinType:  state.SkinType,
 		characterLevel:     state.Level,
 		currentXP:          state.XP,
 		currentCP:          state.CurrentCP,
@@ -358,19 +481,15 @@ func newAttachedRuntime(sessionID string, character *Character) *attachedRuntime
 		facing:             0,
 		respawnPosition:    runtimePoint{X: state.PositionX, Z: state.PositionZ},
 		knownEntities:      knownEntities,
-		spawnEntities: map[string]runtimeEntity{
-			"mob_1": cloneRuntimeEntity(knownEntities["mob_1"]),
-			"mob_2": cloneRuntimeEntity(knownEntities["mob_2"]),
-			"mob_3": cloneRuntimeEntity(knownEntities["mob_3"]),
-		},
-		cooldownEndsAt:  map[string]time.Time{},
-		nextLootSeq:     1,
-		derivedStats:    baseCharacterDerivedStats(&state),
-		hotbarState:     defaultCharacterHotbarState(&state),
-		questState:      defaultCharacterQuestState(),
-		movementPlanner: defaultMovementPlanner,
-		stationarySince: now,
-		lastIdleRegenAt: now,
+		spawnEntities:      spawnEntities,
+		cooldownEndsAt:     map[string]time.Time{},
+		nextLootSeq:        1,
+		derivedStats:       baseCharacterDerivedStats(&state),
+		hotbarState:        defaultCharacterHotbarState(&state),
+		questState:         defaultCharacterQuestState(),
+		movementPlanner:    defaultMovementPlanner,
+		stationarySince:    now,
+		lastIdleRegenAt:    now,
 	}
 }
 
@@ -595,6 +714,7 @@ func (runtime *attachedRuntime) domainValidateAndApply(command commandEnvelope, 
 		now := time.Now()
 		runtime.queuedSkill = nil
 		runtime.queuedBasicAttack = nil
+		runtime.autoBasicAttack = nil
 		runtime.queuedLootPickup = nil
 		runtime.setActiveMovementLocked(resolution.Plan, now)
 		if len(resolution.Plan.Waypoints) > 0 && distance(runtime.position, resolution.Plan.Waypoints[0]) > 0.001 {
@@ -631,11 +751,32 @@ func (runtime *attachedRuntime) domainValidateAndApply(command commandEnvelope, 
 		if runtime.queuedBasicAttack != nil && runtime.queuedBasicAttack.TargetID != parsed.targetID {
 			runtime.queuedBasicAttack = nil
 		}
+		if runtime.autoBasicAttack != nil && runtime.autoBasicAttack.TargetID != parsed.targetID {
+			runtime.autoBasicAttack = nil
+		}
 		runtime.queuedLootPickup = nil
 		runtime.targetID = parsed.targetID
 		runtime.revision++
 		return []map[string]any{
 			deltaMessage(runtime.revision, command.CommandID, command.CommandSeq, runtime.selfDelta(time.Now(), nil), nil, nil),
+		}
+	case "clear_target":
+		now := time.Now()
+		shouldClearMovement := runtime.queuedSkill != nil ||
+			runtime.queuedBasicAttack != nil ||
+			runtime.autoBasicAttack != nil ||
+			runtime.queuedLootPickup != nil
+		runtime.targetID = ""
+		runtime.queuedSkill = nil
+		runtime.queuedBasicAttack = nil
+		runtime.autoBasicAttack = nil
+		runtime.queuedLootPickup = nil
+		if shouldClearMovement {
+			runtime.clearActiveMovementLocked()
+		}
+		runtime.revision++
+		return []map[string]any{
+			deltaMessage(runtime.revision, command.CommandID, command.CommandSeq, runtime.movementSelfDeltaLocked(now, "target_cleared"), nil, nil),
 		}
 	case "use_skill":
 		skill, exists := supportedSkills[parsed.skillID]
@@ -690,9 +831,19 @@ func (runtime *attachedRuntime) domainValidateAndApply(command commandEnvelope, 
 			return []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "combat.cooldown_active", "Basic attack is still on cooldown.")}
 		}
 		if distance(runtime.position, target.Position) > basicAttackRange {
+			runtime.autoBasicAttack = &queuedRuntimeBasicAttack{
+				CommandID:  command.CommandID,
+				CommandSeq: command.CommandSeq,
+				TargetID:   target.EntityID,
+			}
 			return runtime.queueBasicAttackApproachLocked(command, target, now)
 		}
 
+		runtime.autoBasicAttack = &queuedRuntimeBasicAttack{
+			CommandID:  command.CommandID,
+			CommandSeq: command.CommandSeq,
+			TargetID:   target.EntityID,
+		}
 		return runtime.activateBasicAttackLocked(command.CommandID, command.CommandSeq, target, now)
 	default:
 		return []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Unsupported gameplay command.")}
@@ -705,6 +856,7 @@ func (runtime *attachedRuntime) activateSkillLocked(commandID string, commandSeq
 	runtime.targetID = target.EntityID
 	runtime.queuedSkill = nil
 	runtime.queuedBasicAttack = nil
+	runtime.autoBasicAttack = nil
 	runtime.queuedLootPickup = nil
 	runtime.clearActiveMovementLocked()
 	entityPatches := runtime.applySkill(skill, target)
@@ -742,9 +894,7 @@ func (runtime *attachedRuntime) queueSkillApproachLocked(command commandEnvelope
 		}
 	}
 
-	resolution := runtime.movementPlanner.Resolve(context.Background(), runtime.regionID, runtime.position, target.Position, movementProfile{
-		ActorRadius: defaultMovementActorRadius,
-	})
+	resolution := resolveTargetApproachMovement(runtime.movementPlanner, runtime.regionID, runtime.position, target.Position, skill.Range)
 	if resolution.Status == movementPlanStatusRejected {
 		return []map[string]any{
 			rejectMessage(command.CommandID, command.CommandSeq, resolution.ReasonCode, movementRejectMessage(resolution.ReasonCode)),
@@ -797,6 +947,12 @@ func (runtime *attachedRuntime) activateBasicAttackLocked(commandID string, comm
 			runtime.targetID = ""
 		}
 	}
+	if runtime.autoBasicAttack != nil {
+		targetEntity, exists := runtime.knownEntities[runtime.autoBasicAttack.TargetID]
+		if !exists || !isRuntimeEntityAlive(targetEntity) || runtime.isPlayerDead() {
+			runtime.autoBasicAttack = nil
+		}
+	}
 	runtime.revision++
 	outbound := []map[string]any{
 		deltaMessage(
@@ -823,9 +979,7 @@ func (runtime *attachedRuntime) queueBasicAttackApproachLocked(command commandEn
 		}
 	}
 
-	resolution := runtime.movementPlanner.Resolve(context.Background(), runtime.regionID, runtime.position, target.Position, movementProfile{
-		ActorRadius: defaultMovementActorRadius,
-	})
+	resolution := resolveTargetApproachMovement(runtime.movementPlanner, runtime.regionID, runtime.position, target.Position, basicAttackRange)
 	if resolution.Status == movementPlanStatusRejected {
 		return []map[string]any{
 			rejectMessage(command.CommandID, command.CommandSeq, resolution.ReasonCode, movementRejectMessage(resolution.ReasonCode)),
@@ -834,6 +988,11 @@ func (runtime *attachedRuntime) queueBasicAttackApproachLocked(command commandEn
 	}
 
 	runtime.queuedBasicAttack = &queuedRuntimeBasicAttack{
+		CommandID:  command.CommandID,
+		CommandSeq: command.CommandSeq,
+		TargetID:   target.EntityID,
+	}
+	runtime.autoBasicAttack = &queuedRuntimeBasicAttack{
 		CommandID:  command.CommandID,
 		CommandSeq: command.CommandSeq,
 		TargetID:   target.EntityID,
@@ -863,8 +1022,8 @@ func (runtime *attachedRuntime) queueBasicAttackApproachLocked(command commandEn
 
 func clampRuntimePoint(point runtimePoint) runtimePoint {
 	return runtimePoint{
-		X: math.Max(-18, math.Min(97, point.X)),
-		Z: math.Max(-16, math.Min(16, point.Z)),
+		X: math.Max(-128, math.Min(128, point.X)),
+		Z: math.Max(-96, math.Min(96, point.Z)),
 	}
 }
 
@@ -984,6 +1143,8 @@ func (runtime *attachedRuntime) selfDelta(now time.Time, extra map[string]any) m
 		"quest":         runtime.questSnapshotLocked(),
 		"party":         cloneCharacterPartySnapshot(runtime.party),
 		"party_invites": cloneCharacterPartyInviteSnapshots(runtime.partyInvites),
+		"clan":          cloneCharacterClanSnapshot(runtime.clan),
+		"clan_invites":  cloneCharacterClanInviteSnapshots(runtime.clanInvites),
 	}
 	for key, value := range extra {
 		payload[key] = value
@@ -1024,11 +1185,31 @@ func (runtime *attachedRuntime) loadPartyState(party *CharacterPartySnapshot, in
 	runtime.partyInvites = cloneCharacterPartyInviteSnapshots(invites)
 }
 
+func (runtime *attachedRuntime) loadClanState(clan *CharacterClanSnapshot, invites []CharacterClanInviteSnapshot) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	runtime.clan = cloneCharacterClanSnapshot(clan)
+	runtime.clanInvites = cloneCharacterClanInviteSnapshots(invites)
+}
+
 func (runtime *attachedRuntime) partyInviteExpirationDue(now time.Time) bool {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 
 	for _, invite := range runtime.partyInvites {
+		if invite.ExpiresAtMS <= now.UnixMilli() {
+			return true
+		}
+	}
+	return false
+}
+
+func (runtime *attachedRuntime) clanInviteExpirationDue(now time.Time) bool {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	for _, invite := range runtime.clanInvites {
 		if invite.ExpiresAtMS <= now.UnixMilli() {
 			return true
 		}
@@ -1049,6 +1230,19 @@ func (runtime *attachedRuntime) partyDeltaMessage(
 	return deltaMessage(runtime.revision, "", 0, runtime.selfDelta(time.Now(), nil), nil, nil)
 }
 
+func (runtime *attachedRuntime) clanDeltaMessage(
+	clan *CharacterClanSnapshot,
+	invites []CharacterClanInviteSnapshot,
+) map[string]any {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	runtime.clan = cloneCharacterClanSnapshot(clan)
+	runtime.clanInvites = cloneCharacterClanInviteSnapshots(invites)
+	runtime.revision++
+	return deltaMessage(runtime.revision, "", 0, runtime.selfDelta(time.Now(), nil), nil, nil)
+}
+
 func (runtime *attachedRuntime) partyRosterMemberSnapshot(isLeader bool) CharacterPartyMemberSnapshot {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
@@ -1060,6 +1254,20 @@ func (runtime *attachedRuntime) partyRosterMemberSnapshot(isLeader bool) Charact
 		BaseClass:   runtime.characterBaseClass,
 		HP:          runtime.currentHP,
 		MP:          runtime.currentMP,
+		Online:      true,
+		IsLeader:    isLeader,
+	}
+}
+
+func (runtime *attachedRuntime) clanRosterMemberSnapshot(isLeader bool) CharacterClanMemberSnapshot {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	return CharacterClanMemberSnapshot{
+		CharacterID: runtime.characterID,
+		Name:        runtime.characterName,
+		Level:       runtime.characterLevel,
+		BaseClass:   runtime.characterBaseClass,
 		Online:      true,
 		IsLeader:    isLeader,
 	}
@@ -1177,7 +1385,7 @@ func (runtime *attachedRuntime) playerPresenceStateLocked() map[string]any {
 		"sex":            runtime.characterSex,
 		"hair_style":     runtime.characterHairStyle,
 		"hair_color":     runtime.characterHairColor,
-		"face":           runtime.characterFace,
+		"skin_type":      runtime.characterSkinType,
 		"cp":             runtime.currentCP,
 		"hp":             runtime.currentHP,
 		"dead":           runtime.isPlayerDead(),
@@ -1207,7 +1415,7 @@ func playerPresencePatchFromEntity(entity runtimeEntity) map[string]any {
 		"entity_id": entity.EntityID,
 		"position":  entity.Position,
 	}
-	for _, key := range []string{"name", "level", "race", "base_class", "sex", "hair_style", "hair_color", "face", "hp", "dead", "facing", "mounted_pet_id"} {
+	for _, key := range []string{"name", "level", "race", "base_class", "sex", "hair_style", "hair_color", "skin_type", "hp", "dead", "facing", "mounted_pet_id"} {
 		if value, exists := entity.State[key]; exists {
 			patch[key] = value
 		}
@@ -1376,6 +1584,13 @@ func (runtime *attachedRuntime) partySnapshot() *CharacterPartySnapshot {
 	defer runtime.mu.Unlock()
 
 	return cloneCharacterPartySnapshot(runtime.party)
+}
+
+func (runtime *attachedRuntime) clanSnapshot() *CharacterClanSnapshot {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	return cloneCharacterClanSnapshot(runtime.clan)
 }
 
 func (runtime *attachedRuntime) selfDeltaSnapshot() map[string]any {

@@ -121,6 +121,82 @@ func TestStaticRegionMovementPlannerCancelsWithContext(t *testing.T) {
 	}
 }
 
+func TestStaticRegionMovementPlannerShipsCleanPlainAsLargeRegion(t *testing.T) {
+	planner := newStaticRegionMovementPlanner()
+
+	if version := planner.GeodataVersion(startingRegionID); version != "clean_plain_1024_geo_v1" {
+		t.Fatalf("expected clean plain geodata version, got %s", version)
+	}
+
+	resolution := planner.Resolve(
+		context.Background(),
+		startingRegionID,
+		runtimePoint{X: startingPositionX, Z: startingPositionZ},
+		runtimePoint{X: 116, Z: 72},
+		movementProfile{ActorRadius: defaultMovementActorRadius},
+	)
+
+	if resolution.Status != movementPlanStatusAccepted {
+		t.Fatalf("expected clean plain route outside the old map footprint to be accepted, got %+v", resolution)
+	}
+	if resolution.Plan.AcceptedDestination != (runtimePoint{X: 116, Z: 72}) {
+		t.Fatalf("expected exact clean plain destination to be accepted, got %+v", resolution.Plan.AcceptedDestination)
+	}
+	if len(resolution.Plan.Waypoints) == 0 {
+		t.Fatalf("expected clean plain route waypoints, got %+v", resolution.Plan.Waypoints)
+	}
+}
+
+func TestStaticRegionMovementPlannerAcceptsCleanPlainFullMapEdges(t *testing.T) {
+	planner := newStaticRegionMovementPlanner()
+
+	for _, destination := range []runtimePoint{
+		{X: -500, Z: 0},
+		{X: 500, Z: 0},
+		{X: 0, Z: -500},
+		{X: 0, Z: 500},
+	} {
+		resolution := planner.Resolve(
+			context.Background(),
+			startingRegionID,
+			runtimePoint{X: startingPositionX, Z: startingPositionZ},
+			destination,
+			movementProfile{ActorRadius: defaultMovementActorRadius},
+		)
+		if resolution.Status != movementPlanStatusAccepted {
+			t.Fatalf("expected clean plain full-map destination %+v to be accepted, got %+v", destination, resolution)
+		}
+		if resolution.Plan.AcceptedDestination != destination {
+			t.Fatalf("expected full-map destination %+v to remain exact, got %+v", destination, resolution.Plan.AcceptedDestination)
+		}
+	}
+}
+
+func TestStaticRegionMovementPlannerKeepsCleanPlainFreeWalk(t *testing.T) {
+	planner := newStaticRegionMovementPlanner()
+
+	for _, destination := range []runtimePoint{
+		{X: -4, Z: 0},
+		{X: 58, Z: 22},
+		{X: -68, Z: 10},
+		{X: 55, Z: 66},
+	} {
+		resolution := planner.Resolve(
+			context.Background(),
+			startingRegionID,
+			runtimePoint{X: startingPositionX, Z: startingPositionZ},
+			destination,
+			movementProfile{ActorRadius: defaultMovementActorRadius},
+		)
+		if resolution.Status != movementPlanStatusAccepted {
+			t.Fatalf("expected city destination %+v to be free-walk, got %+v", destination, resolution)
+		}
+		if resolution.Plan.AcceptedDestination != destination {
+			t.Fatalf("expected city destination %+v to remain exact, got %+v", destination, resolution.Plan.AcceptedDestination)
+		}
+	}
+}
+
 func mathAbs(value float64) float64 {
 	if value < 0 {
 		return -value

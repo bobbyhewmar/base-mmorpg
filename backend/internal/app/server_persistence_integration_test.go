@@ -219,8 +219,8 @@ func TestCreateCharacterPersistsCharacter(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Male",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "Persist Hero",
 	}, accessToken)
 	if response.StatusCode != http.StatusCreated {
@@ -234,8 +234,11 @@ func TestCreateCharacterPersistsCharacter(t *testing.T) {
 	if len(characters) != 1 || characters[0].Name != "Persist Hero" {
 		t.Fatalf("unexpected persisted characters = %+v", characters)
 	}
-	if characters[0].HairStyle != 1 || characters[0].HairColor != 2 || characters[0].Face != 1 {
+	if characters[0].HairStyle != 1 || characters[0].SkinType != 2 {
 		t.Fatalf("unexpected persisted appearance = %+v", characters[0])
+	}
+	if characters[0].HairColor != "#6b4e37" {
+		t.Fatalf("unexpected persisted hair color = %+v", characters[0])
 	}
 }
 
@@ -248,8 +251,8 @@ func TestWorldEnterPersistsGameplaySession(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Female",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "Session Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -285,8 +288,8 @@ func TestCreateCharacterInitializesPersistedWorldState(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Male",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "World State Init Hero",
 	}, accessToken)
 	if response.StatusCode != http.StatusCreated {
@@ -300,7 +303,7 @@ func TestCreateCharacterInitializesPersistedWorldState(t *testing.T) {
 	if len(characters) != 1 {
 		t.Fatalf("expected one character, got %+v", characters)
 	}
-	if characters[0].LastRegionID != "dawn_plaza" || characters[0].PositionX != -8 || characters[0].PositionZ != 0 {
+	if characters[0].LastRegionID != startingRegionID || characters[0].PositionX != startingPositionX || characters[0].PositionZ != startingPositionZ {
 		t.Fatalf("unexpected initial persisted world state = %+v", characters[0])
 	}
 }
@@ -314,8 +317,8 @@ func TestCreateCharacterSeedsPersistedInventoryAndEquipment(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Male",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "Items Seed Hero",
 	}, accessToken)
 	if response.StatusCode != http.StatusCreated {
@@ -368,8 +371,8 @@ func TestEconomyAuditPersistsVendorAndWarehouseHistory(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Male",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "Economy Audit Hero",
 	}, accessToken)
 	if response.StatusCode != http.StatusCreated {
@@ -549,8 +552,8 @@ func TestExchangeOfferPersistsInventoryAndActionLog(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Female",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "Exchange Offer Hero",
 	}, accessToken)
 	if response.StatusCode != http.StatusCreated {
@@ -623,8 +626,8 @@ func TestEconomyAuditFilterQueriesReadPersistedVendorWarehouseAndTradeHistory(t 
 			"base_class": "Fighter",
 			"sex":        "Male",
 			"hair_style": 1,
-			"hair_color": 2,
-			"face":       1,
+			"hair_color": "#6b4e37",
+			"skin_type":  2,
 			"name":       name,
 		}, accessToken)
 		if response.StatusCode != http.StatusCreated {
@@ -901,8 +904,8 @@ func TestWorldEnterReturnsPersistedInventoryAndEquipment(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Female",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "World Enter Items Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -942,8 +945,8 @@ func TestWorldEnterReturnsLootPersistedFromOnlinePickup(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Female",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "World Enter Loot Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -1016,8 +1019,8 @@ func TestWorldEnterReturnsPartyLootPersistedFromEligiblePickup(t *testing.T) {
 			"base_class": "Fighter",
 			"sex":        sex,
 			"hair_style": 1,
-			"hair_color": 2,
-			"face":       1,
+			"hair_color": "#6b4e37",
+			"skin_type":  2,
 			"name":       name,
 		}, accessToken)
 		if response.StatusCode != http.StatusCreated {
@@ -1106,8 +1109,8 @@ func TestWorldEnterReflectsOnlyWinningLootPickupAfterContention(t *testing.T) {
 			"base_class": "Fighter",
 			"sex":        sex,
 			"hair_style": 1,
-			"hair_color": 2,
-			"face":       1,
+			"hair_color": "#6b4e37",
+			"skin_type":  2,
 			"name":       name,
 		}, accessToken)
 		if response.StatusCode != http.StatusCreated {
@@ -1202,8 +1205,8 @@ func TestWorldEnterReflectsPersistedEquipmentAfterOnlineEquipAndUnequip(t *testi
 		"base_class": "Fighter",
 		"sex":        "Female",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "World Enter Equip Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -1318,8 +1321,8 @@ func TestWorldEnterReflectsPersistedChestStatsUsedByMitigation(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Female",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "World Enter Defense Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -1386,8 +1389,8 @@ func TestWorldEnterReflectsPersistedProgressionAfterAuthoritativeCombat(t *testi
 		"base_class": "Fighter",
 		"sex":        "Female",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "World Progress Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -1498,8 +1501,8 @@ func TestWorldEnterReflectsPersistedHotbarStateAfterOnlineReentry(t *testing.T) 
 		"base_class": "Fighter",
 		"sex":        "Female",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "World Enter Hotbar Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -1610,8 +1613,8 @@ func TestWorldEnterAndReattachReflectPersistedCooldownsAfterAuthoritativeSkillUs
 		"base_class": "Fighter",
 		"sex":        "Female",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "World Cooldown Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -1656,7 +1659,7 @@ func TestWorldEnterAndReattachReflectPersistedCooldownsAfterAuthoritativeSkillUs
 		Type:            "use_skill",
 		Payload:         []byte(`{"skill_id":"grave_bloom","target_id":"mob_1"}`),
 	})
-	if len(outbound) != 2 || outbound[1]["kind"] != "delta" {
+	if len(outbound) < 2 || outbound[1]["kind"] != "delta" {
 		t.Fatalf("expected authoritative skill use to emit ack and delta, got %+v", outbound)
 	}
 
@@ -1685,8 +1688,9 @@ func TestWorldEnterAndReattachReflectPersistedCooldownsAfterAuthoritativeSkillUs
 		t.Fatalf("expected world enter self_state cooldowns map, got %+v", selfState["cooldowns"])
 	}
 	remaining, ok := cooldowns["grave_bloom"].(float64)
-	if !ok || remaining <= 0 || remaining > 4500 {
-		t.Fatalf("expected positive grave_bloom cooldown <= 4500ms, got %+v", cooldowns["grave_bloom"])
+	maxExpectedRemaining := float64(supportedSkills["grave_bloom"].CooldownMS + 1500)
+	if !ok || remaining <= 0 || remaining > maxExpectedRemaining {
+		t.Fatalf("expected positive grave_bloom cooldown <= %.0fms, got %+v", maxExpectedRemaining, cooldowns["grave_bloom"])
 	}
 
 	reentrySessionID := worldEnterPayload["session_id"].(string)
@@ -1707,12 +1711,20 @@ func TestWorldEnterAndReattachReflectPersistedCooldownsAfterAuthoritativeSkillUs
 	if err != nil {
 		t.Fatalf("buildAttachedRuntime() after restart error = %v", err)
 	}
+	reattachedRuntime.seedKnownEntity(testRuntimeMob(
+		"mob_1",
+		"mireling",
+		mobPersonalityPassive,
+		runtimePoint{X: -108, Z: 0},
+		54,
+	))
 	moveRuntimeNearMob(reattachedRuntime, "mob_1")
+	reattachedRuntime.expectedCommandSeq = 2
 
 	reentryOutbound, _ := restartedServer.processGameplayCommandWithDedup(context.Background(), restartedSession, reattachedRuntime, commandEnvelope{
 		ProtocolVersion: 1,
 		CommandID:       "cmd_cooldowns_reentry",
-		CommandSeq:      1,
+		CommandSeq:      2,
 		Type:            "use_skill",
 		Payload:         []byte(`{"skill_id":"grave_bloom","target_id":"mob_1"}`),
 	})
@@ -1732,8 +1744,8 @@ func TestDisconnectDuringDeathPersistsExplicitRespawnCheckpoint(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Female",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "Death Checkpoint Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -1890,8 +1902,8 @@ func TestExpiredPendingAttachDoesNotBlockNewWorldEnter(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Male",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "Expire Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -1938,8 +1950,8 @@ func TestPendingAttachIsReusedInsteadOfBlockingImmediateRetry(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Male",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "Retry Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -1995,8 +2007,8 @@ func TestAttachedSessionStillBlocksWorldEnter(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Female",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "Blocked Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -2083,8 +2095,8 @@ func TestStartupSanitizationClosesAttachedSessionAndReleasesWorldEnter(t *testin
 		"base_class": "Fighter",
 		"sex":        "Male",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "Startup Attached Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -2213,8 +2225,8 @@ func TestWorldEnterRehydratesPersistedMountedPetState(t *testing.T) {
 		"base_class": "Fighter",
 		"sex":        "Female",
 		"hair_style": 1,
-		"hair_color": 2,
-		"face":       1,
+		"hair_color": "#6b4e37",
+		"skin_type":  2,
 		"name":       "Pet Mounted Hero",
 	}, accessToken)
 	if characterResponse.StatusCode != http.StatusCreated {
@@ -2251,8 +2263,8 @@ func TestWorldEnterRehydratesPersistedMountedPetState(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected self_state.stats payload, got %+v", selfState["stats"])
 	}
-	if moveSpeed, ok := stats["move_speed"].(float64); !ok || moveSpeed != 10.8 {
-		t.Fatalf("expected mounted move_speed 10.8 in world enter, got %+v", stats["move_speed"])
+	if moveSpeed, ok := stats["move_speed"].(float64); !ok || moveSpeed != 4.05 {
+		t.Fatalf("expected mounted move_speed 4.05 in world enter, got %+v", stats["move_speed"])
 	}
 	pets, ok := selfState["pets"].([]any)
 	if !ok || len(pets) != 1 {
@@ -2282,8 +2294,8 @@ func TestWorldEnterRehydratesPersistedMountedPetState(t *testing.T) {
 	if len(runtime.pets) != 1 || !runtime.pets[0].IsMounted || !runtime.pets[0].IsSummoned {
 		t.Fatalf("expected runtime to rehydrate mounted summoned pet, got %+v", runtime.pets)
 	}
-	if runtime.derivedStats.MoveSpeed != 10.8 {
-		t.Fatalf("expected runtime mounted move speed 10.8, got %v", runtime.derivedStats.MoveSpeed)
+	if runtime.derivedStats.MoveSpeed != 4.05 {
+		t.Fatalf("expected runtime mounted move speed 4.05, got %v", runtime.derivedStats.MoveSpeed)
 	}
 	if petEntity, exists := runtime.activePetEntity(); !exists || petEntity == nil || petEntity.EntityType != petEntityType {
 		t.Fatalf("expected active pet entity after runtime rehydrate, got exists=%v entity=%+v", exists, petEntity)
@@ -2301,8 +2313,8 @@ func TestWorldEnterReflectsPersistedPartyStateAndInvites(t *testing.T) {
 			"base_class": "Fighter",
 			"sex":        "Male",
 			"hair_style": 1,
-			"hair_color": 2,
-			"face":       1,
+			"hair_color": "#6b4e37",
+			"skin_type":  2,
 			"name":       name,
 		}, token)
 		if response.StatusCode != http.StatusCreated {
@@ -2322,13 +2334,7 @@ func TestWorldEnterReflectsPersistedPartyStateAndInvites(t *testing.T) {
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
-	if err := env.store.Parties.Create(context.Background(), party, PartyMember{
-		PartyID:     party.ID,
-		CharacterID: leaderCharacterID,
-		JoinedAt:    now,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}); err != nil {
+	if err := env.store.Parties.Create(context.Background(), party, PartyMember{}); err != nil {
 		t.Fatalf("Parties.Create() error = %v", err)
 	}
 	if err := env.store.Parties.CreateInvite(context.Background(), &PartyInvite{
@@ -2351,16 +2357,8 @@ func TestWorldEnterReflectsPersistedPartyStateAndInvites(t *testing.T) {
 	}
 	leaderWorldEnterPayload := decodeBody[map[string]any](t, leaderWorldEnterResponse)
 	leaderSelfState := leaderWorldEnterPayload["self_state"].(map[string]any)
-	leaderParty, ok := leaderSelfState["party"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected leader self_state.party, got %+v", leaderSelfState["party"])
-	}
-	if leaderParty["party_id"] != party.ID || leaderParty["leader_character_id"] != leaderCharacterID {
-		t.Fatalf("unexpected leader party payload = %+v", leaderParty)
-	}
-	leaderMembers, ok := leaderParty["members"].([]any)
-	if !ok || len(leaderMembers) != 1 {
-		t.Fatalf("expected one persisted leader member, got %+v", leaderParty["members"])
+	if partyValue, exists := leaderSelfState["party"]; exists && partyValue != nil {
+		t.Fatalf("expected leader to remain outside a joined party until invite acceptance, got %+v", partyValue)
 	}
 
 	inviteeWorldEnterResponse := postJSON(t, env.httpServer.Client(), env.httpServer.URL+"/v1/world/enter", map[string]any{
@@ -2384,5 +2382,105 @@ func TestWorldEnterReflectsPersistedPartyStateAndInvites(t *testing.T) {
 	}
 	if firstInvite["invite_id"] != "persist_party_invite_1" || firstInvite["inviter_character_id"] != leaderCharacterID {
 		t.Fatalf("unexpected invite snapshot = %+v", firstInvite)
+	}
+}
+
+func TestWorldEnterReflectsPersistedClanStateAndInvites(t *testing.T) {
+	env := newPersistenceTestEnv(t)
+	_, leaderToken := registerAndLogin(t, env, "persist.clan.leader@test")
+	_, inviteeToken := registerAndLogin(t, env, "persist.clan.invitee@test")
+
+	createCharacter := func(token string, name string) string {
+		response := postJSON(t, env.httpServer.Client(), env.httpServer.URL+"/v1/characters", map[string]any{
+			"race":       "Human",
+			"base_class": "Fighter",
+			"sex":        "Male",
+			"hair_style": 1,
+			"hair_color": "#6b4e37",
+			"skin_type":  2,
+			"name":       name,
+		}, token)
+		if response.StatusCode != http.StatusCreated {
+			t.Fatalf("create character %s status = %d", name, response.StatusCode)
+		}
+		payload := decodeBody[map[string]any](t, response)
+		return payload["character"].(map[string]any)["character_id"].(string)
+	}
+
+	leaderCharacterID := createCharacter(leaderToken, "Clan Leader Persist")
+	inviteeCharacterID := createCharacter(inviteeToken, "Clan Invitee Persist")
+
+	now := time.Now().UTC()
+	clan := &Clan{
+		ID:                "persist_clan_state_1",
+		Name:              "Nightfall",
+		LeaderCharacterID: leaderCharacterID,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	leaderMember := ClanMember{
+		ClanID:      clan.ID,
+		CharacterID: leaderCharacterID,
+		JoinedAt:    now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := env.store.Clans.Create(context.Background(), clan, leaderMember); err != nil {
+		t.Fatalf("Clans.Create() error = %v", err)
+	}
+	if err := env.store.Clans.CreateInvite(context.Background(), &ClanInvite{
+		ID:                 "persist_clan_invite_1",
+		ClanID:             clan.ID,
+		InviterCharacterID: leaderCharacterID,
+		InviteeCharacterID: inviteeCharacterID,
+		ExpiresAt:          now.Add(time.Minute),
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}); err != nil {
+		t.Fatalf("Clans.CreateInvite() error = %v", err)
+	}
+
+	leaderWorldEnterResponse := postJSON(t, env.httpServer.Client(), env.httpServer.URL+"/v1/world/enter", map[string]any{
+		"character_id": leaderCharacterID,
+	}, leaderToken)
+	if leaderWorldEnterResponse.StatusCode != http.StatusOK {
+		t.Fatalf("leader world enter status = %d", leaderWorldEnterResponse.StatusCode)
+	}
+	leaderWorldEnterPayload := decodeBody[map[string]any](t, leaderWorldEnterResponse)
+	leaderSelfState := leaderWorldEnterPayload["self_state"].(map[string]any)
+	leaderClan, ok := leaderSelfState["clan"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected leader clan snapshot, got %+v", leaderSelfState["clan"])
+	}
+	if leaderClan["clan_id"] != clan.ID || leaderClan["leader_character_id"] != leaderCharacterID || leaderClan["name"] != "Nightfall" {
+		t.Fatalf("unexpected leader clan snapshot = %+v", leaderClan)
+	}
+	if leaderInvites, exists := leaderSelfState["clan_invites"]; exists {
+		if inviteSlice, ok := leaderInvites.([]any); ok && len(inviteSlice) > 0 {
+			t.Fatalf("expected leader to have no inbound clan invites, got %+v", inviteSlice)
+		}
+	}
+
+	inviteeWorldEnterResponse := postJSON(t, env.httpServer.Client(), env.httpServer.URL+"/v1/world/enter", map[string]any{
+		"character_id": inviteeCharacterID,
+	}, inviteeToken)
+	if inviteeWorldEnterResponse.StatusCode != http.StatusOK {
+		t.Fatalf("invitee world enter status = %d", inviteeWorldEnterResponse.StatusCode)
+	}
+	inviteeWorldEnterPayload := decodeBody[map[string]any](t, inviteeWorldEnterResponse)
+	inviteeSelfState := inviteeWorldEnterPayload["self_state"].(map[string]any)
+	if clanValue, exists := inviteeSelfState["clan"]; exists && clanValue != nil {
+		t.Fatalf("expected invitee to have no joined clan yet, got %+v", clanValue)
+	}
+	invites, ok := inviteeSelfState["clan_invites"].([]any)
+	if !ok || len(invites) != 1 {
+		t.Fatalf("expected one persisted clan invite, got %+v", inviteeSelfState["clan_invites"])
+	}
+	firstInvite, ok := invites[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected invite snapshot map, got %+v", invites[0])
+	}
+	if firstInvite["invite_id"] != "persist_clan_invite_1" || firstInvite["clan_id"] != clan.ID || firstInvite["clan_name"] != "Nightfall" {
+		t.Fatalf("unexpected clan invite snapshot = %+v", firstInvite)
 	}
 }

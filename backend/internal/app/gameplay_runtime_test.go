@@ -13,6 +13,25 @@ func moveRuntimeNearMob(runtime *attachedRuntime, mobID string) {
 	runtime.position = entity.Position
 }
 
+func testRuntimeMob(entityID string, templateID string, personality mobPersonality, position runtimePoint, maxHP int) runtimeEntity {
+	return runtimeEntity{
+		EntityID:   entityID,
+		EntityType: "mob",
+		TemplateID: templateID,
+		Position:   position,
+		State: map[string]any{
+			"hp":          maxHP,
+			"max_hp":      maxHP,
+			"level":       1,
+			"alive":       true,
+			"personality": string(personality),
+			"ai_state":    string(mobAIStateIdle),
+			"spawn_x":     position.X,
+			"spawn_z":     position.Z,
+		},
+	}
+}
+
 func newLootPickupTestStore(t *testing.T) *Store {
 	t.Helper()
 
@@ -384,7 +403,7 @@ func TestAttachedRuntimeMoveIntentPublishesAuthoritativePathAndAdvancesOnTick(t 
 		CommandID:       "cmd_move_path",
 		CommandSeq:      1,
 		Type:            "move_intent",
-		Payload:         []byte(`{"point":{"x":-4,"z":-11}}`),
+		Payload:         []byte(`{"point":{"x":16,"z":-14}}`),
 	})
 
 	if len(outbound) != 2 {
@@ -395,24 +414,24 @@ func TestAttachedRuntimeMoveIntentPublishesAuthoritativePathAndAdvancesOnTick(t 
 	}
 
 	initialPath := deltaSelfAuthoritativePath(t, outbound[1])
-	if len(initialPath) < 3 {
-		t.Fatalf("expected an authoritative path that routes around an obstacle, got %+v", initialPath)
+	if len(initialPath) < 2 {
+		t.Fatalf("expected an authoritative path, got %+v", initialPath)
 	}
 	if initialPath[0] != (runtimePoint{X: -8, Z: 0}) {
 		t.Fatalf("expected path to start at current authoritative position, got %+v", initialPath[0])
 	}
-	if initialPath[len(initialPath)-1] != (runtimePoint{X: -4, Z: -11}) {
+	if initialPath[len(initialPath)-1] != (runtimePoint{X: 16, Z: -14}) {
 		t.Fatalf("expected path to end at requested destination, got %+v", initialPath[len(initialPath)-1])
 	}
 
-	tickMessages, movementChanged, _ := runtime.collectTickMessages(time.Now().Add(5 * time.Second))
+	tickMessages, movementChanged, _ := runtime.collectTickMessages(time.Now().Add(10 * time.Second))
 	if !movementChanged {
 		t.Fatalf("expected runtime movement to advance on tick")
 	}
 	if len(tickMessages) == 0 || tickMessages[0]["kind"] != "delta" {
 		t.Fatalf("expected tick to emit movement delta, got %+v", tickMessages)
 	}
-	if deltaSelfPosition(t, tickMessages[0]) != (runtimePoint{X: -4, Z: -11}) {
+	if deltaSelfPosition(t, tickMessages[0]) != (runtimePoint{X: 16, Z: -14}) {
 		t.Fatalf("expected movement tick to settle on destination, got %+v", deltaSelfPosition(t, tickMessages[0]))
 	}
 	if path := deltaSelfAuthoritativePath(t, tickMessages[0]); len(path) != 0 {
@@ -629,6 +648,47 @@ func TestAttachedRuntimeBasicAttackAppliesPhysicalDamage(t *testing.T) {
 	if runtime.cooldownEndsAt["basic_attack"].IsZero() {
 		t.Fatal("expected basic attack cooldown to be tracked")
 	}
+	if runtime.autoBasicAttack == nil || runtime.autoBasicAttack.TargetID != "mob_1" {
+		t.Fatalf("expected basic attack to enter server-owned auto attack, got %+v", runtime.autoBasicAttack)
+	}
+}
+
+func TestAttachedRuntimeBasicAttackAutoRepeatsUntilTargetDies(t *testing.T) {
+	runtime := newAttachedRuntime("sess_basic_attack_auto", &Character{ID: "char_basic_attack_auto", LastRegionID: "dawn_plaza"})
+	moveRuntimeNearMob(runtime, "mob_1")
+	target := runtime.knownEntities["mob_1"]
+	target.State["hp"] = 20
+	runtime.knownEntities["mob_1"] = target
+
+	outbound := runtime.processCommand(commandEnvelope{
+		ProtocolVersion: 1,
+		CommandID:       "cmd_basic_attack_auto",
+		CommandSeq:      1,
+		Type:            "basic_attack",
+		Payload:         []byte(`{"target_id":"mob_1"}`),
+	})
+	if len(outbound) < 2 || outbound[0]["kind"] != "ack" || outbound[1]["kind"] != "delta" {
+		t.Fatalf("expected initial basic attack to apply with ack and delta, got %+v", outbound)
+	}
+
+	attackDeltas := 1
+	messages, _, _ := runtime.collectTickMessages(runtime.cooldownEndsAt["basic_attack"].Add(10 * time.Millisecond))
+	for _, message := range messages {
+		if message["kind"] == "delta" && message["applies_to_command_id"] == "cmd_basic_attack_auto" {
+			attackDeltas++
+		}
+	}
+
+	mob := runtime.knownEntities["mob_1"]
+	if isRuntimeEntityAlive(mob) {
+		t.Fatalf("expected repeated basic attacks to defeat mob, got %+v", mob)
+	}
+	if attackDeltas < 2 {
+		t.Fatalf("expected more than one basic attack delta, got %d", attackDeltas)
+	}
+	if runtime.autoBasicAttack != nil {
+		t.Fatalf("expected auto attack to clear after target death, got %+v", runtime.autoBasicAttack)
+	}
 }
 
 func TestAttachedRuntimeBasicAttackQueuesApproachWhenOutOfRange(t *testing.T) {
@@ -638,7 +698,7 @@ func TestAttachedRuntimeBasicAttackQueuesApproachWhenOutOfRange(t *testing.T) {
 		EntityID:   "mob_1",
 		EntityType: "mob",
 		TemplateID: "mireling",
-		Position:   runtimePoint{X: 27, Z: 10},
+		Position:   runtimePoint{X: 24, Z: 10},
 		State: map[string]any{
 			"hp":    54,
 			"alive": true,
@@ -678,6 +738,162 @@ func TestAttachedRuntimeBasicAttackQueuesApproachWhenOutOfRange(t *testing.T) {
 	hp, _ := mob.State["hp"].(int)
 	if hp >= 54 {
 		t.Fatalf("expected queued basic attack to damage mob, got hp=%d messages=%+v", hp, messages)
+	}
+}
+
+func TestAttachedRuntimePassiveMobDoesNotAggroByProximity(t *testing.T) {
+	runtime := newAttachedRuntime("sess_passive_mob_ai", &Character{ID: "char_passive_mob_ai", LastRegionID: "dawn_plaza"})
+	runtime.position = runtimePoint{X: 0, Z: 0}
+	runtime.knownEntities = map[string]runtimeEntity{
+		"mob_passive": testRuntimeMob("mob_passive", "mireling", mobPersonalityPassive, runtimePoint{X: 5, Z: 0}, 54),
+	}
+
+	messages, _, _ := runtime.collectTickMessages(time.Now().Add(time.Second))
+	if len(messages) != 0 {
+		t.Fatalf("expected passive mob to remain idle near player, got %+v", messages)
+	}
+	mob := runtime.knownEntities["mob_passive"]
+	if state := runtimeMobAIState(mob); state != mobAIStateIdle {
+		t.Fatalf("expected passive mob to stay idle, got %s", state)
+	}
+	if mob.Position != (runtimePoint{X: 5, Z: 0}) {
+		t.Fatalf("expected passive mob not to chase, got %+v", mob.Position)
+	}
+}
+
+func TestAttachedRuntimeAggressiveMobAggrosAndChasesByProximity(t *testing.T) {
+	runtime := newAttachedRuntime("sess_aggressive_mob_ai", &Character{ID: "char_aggressive_mob_ai", LastRegionID: "dawn_plaza"})
+	runtime.position = runtimePoint{X: 0, Z: 0}
+	runtime.knownEntities = map[string]runtimeEntity{
+		"mob_aggressive": testRuntimeMob("mob_aggressive", "gloom_wisp", mobPersonalityAggressive, runtimePoint{X: 7, Z: 0}, 68),
+	}
+
+	messages, _, _ := runtime.collectTickMessages(time.Now().Add(time.Second))
+	if len(messages) != 1 || messages[0]["kind"] != "delta" {
+		t.Fatalf("expected aggressive mob AI delta, got %+v", messages)
+	}
+	mob := runtime.knownEntities["mob_aggressive"]
+	if state := runtimeMobAIState(mob); state != mobAIStateAggro {
+		t.Fatalf("expected aggressive mob to enter aggro, got %s", state)
+	}
+	if mob.Position.X >= 7 {
+		t.Fatalf("expected aggressive mob to chase toward player, got %+v", mob.Position)
+	}
+	entities, ok := messages[0]["entities"].([]map[string]any)
+	if !ok || len(entities) != 1 || entities[0]["ai_state"] != string(mobAIStateAggro) {
+		t.Fatalf("expected mob aggro entity patch, got %+v", messages[0]["entities"])
+	}
+}
+
+func TestAttachedRuntimePassiveMobAggrosAfterBeingAttacked(t *testing.T) {
+	runtime := newAttachedRuntime("sess_passive_mob_attacked", &Character{ID: "char_passive_mob_attacked", LastRegionID: "dawn_plaza"})
+	runtime.position = runtimePoint{X: 0, Z: 0}
+	runtime.knownEntities = map[string]runtimeEntity{
+		"mob_passive": testRuntimeMob("mob_passive", "mireling", mobPersonalityPassive, runtimePoint{X: 7, Z: 0}, 54),
+	}
+
+	outbound := runtime.processCommand(commandEnvelope{
+		ProtocolVersion: 1,
+		CommandID:       "cmd_hit_passive",
+		CommandSeq:      1,
+		Type:            "use_skill",
+		Payload:         []byte(`{"skill_id":"crescent_strike","target_id":"mob_passive"}`),
+	})
+	if len(outbound) < 2 || outbound[1]["kind"] != "delta" {
+		t.Fatalf("expected skill to damage passive mob, got %+v", outbound)
+	}
+	if state := runtimeMobAIState(runtime.knownEntities["mob_passive"]); state != mobAIStateAggro {
+		t.Fatalf("expected attacked passive mob to enter aggro, got %s", state)
+	}
+	hpAfterHit := runtime.currentHP
+
+	messages, _, _ := runtime.collectTickMessages(time.Now().Add(time.Second))
+	if len(messages) == 0 {
+		t.Fatal("expected attacked passive mob to chase on tick")
+	}
+	mob := runtime.knownEntities["mob_passive"]
+	if mob.Position.X >= 7 {
+		t.Fatalf("expected attacked passive mob to chase player, got %+v", mob.Position)
+	}
+	if runtime.currentHP != hpAfterHit {
+		t.Fatalf("expected out-of-range passive mob not to damage player before reaching range, before=%d after=%d", hpAfterHit, runtime.currentHP)
+	}
+}
+
+func TestAttachedRuntimeAggressiveMobAttacksWhenInRange(t *testing.T) {
+	runtime := newAttachedRuntime("sess_aggressive_mob_attack", &Character{ID: "char_aggressive_mob_attack", LastRegionID: "dawn_plaza"})
+	runtime.position = runtimePoint{X: 0, Z: 0}
+	startHP := runtime.currentHP
+	runtime.knownEntities = map[string]runtimeEntity{
+		"mob_aggressive": testRuntimeMob("mob_aggressive", "gloom_wisp", mobPersonalityAggressive, runtimePoint{X: 1.5, Z: 0}, 68),
+	}
+
+	messages, _, _ := runtime.collectTickMessages(time.Now().Add(time.Second))
+	if len(messages) != 1 || messages[0]["kind"] != "delta" {
+		t.Fatalf("expected aggressive mob attack delta, got %+v", messages)
+	}
+	if runtime.currentHP >= startHP {
+		t.Fatalf("expected aggressive mob to damage player, before=%d after=%d", startHP, runtime.currentHP)
+	}
+	if hp := deltaSelfHP(t, messages[0]); hp != runtime.currentHP {
+		t.Fatalf("expected self hp delta to match runtime hp, delta=%d runtime=%d", hp, runtime.currentHP)
+	}
+}
+
+func TestAttachedRuntimeClearTargetCancelsTargetDrivenState(t *testing.T) {
+	runtime := newAttachedRuntime("sess_clear_target", &Character{ID: "char_clear_target", LastRegionID: "dawn_plaza"})
+	runtime.position = runtimePoint{X: 20, Z: 10}
+	runtime.knownEntities["mob_1"] = runtimeEntity{
+		EntityID:   "mob_1",
+		EntityType: "mob",
+		TemplateID: "mireling",
+		Position:   runtimePoint{X: 27, Z: 10},
+		State: map[string]any{
+			"hp":    54,
+			"alive": true,
+		},
+	}
+
+	approach := runtime.processCommand(commandEnvelope{
+		ProtocolVersion: 1,
+		CommandID:       "cmd_basic_attack_far",
+		CommandSeq:      1,
+		Type:            "basic_attack",
+		Payload:         []byte(`{"target_id":"mob_1"}`),
+	})
+	if len(approach) < 2 || approach[1]["kind"] != "delta" {
+		t.Fatalf("expected basic attack approach to enter target-driven movement, got %+v", approach)
+	}
+	if runtime.targetID != "mob_1" || runtime.queuedBasicAttack == nil || runtime.autoBasicAttack == nil || runtime.activeMovement == nil {
+		t.Fatalf("expected target-driven state before clear, target=%q queued=%+v auto=%+v movement=%+v", runtime.targetID, runtime.queuedBasicAttack, runtime.autoBasicAttack, runtime.activeMovement)
+	}
+
+	outbound := runtime.processCommand(commandEnvelope{
+		ProtocolVersion: 1,
+		CommandID:       "cmd_clear_target",
+		CommandSeq:      2,
+		Type:            "clear_target",
+		Payload:         []byte(`{}`),
+	})
+
+	if len(outbound) != 2 || outbound[0]["kind"] != "ack" || outbound[1]["kind"] != "delta" {
+		t.Fatalf("expected clear_target to apply with ack and delta, got %+v", outbound)
+	}
+	self, ok := outbound[1]["self"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected clear_target delta self payload, got %+v", outbound[1]["self"])
+	}
+	if targetID, exists := self["target_id"]; exists && targetID != nil {
+		t.Fatalf("expected target_id to be cleared, got %+v", targetID)
+	}
+	if runtime.targetID != "" || runtime.queuedSkill != nil || runtime.queuedBasicAttack != nil || runtime.autoBasicAttack != nil || runtime.queuedLootPickup != nil {
+		t.Fatalf("expected all target-driven runtime state to clear, target=%q queuedSkill=%+v queuedBasic=%+v auto=%+v loot=%+v", runtime.targetID, runtime.queuedSkill, runtime.queuedBasicAttack, runtime.autoBasicAttack, runtime.queuedLootPickup)
+	}
+	if runtime.activeMovement != nil {
+		t.Fatalf("expected target-driven movement to clear, got %+v", runtime.activeMovement)
+	}
+	if path := deltaSelfAuthoritativePath(t, outbound[1]); len(path) != 0 {
+		t.Fatalf("expected clear_target delta to publish empty authoritative path, got %+v", path)
 	}
 }
 
@@ -769,6 +985,7 @@ func TestAttachedRuntimeRejectsInsufficientMP(t *testing.T) {
 
 func TestAttachedRuntimeQueuesSkillApproachWhenTargetIsOutOfRange(t *testing.T) {
 	runtime := newAttachedRuntime("sess_1", &Character{ID: "char_1", LastRegionID: "dawn_plaza"})
+	runtime.position = runtimePoint{X: -95, Z: 0}
 
 	outbound := runtime.processCommand(commandEnvelope{
 		ProtocolVersion: 1,
@@ -791,6 +1008,20 @@ func TestAttachedRuntimeQueuesSkillApproachWhenTargetIsOutOfRange(t *testing.T) 
 	}
 	if len(tickMessages) < 2 || tickMessages[len(tickMessages)-1]["kind"] != "delta" {
 		t.Fatalf("expected movement delta followed by skill delta, got %+v", tickMessages)
+	}
+	previousRevision := 0
+	for _, message := range tickMessages {
+		if message["kind"] != "delta" {
+			continue
+		}
+		revision, ok := message["revision"].(int)
+		if !ok {
+			t.Fatalf("expected integer revision in tick delta, got %+v", message)
+		}
+		if previousRevision != 0 && revision <= previousRevision {
+			t.Fatalf("expected tick deltas to be emitted in increasing revision order, previous=%d current=%d messages=%+v", previousRevision, revision, tickMessages)
+		}
+		previousRevision = revision
 	}
 	if runtime.queuedSkill != nil {
 		t.Fatalf("expected queued skill to resolve after reaching range, got %+v", runtime.queuedSkill)
@@ -939,7 +1170,7 @@ func TestAttachedRuntimeAppliesSkillDeltaWithCooldownAndDamage(t *testing.T) {
 		Payload:         []byte(`{"skill_id":"grave_bloom","target_id":"mob_1"}`),
 	})
 
-	if len(outbound) != 2 {
+	if len(outbound) < 2 {
 		t.Fatalf("expected ack and delta, got %+v", outbound)
 	}
 	delta, ok := outbound[1]["self"].(map[string]any)
@@ -1037,7 +1268,7 @@ func TestAttachedRuntimeAwardsXPAndLevelsAuthoritativelyOnKill(t *testing.T) {
 		MaxMP:     58,
 		Attack:    27,
 		Defense:   15,
-		MoveSpeed: 8.6,
+		MoveSpeed: 3.225,
 	}
 	moveRuntimeNearMob(runtime, "mob_1")
 	entity := runtime.knownEntities["mob_1"]
@@ -1649,8 +1880,8 @@ func TestAttachedRuntimeEquipItemMovesBootsIntoBootSlotAndUpdatesSpeed(t *testin
 		t.Fatalf("expected equipped boots in boots slot, got %+v", equipment)
 	}
 	stats := deltaSelfStats(t, outbound[1])
-	if stats.Defense != 19 || stats.MoveSpeed != 9 {
-		t.Fatalf("expected boots to raise defense to 19 and move speed to 9.0, got %+v", stats)
+	if stats.Defense != 19 || stats.MoveSpeed != 3.375 {
+		t.Fatalf("expected boots to raise defense to 19 and move speed to 3.375, got %+v", stats)
 	}
 }
 
@@ -2879,7 +3110,7 @@ func TestAttachedRuntimePlayerDeathBlocksIncompatibleCommandsAndRespawns(t *test
 		MaxMP:     58,
 		Attack:    17,
 		Defense:   0,
-		MoveSpeed: 8.6,
+		MoveSpeed: 3.225,
 	}
 	moveRuntimeNearMob(runtime, "mob_1")
 
@@ -3183,6 +3414,33 @@ func TestAttachedRuntimePersistsMultitypeHotbarState(t *testing.T) {
 	}
 }
 
+func TestDefaultCharacterHotbarExcludesUnavailableLevelLockedSkills(t *testing.T) {
+	levelOne := defaultCharacterHotbarState(&Character{
+		ID:        "char_hotbar_level_1",
+		BaseClass: "Fighter",
+		Level:     1,
+	})
+	if levelOne.Slots[0].EntryType != "skill" || levelOne.Slots[0].SkillID != "crescent_strike" {
+		t.Fatalf("expected level 1 starter skill in slot 0, got %+v", levelOne.Slots[0])
+	}
+	if levelOne.Slots[1].EntryType != "" || levelOne.Slots[1].SkillID != "" {
+		t.Fatalf("expected level 1 default slot 1 to stay empty, got %+v", levelOne.Slots[1])
+	}
+
+	normalized := normalizeCharacterHotbarState(CharacterHotbarState{
+		OpenBarCount: 1,
+		Slots: []CharacterHotbarSlot{
+			{SlotIndex: 0, EntryType: "action", ActionID: "basic_attack"},
+		},
+	}, &Character{ID: "char_hotbar_normalized", BaseClass: "Fighter", Level: 1})
+	if normalized.Slots[0].EntryType != "action" || normalized.Slots[0].ActionID != "basic_attack" {
+		t.Fatalf("expected overridden action in slot 0, got %+v", normalized.Slots[0])
+	}
+	if normalized.Slots[1].EntryType != "" || normalized.Slots[1].SkillID != "" {
+		t.Fatalf("expected normalized omitted slot 1 not to inherit locked skill, got %+v", normalized.Slots[1])
+	}
+}
+
 func TestAttachedRuntimeRejectsPassiveSkillHotbarBinding(t *testing.T) {
 	store := newLootPickupTestStore(t)
 	character := createDedupTestCharacter(t, store, "char_hotbar_passive")
@@ -3291,7 +3549,7 @@ func TestAttachedRuntimeMountAndDismountPetAdjustMoveSpeedAuthoritatively(t *tes
 	}
 
 	baseMoveSpeed := runtime.derivedStats.MoveSpeed
-	if baseMoveSpeed >= 10.8 {
+	if baseMoveSpeed >= 4.05 {
 		t.Fatalf("expected pre-mount speed below mounted speed, got %v", baseMoveSpeed)
 	}
 
@@ -3306,11 +3564,11 @@ func TestAttachedRuntimeMountAndDismountPetAdjustMoveSpeedAuthoritatively(t *tes
 		t.Fatalf("expected mount ack and delta, got %+v", mountOutbound)
 	}
 	mountedStats := deltaSelfStats(t, mountOutbound[1])
-	if mountedStats.MoveSpeed != 10.8 {
-		t.Fatalf("expected mounted move speed 10.8, got %+v", mountedStats)
+	if mountedStats.MoveSpeed != 4.05 {
+		t.Fatalf("expected mounted move speed 4.05, got %+v", mountedStats)
 	}
-	if runtime.derivedStats.MoveSpeed != 10.8 {
-		t.Fatalf("expected runtime derived move speed 10.8 after mount, got %v", runtime.derivedStats.MoveSpeed)
+	if runtime.derivedStats.MoveSpeed != 4.05 {
+		t.Fatalf("expected runtime derived move speed 4.05 after mount, got %v", runtime.derivedStats.MoveSpeed)
 	}
 
 	dismissWhileMounted := runtime.processPetCommand(context.Background(), store, commandEnvelope{

@@ -93,12 +93,33 @@ type PartyRepository interface {
 	UpdateLeader(ctx context.Context, partyID string, leaderCharacterID string) error
 	Delete(ctx context.Context, partyID string) error
 	ListPendingInvitesByInvitee(ctx context.Context, characterID string, now time.Time) ([]PartyInvite, error)
+	ListPendingInvitesByInviter(ctx context.Context, characterID string, now time.Time) ([]PartyInvite, error)
 	ListPendingInvitesByParty(ctx context.Context, partyID string, now time.Time) ([]PartyInvite, error)
 	GetInviteByID(ctx context.Context, inviteID string) (*PartyInvite, error)
 	CreateInvite(ctx context.Context, invite *PartyInvite) error
 	DeleteInvite(ctx context.Context, inviteID string) error
 	DeleteInvitesByParty(ctx context.Context, partyID string) error
 	DeletePendingInviteForInvitee(ctx context.Context, partyID string, inviteeCharacterID string) error
+	ExpireInvites(ctx context.Context, now time.Time) error
+}
+
+type ClanRepository interface {
+	GetByID(ctx context.Context, clanID string) (*Clan, error)
+	GetByName(ctx context.Context, name string) (*Clan, error)
+	GetByCharacterID(ctx context.Context, characterID string) (*Clan, error)
+	ListMembers(ctx context.Context, clanID string) ([]ClanMember, error)
+	Create(ctx context.Context, clan *Clan, leader ClanMember) error
+	AddMember(ctx context.Context, member *ClanMember) error
+	RemoveMember(ctx context.Context, clanID string, characterID string) error
+	Delete(ctx context.Context, clanID string) error
+	ListPendingInvitesByInvitee(ctx context.Context, characterID string, now time.Time) ([]ClanInvite, error)
+	ListPendingInvitesByInviter(ctx context.Context, characterID string, now time.Time) ([]ClanInvite, error)
+	ListPendingInvitesByClan(ctx context.Context, clanID string, now time.Time) ([]ClanInvite, error)
+	GetInviteByID(ctx context.Context, inviteID string) (*ClanInvite, error)
+	CreateInvite(ctx context.Context, invite *ClanInvite) error
+	DeleteInvite(ctx context.Context, inviteID string) error
+	DeleteInvitesByClan(ctx context.Context, clanID string) error
+	DeletePendingInviteForInvitee(ctx context.Context, clanID string, inviteeCharacterID string) error
 	ExpireInvites(ctx context.Context, now time.Time) error
 }
 
@@ -167,6 +188,7 @@ type Store struct {
 	CharacterPets      CharacterPetRepository
 	CharacterQuests    CharacterQuestRepository
 	Parties            PartyRepository
+	Clans              ClanRepository
 	ChatMessages       ChatMessageRepository
 	Items              CharacterItemRepository
 	StorageTransfers   StorageTransferRecordRepository
@@ -208,6 +230,7 @@ func NewStore(databaseURL string) (*Store, error) {
 		CharacterPets:      postgresCharacterPetRepo{backend: backend},
 		CharacterQuests:    postgresCharacterQuestRepo{backend: backend},
 		Parties:            postgresPartyRepo{backend: backend},
+		Clans:              postgresClanRepo{backend: backend},
 		ChatMessages:       postgresChatMessageRepo{backend: backend},
 		Items:              postgresCharacterItemRepo{backend: backend},
 		StorageTransfers:   postgresStorageTransferRecordRepo{backend: backend},

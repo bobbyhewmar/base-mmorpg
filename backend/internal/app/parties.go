@@ -5,7 +5,10 @@ import (
 	"time"
 )
 
-const partyInviteTTL = 90 * time.Second
+const (
+	partyInviteTTL  = 10 * time.Second
+	partyMaxMembers = 9
+)
 
 type Party struct {
 	ID                string

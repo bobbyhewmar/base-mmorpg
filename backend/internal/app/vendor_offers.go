@@ -20,6 +20,22 @@ var vendorOffers = map[string]VendorOffer{
 		PriceCurrencyTemplateID: "duskgold",
 		PriceAmount:             8,
 	},
+	"merchant_staff_offer": {
+		ID:                      "merchant_staff_offer",
+		NPCEntityID:             "npc_merchant",
+		TemplateID:              "novice_oak_staff",
+		Quantity:                1,
+		PriceCurrencyTemplateID: "duskgold",
+		PriceAmount:             8,
+	},
+	"merchant_robe_offer": {
+		ID:                      "merchant_robe_offer",
+		NPCEntityID:             "npc_merchant",
+		TemplateID:              "moonthread_robe",
+		Quantity:                1,
+		PriceCurrencyTemplateID: "duskgold",
+		PriceAmount:             10,
+	},
 	"merchant_ruin_shard_bundle": {
 		ID:                      "merchant_ruin_shard_bundle",
 		NPCEntityID:             "npc_merchant",

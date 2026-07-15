@@ -58,7 +58,7 @@ var petTemplates = map[string]PetTemplate{
 		BaseName:            "Mireling Strider",
 		Kind:                petKindPetMount,
 		TameRange:           4.5,
-		MountedMoveSpeed:    10.8,
+		MountedMoveSpeed:    4.05,
 		VisualTemplateID:    "mireling",
 	},
 }

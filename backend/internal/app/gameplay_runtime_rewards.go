@@ -340,8 +340,21 @@ func (runtime *attachedRuntime) applyDamage(entityID string, amount int) map[str
 	}
 	entity.State["hp"] = nextHP
 	entity.State["alive"] = nextHP > 0
+	if nextHP > 0 {
+		entity.State["ai_state"] = string(mobAIStateAggro)
+		entity.State["aggro_target_id"] = runtime.characterID
+	} else {
+		entity.State["ai_state"] = string(mobAIStateDead)
+		delete(entity.State, "aggro_target_id")
+	}
 	runtime.knownEntities[entityID] = entity
 	if wasAlive && nextHP == 0 {
+		if runtime.queuedBasicAttack != nil && runtime.queuedBasicAttack.TargetID == entityID {
+			runtime.queuedBasicAttack = nil
+		}
+		if runtime.autoBasicAttack != nil && runtime.autoBasicAttack.TargetID == entityID {
+			runtime.autoBasicAttack = nil
+		}
 		xpReward := mobTemplateXPReward(entity.TemplateID)
 		if nextQuestState, changed := questProgressedByMobKill(runtime.questState, entity.TemplateID); changed {
 			nextQuestState.CharacterID = runtime.characterID
@@ -359,28 +372,17 @@ func (runtime *attachedRuntime) applyDamage(entityID string, amount int) map[str
 		runtime.scheduleMobLifecycle(entityID, time.Now())
 	}
 	return map[string]any{
-		"entity_id": entityID,
-		"hp":        nextHP,
-		"alive":     nextHP > 0,
+		"entity_id":       entityID,
+		"hp":              nextHP,
+		"alive":           nextHP > 0,
+		"ai_state":        entity.State["ai_state"],
+		"personality":     entity.State["personality"],
+		"aggro_target_id": entity.State["aggro_target_id"],
 	}
 }
 
 func (runtime *attachedRuntime) applyRetaliation(entityID string) {
-	if entityID == "" || runtime.currentHP <= 0 {
-		return
-	}
-	entity, exists := runtime.knownEntities[entityID]
-	if !exists || entity.EntityType != "mob" || !isRuntimeEntityAlive(entity) {
-		return
-	}
-	damage := incomingPlayerDamage(mobTemplateAttack(entity.TemplateID), runtime.derivedStats.Defense)
-	runtime.currentHP -= damage
-	if runtime.currentHP < 0 {
-		runtime.currentHP = 0
-	}
-	if runtime.currentHP == 0 {
-		runtime.enterDeadState(time.Now())
-	}
+	runtime.markMobAggroAndMaybeCounterAttackLocked(entityID, time.Now())
 }
 
 func (runtime *attachedRuntime) spawnLootForMob(entity runtimeEntity) string {
@@ -418,8 +420,16 @@ func (runtime *attachedRuntime) mobLootDrop(templateID string) (string, int) {
 	switch templateID {
 	case "mireling":
 		return "duskgold", 4
+	case "gloom_wisp":
+		return "duskgold", 5
 	case "ruin_stalker":
 		return "duskgold", 6
+	case "stonebound_raider":
+		return "duskgold", 8
+	case "ashen_howler":
+		return "duskgold", 12
+	case "gravewarden":
+		return "duskgold", 18
 	default:
 		return "", 0
 	}
@@ -429,8 +439,16 @@ func mobTemplateXPReward(templateID string) int {
 	switch templateID {
 	case "mireling":
 		return 22
+	case "gloom_wisp":
+		return 28
 	case "ruin_stalker":
 		return 34
+	case "stonebound_raider":
+		return 48
+	case "ashen_howler":
+		return 76
+	case "gravewarden":
+		return 112
 	default:
 		return 0
 	}
@@ -440,6 +458,7 @@ func (runtime *attachedRuntime) enterDeadState(now time.Time) {
 	runtime.targetID = ""
 	runtime.queuedSkill = nil
 	runtime.queuedBasicAttack = nil
+	runtime.autoBasicAttack = nil
 	runtime.cooldownEndsAt = map[string]time.Time{}
 
 	filtered := runtime.scheduledLifecycle[:0]

@@ -166,6 +166,9 @@ func TestMetricsEndpointTracksGameplayAttachAndCommandSignals(t *testing.T) {
 		t.Fatalf("expected reject for invalid envelope, got %+v", rejectMessage)
 	}
 
+	waitForMetricLine(t, httpServer.Client(), httpServer.URL, `l2bg_gameplay_commands_total{command_type="move_intent",result="applied"} 1`)
+	waitForMetricLine(t, httpServer.Client(), httpServer.URL, `l2bg_gameplay_command_duration_seconds_count{command_type="move_intent",result="applied"} 1`)
+
 	metricsBody := fetchMetricsBody(t, httpServer.Client(), httpServer.URL)
 	assertMetricLine(t, metricsBody, `l2bg_websocket_connections_active 1`)
 	assertMetricLine(t, metricsBody, `l2bg_attached_sessions_active 1`)
@@ -176,8 +179,6 @@ func TestMetricsEndpointTracksGameplayAttachAndCommandSignals(t *testing.T) {
 	assertMetricLine(t, metricsBody, `l2bg_gameplay_outbound_messages_total{kind="delta"} 1`)
 	assertMetricLine(t, metricsBody, `l2bg_gameplay_outbound_messages_total{kind="reject"} 1`)
 	assertMetricLine(t, metricsBody, `l2bg_gameplay_rejects_total{reason_code="protocol.invalid_envelope"} 1`)
-	assertMetricLine(t, metricsBody, `l2bg_gameplay_commands_total{command_type="move_intent",result="applied"} 1`)
-	assertMetricLine(t, metricsBody, `l2bg_gameplay_command_duration_seconds_count{command_type="move_intent",result="applied"} 1`)
 
 	if err := conn.Close(websocket.StatusNormalClosure, "metrics disconnect"); err != nil {
 		t.Fatalf("conn.Close() error = %v", err)

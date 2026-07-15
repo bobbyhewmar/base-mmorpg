@@ -18,7 +18,50 @@ func initialCharacterItemSeed(character *Character) []CharacterItem {
 			Quantity:      3,
 			ContainerKind: itemContainerInventory,
 		},
-		{
+	}
+
+	if character.BaseClass == "Mage" || character.BaseClass == "Reaver" {
+		items = append(items,
+			CharacterItem{
+				ID:            randomID("item"),
+				CharacterID:   character.ID,
+				TemplateID:    "novice_oak_staff",
+				Quantity:      1,
+				ContainerKind: itemContainerEquipment,
+				EquipSlot:     equipSlotWeapon,
+			},
+			CharacterItem{
+				ID:            randomID("item"),
+				CharacterID:   character.ID,
+				TemplateID:    "moonthread_robe",
+				Quantity:      1,
+				ContainerKind: itemContainerEquipment,
+				EquipSlot:     equipSlotChest,
+			},
+			CharacterItem{
+				ID:            randomID("item"),
+				CharacterID:   character.ID,
+				TemplateID:    "runesewn_gloves",
+				Quantity:      1,
+				ContainerKind: itemContainerInventory,
+				InstanceAttributes: &ItemInstanceAttributes{
+					Attack: 1,
+					MaxMP:  3,
+				},
+			},
+			CharacterItem{
+				ID:            randomID("item"),
+				CharacterID:   character.ID,
+				TemplateID:    "whisperstep_boots",
+				Quantity:      1,
+				ContainerKind: itemContainerInventory,
+			},
+		)
+		return items
+	}
+
+	items = append(items,
+		CharacterItem{
 			ID:            randomID("item"),
 			CharacterID:   character.ID,
 			TemplateID:    "wardkeeper_mantle",
@@ -26,7 +69,7 @@ func initialCharacterItemSeed(character *Character) []CharacterItem {
 			ContainerKind: itemContainerEquipment,
 			EquipSlot:     equipSlotChest,
 		},
-		{
+		CharacterItem{
 			ID:            randomID("item"),
 			CharacterID:   character.ID,
 			TemplateID:    "watcher_gloves",
@@ -37,24 +80,22 @@ func initialCharacterItemSeed(character *Character) []CharacterItem {
 				Defense: 1,
 			},
 		},
-		{
+		CharacterItem{
 			ID:            randomID("item"),
 			CharacterID:   character.ID,
 			TemplateID:    "pathrunner_boots",
 			Quantity:      1,
 			ContainerKind: itemContainerInventory,
 		},
-	}
-	if character.BaseClass == "Fighter" {
-		items = append(items, CharacterItem{
+		CharacterItem{
 			ID:            randomID("item"),
 			CharacterID:   character.ID,
 			TemplateID:    "ironwood_spear",
 			Quantity:      1,
 			ContainerKind: itemContainerEquipment,
 			EquipSlot:     equipSlotWeapon,
-		})
-	}
+		},
+	)
 	return items
 }
 
@@ -89,11 +130,19 @@ func itemTemplateEquipSlot(templateID string) (EquipSlot, bool) {
 	switch templateID {
 	case "ironwood_spear":
 		return equipSlotWeapon, true
+	case "novice_oak_staff":
+		return equipSlotWeapon, true
 	case "wardkeeper_mantle":
+		return equipSlotChest, true
+	case "moonthread_robe":
 		return equipSlotChest, true
 	case "watcher_gloves":
 		return equipSlotGloves, true
+	case "runesewn_gloves":
+		return equipSlotGloves, true
 	case "pathrunner_boots":
+		return equipSlotBoots, true
+	case "whisperstep_boots":
 		return equipSlotBoots, true
 	case "ruinbound_greaves":
 		return equipSlotBoots, true

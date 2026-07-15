@@ -24,6 +24,8 @@ type CharacterSelfState struct {
 	Quest          CharacterQuestSnapshot         `json:"quest"`
 	Party          *CharacterPartySnapshot        `json:"party,omitempty"`
 	PartyInvites   []CharacterPartyInviteSnapshot `json:"party_invites,omitempty"`
+	Clan           *CharacterClanSnapshot         `json:"clan,omitempty"`
+	ClanInvites    []CharacterClanInviteSnapshot  `json:"clan_invites,omitempty"`
 	NPCInteraction *CharacterNPCInteraction       `json:"npc_interaction,omitempty"`
 }
 
@@ -90,6 +92,9 @@ func persistedCharacterState(character *Character) Character {
 
 	state := *character
 	state.Level = normalizedCharacterLevel(state.Level)
+	if _, ok := normalizeCanonicalHairColor(state.HairColor); !ok {
+		state.HairColor = defaultHairColor
+	}
 	if state.XP < 0 {
 		state.XP = 0
 	}
@@ -126,25 +131,45 @@ func itemTemplateStatBonuses(templateID string) CharacterDerivedStats {
 		return CharacterDerivedStats{
 			Attack: 10,
 		}
+	case "novice_oak_staff":
+		return CharacterDerivedStats{
+			MaxMP:  14,
+			Attack: 8,
+		}
 	case "wardkeeper_mantle":
 		return CharacterDerivedStats{
 			MaxHP:   20,
 			Defense: 6,
+		}
+	case "moonthread_robe":
+		return CharacterDerivedStats{
+			MaxMP:   22,
+			Defense: 4,
 		}
 	case "watcher_gloves":
 		return CharacterDerivedStats{
 			Attack:  4,
 			Defense: 1,
 		}
+	case "runesewn_gloves":
+		return CharacterDerivedStats{
+			MaxMP:  8,
+			Attack: 3,
+		}
 	case "pathrunner_boots":
 		return CharacterDerivedStats{
 			Defense:   1,
-			MoveSpeed: 0.4,
+			MoveSpeed: 0.15,
+		}
+	case "whisperstep_boots":
+		return CharacterDerivedStats{
+			Defense:   1,
+			MoveSpeed: 0.13,
 		}
 	case "ruinbound_greaves":
 		return CharacterDerivedStats{
 			Defense:   2,
-			MoveSpeed: 0.6,
+			MoveSpeed: 0.225,
 		}
 	default:
 		return CharacterDerivedStats{}
@@ -182,6 +207,13 @@ func passiveSkillStatBonuses(character *Character) CharacterDerivedStats {
 		case "arcane_focus":
 			bonuses.MaxMP += 12
 			bonuses.Attack += 2
+		case "keen_senses":
+			bonuses.Attack += 2
+			bonuses.MoveSpeed += 0.1
+		case "grave_resolve":
+			bonuses.MaxCP += 6
+			bonuses.MaxMP += 8
+			bonuses.Defense += 1
 		}
 	}
 	return bonuses
@@ -227,6 +259,8 @@ func selfStateFromItems(
 	quest CharacterQuestState,
 	party *CharacterPartySnapshot,
 	partyInvites []CharacterPartyInviteSnapshot,
+	clan *CharacterClanSnapshot,
+	clanInvites []CharacterClanInviteSnapshot,
 ) CharacterSelfState {
 	state, stats := resourcePoolsForCharacter(character, items)
 	stats = applyMountedPetMoveSpeed(stats, pets)
@@ -245,6 +279,8 @@ func selfStateFromItems(
 		Quest:        questSnapshot(quest),
 		Party:        cloneCharacterPartySnapshot(party),
 		PartyInvites: cloneCharacterPartyInviteSnapshots(partyInvites),
+		Clan:         cloneCharacterClanSnapshot(clan),
+		ClanInvites:  cloneCharacterClanInviteSnapshots(clanInvites),
 	}
 }
 
@@ -274,8 +310,16 @@ func mobTemplateDefense(templateID string) int {
 	switch templateID {
 	case "mireling":
 		return 3
+	case "gloom_wisp":
+		return 4
 	case "ruin_stalker":
 		return 5
+	case "stonebound_raider":
+		return 7
+	case "ashen_howler":
+		return 10
+	case "gravewarden":
+		return 14
 	default:
 		return 0
 	}
@@ -285,8 +329,16 @@ func mobTemplateAttack(templateID string) int {
 	switch templateID {
 	case "mireling":
 		return 8
+	case "gloom_wisp":
+		return 10
 	case "ruin_stalker":
 		return 12
+	case "stonebound_raider":
+		return 15
+	case "ashen_howler":
+		return 21
+	case "gravewarden":
+		return 28
 	default:
 		return 0
 	}

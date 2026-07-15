@@ -95,6 +95,8 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 		outboundMessages = runtime.processPetCommand(auditCtx, s.store, command)
 	} else if command.Type == "invite_party_member" || command.Type == "accept_party_invite" || command.Type == "decline_party_invite" || command.Type == "leave_party" || command.Type == "kick_party_member" {
 		outboundMessages = s.processPartyCommand(auditCtx, session, runtime, command)
+	} else if command.Type == "create_clan" || command.Type == "invite_clan_member" || command.Type == "accept_clan_invite" || command.Type == "decline_clan_invite" || command.Type == "leave_clan" || command.Type == "kick_clan_member" || command.Type == "dissolve_clan" {
+		outboundMessages = s.processClanCommand(auditCtx, session, runtime, command)
 	} else if command.Type == "send_chat_message" {
 		outboundMessages = s.processChatCommand(auditCtx, session, runtime, command)
 	} else if command.Type == "set_hotbar_state" {
@@ -185,6 +187,20 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 			s.recordStoreError("parties.leave", errors.New("critical persistence failure"))
 		case "kick_party_member":
 			s.recordStoreError("parties.kick", errors.New("critical persistence failure"))
+		case "create_clan":
+			s.recordStoreError("clans.create", errors.New("critical persistence failure"))
+		case "invite_clan_member":
+			s.recordStoreError("clans.invite", errors.New("critical persistence failure"))
+		case "accept_clan_invite":
+			s.recordStoreError("clans.accept", errors.New("critical persistence failure"))
+		case "decline_clan_invite":
+			s.recordStoreError("clans.decline", errors.New("critical persistence failure"))
+		case "leave_clan":
+			s.recordStoreError("clans.leave", errors.New("critical persistence failure"))
+		case "kick_clan_member":
+			s.recordStoreError("clans.kick", errors.New("critical persistence failure"))
+		case "dissolve_clan":
+			s.recordStoreError("clans.dissolve", errors.New("critical persistence failure"))
 		case "send_chat_message":
 			s.recordStoreError("chat_messages.create", errors.New("critical persistence failure"))
 		}

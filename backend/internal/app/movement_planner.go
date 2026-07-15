@@ -11,6 +11,7 @@ const (
 	defaultMovementGridCellSize     = 1.0
 	defaultMovementPathVisitBudget  = 6000
 	defaultMovementLineSampleStride = 0.35
+	stonecrossPlayableHalfExtent    = 512.0
 )
 
 type movementPlanStatus string
@@ -44,12 +45,12 @@ type movementPlanner interface {
 }
 
 type regionGeodata struct {
-	RegionID    string
-	Version     string
-	Bounds      movementBounds
-	CellSize    float64
-	PathBudget  int
-	Obstacles   []movementObstacle
+	RegionID   string
+	Version    string
+	Bounds     movementBounds
+	CellSize   float64
+	PathBudget int
+	Obstacles  []movementObstacle
 }
 
 type movementBounds struct {
@@ -80,11 +81,11 @@ type movementGridCoord struct {
 }
 
 type movementGrid struct {
-	bounds     movementBounds
-	cellSize   float64
-	width      int
-	height     int
-	blocked    []bool
+	bounds      movementBounds
+	cellSize    float64
+	width       int
+	height      int
+	blocked     []bool
 	actorRadius float64
 }
 
@@ -93,24 +94,25 @@ var defaultMovementPlanner movementPlanner = newStaticRegionMovementPlanner()
 func newStaticRegionMovementPlanner() movementPlanner {
 	return &staticRegionMovementPlanner{
 		regions: map[string]regionGeodata{
-			"dawn_plaza": {
-				RegionID:   "dawn_plaza",
-				Version:    "dawn_plaza_geo_v1",
-				Bounds:     movementBounds{MinX: -18, MaxX: 97, MinZ: -16, MaxZ: 16},
-				CellSize:   defaultMovementGridCellSize,
-				PathBudget: defaultMovementPathVisitBudget,
-				Obstacles: []movementObstacle{
-					circleObstacle(-6, -6, 2.2),
-					circleObstacle(18, -4.8, 1.35),
-					circleObstacle(18, 4.8, 1.35),
-					rectObstacle(-12.4, -7.6, 6.2, 10.2),
-					circleObstacle(62, -10, 1.4),
-					circleObstacle(69, 10, 1.4),
-					circleObstacle(82, -11, 1.4),
-					circleObstacle(89, 8, 1.4),
-				},
-			},
+			startingRegionID: stonecrossPlazaGeodata(startingRegionID),
+			"dawn_plaza":     stonecrossPlazaGeodata("dawn_plaza"),
 		},
+	}
+}
+
+func stonecrossPlazaGeodata(regionID string) regionGeodata {
+	return regionGeodata{
+		RegionID: regionID,
+		Version:  "clean_plain_1024_geo_v1",
+		Bounds: movementBounds{
+			MinX: -stonecrossPlayableHalfExtent,
+			MaxX: stonecrossPlayableHalfExtent,
+			MinZ: -stonecrossPlayableHalfExtent,
+			MaxZ: stonecrossPlayableHalfExtent,
+		},
+		CellSize:   defaultMovementGridCellSize,
+		PathBudget: 300000,
+		Obstacles:  []movementObstacle{},
 	}
 }
 

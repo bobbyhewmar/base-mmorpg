@@ -55,10 +55,10 @@ var classTemplates = map[string]classTemplate{
 			MaxMP:     58,
 			Attack:    17,
 			Defense:   9,
-			MoveSpeed: 8.6,
+			MoveSpeed: 3.225,
 		},
 		CPGrowth:            12,
-		DefaultHotbarSkills: []string{"crescent_strike", "grave_bloom"},
+		DefaultHotbarSkills: []string{"crescent_strike"},
 		LearnedSkills: []classSkillGrant{
 			{SkillID: "crescent_strike", Category: skillCategoryActive, UnlockLevel: 1},
 			{SkillID: "iron_will", Category: skillCategoryPassive, UnlockLevel: 1},
@@ -75,14 +75,54 @@ var classTemplates = map[string]classTemplate{
 			MaxMP:     92,
 			Attack:    13,
 			Defense:   6,
-			MoveSpeed: 8.2,
+			MoveSpeed: 3.075,
 		},
 		CPGrowth:            9,
-		DefaultHotbarSkills: []string{"ember_shot", "astral_burst"},
+		DefaultHotbarSkills: []string{"ember_shot"},
 		LearnedSkills: []classSkillGrant{
 			{SkillID: "ember_shot", Category: skillCategoryActive, UnlockLevel: 1},
 			{SkillID: "arcane_focus", Category: skillCategoryPassive, UnlockLevel: 1},
 			{SkillID: "astral_burst", Category: skillCategoryActive, UnlockLevel: 2},
+		},
+	},
+	"Ranger": {
+		BaseClass:   "Ranger",
+		Title:       "Roadside Tracker",
+		ArchetypeID: "wild_stalker",
+		BaseStats: CharacterDerivedStats{
+			MaxCP:     68,
+			MaxHP:     108,
+			MaxMP:     68,
+			Attack:    16,
+			Defense:   7,
+			MoveSpeed: 3.3,
+		},
+		CPGrowth:            10,
+		DefaultHotbarSkills: []string{"thorn_jab"},
+		LearnedSkills: []classSkillGrant{
+			{SkillID: "thorn_jab", Category: skillCategoryActive, UnlockLevel: 1},
+			{SkillID: "keen_senses", Category: skillCategoryPassive, UnlockLevel: 1},
+			{SkillID: "verdant_snare", Category: skillCategoryActive, UnlockLevel: 2},
+		},
+	},
+	"Reaver": {
+		BaseClass:   "Reaver",
+		Title:       "Gravetide Adept",
+		ArchetypeID: "void_reaver",
+		BaseStats: CharacterDerivedStats{
+			MaxCP:     72,
+			MaxHP:     112,
+			MaxMP:     78,
+			Attack:    15,
+			Defense:   8,
+			MoveSpeed: 3.15,
+		},
+		CPGrowth:            11,
+		DefaultHotbarSkills: []string{"rift_cut"},
+		LearnedSkills: []classSkillGrant{
+			{SkillID: "rift_cut", Category: skillCategoryActive, UnlockLevel: 1},
+			{SkillID: "grave_resolve", Category: skillCategoryPassive, UnlockLevel: 1},
+			{SkillID: "nightfall_burst", Category: skillCategoryActive, UnlockLevel: 2},
 		},
 	},
 }
@@ -136,8 +176,11 @@ func defaultCharacterHotbarState(character *Character) CharacterHotbarState {
 	for slotIndex := 0; slotIndex < 36; slotIndex++ {
 		slot := CharacterHotbarSlot{SlotIndex: slotIndex}
 		if slotIndex < len(template.DefaultHotbarSkills) {
-			slot.EntryType = "skill"
-			slot.SkillID = template.DefaultHotbarSkills[slotIndex]
+			skillID := template.DefaultHotbarSkills[slotIndex]
+			if category, known := knownSkillCategory(character.BaseClass, character.Level, skillID); known && category == skillCategoryActive {
+				slot.EntryType = "skill"
+				slot.SkillID = skillID
+			}
 		}
 		slots = append(slots, slot)
 	}

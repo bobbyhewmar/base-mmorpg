@@ -240,6 +240,36 @@ func (runtime *attachedRuntime) resolveQueuedBasicAttackLocked(now time.Time) []
 	return runtime.activateBasicAttackLocked(queued.CommandID, queued.CommandSeq, target, now)
 }
 
+func (runtime *attachedRuntime) resolveAutoBasicAttackLocked(now time.Time) []map[string]any {
+	if runtime.autoBasicAttack == nil || runtime.queuedBasicAttack != nil || runtime.isPlayerDead() {
+		return nil
+	}
+
+	queued := runtime.autoBasicAttack
+	target, exists := runtime.knownEntities[queued.TargetID]
+	if !exists || target.EntityType != "mob" || !isRuntimeEntityAlive(target) {
+		runtime.autoBasicAttack = nil
+		runtime.queuedBasicAttack = nil
+		runtime.clearActiveMovementLocked()
+		return nil
+	}
+	if endsAt, cooling := runtime.cooldownEndsAt["basic_attack"]; cooling && now.Before(endsAt) {
+		return nil
+	}
+	if distance(runtime.position, target.Position) > basicAttackRange {
+		if runtime.activeMovement != nil {
+			return nil
+		}
+		return runtime.queueBasicAttackApproachLocked(commandEnvelope{
+			CommandID:  queued.CommandID,
+			CommandSeq: queued.CommandSeq,
+			Type:       "basic_attack",
+		}, target, now)
+	}
+
+	return runtime.activateBasicAttackLocked(queued.CommandID, queued.CommandSeq, target, now)
+}
+
 func (runtime *attachedRuntime) resolveQueuedLootPickupLocked(now time.Time, store *Store) []map[string]any {
 	if runtime.queuedLootPickup == nil || runtime.isPlayerDead() || store == nil {
 		return nil
@@ -267,6 +297,111 @@ func angleBetween(start, destination runtimePoint) float64 {
 	return math.Atan2(destination.Z-start.Z, destination.X-start.X)
 }
 
+func approachDestinationForRange(start, target runtimePoint, interactionRange float64) runtimePoint {
+	if interactionRange <= 0 {
+		return target
+	}
+
+	dx := start.X - target.X
+	dz := start.Z - target.Z
+	length := math.Hypot(dx, dz)
+	if length <= 0.001 {
+		return runtimePoint{X: target.X - interactionRange*0.85, Z: target.Z}
+	}
+
+	stopDistance := math.Max(0.25, interactionRange*0.85)
+	if stopDistance >= interactionRange {
+		stopDistance = interactionRange * 0.9
+	}
+	return runtimePoint{
+		X: target.X + (dx/length)*stopDistance,
+		Z: target.Z + (dz/length)*stopDistance,
+	}
+}
+
+func resolveTargetApproachMovement(planner movementPlanner, regionID string, start runtimePoint, target runtimePoint, interactionRange float64) movementResolution {
+	profile := movementProfile{ActorRadius: defaultMovementActorRadius}
+	var firstRejected movementResolution
+	for _, candidate := range targetApproachCandidates(start, target, interactionRange) {
+		resolution := planner.Resolve(context.Background(), regionID, start, candidate, profile)
+		if resolution.Status == movementPlanStatusCanceled {
+			return resolution
+		}
+		if resolution.Status == movementPlanStatusRejected {
+			if firstRejected.Status == "" {
+				firstRejected = resolution
+			}
+			continue
+		}
+		if targetApproachPlanEndsInRange(resolution, target, interactionRange) {
+			return resolution
+		}
+	}
+
+	if firstRejected.Status == movementPlanStatusRejected {
+		return firstRejected
+	}
+	return movementResolution{
+		Status:           movementPlanStatusRejected,
+		ReasonCode:       "movement.path_unreachable",
+		CorrectionReason: "path_unreachable",
+	}
+}
+
+func targetApproachPlanEndsInRange(resolution movementResolution, target runtimePoint, interactionRange float64) bool {
+	if resolution.Status != movementPlanStatusAccepted {
+		return false
+	}
+	return distance(resolution.Plan.AcceptedDestination, target) <= interactionRange+0.001
+}
+
+func targetApproachCandidates(start, target runtimePoint, interactionRange float64) []runtimePoint {
+	if interactionRange <= 0 {
+		return []runtimePoint{target}
+	}
+
+	baseAngle := math.Atan2(start.Z-target.Z, start.X-target.X)
+	if distance(start, target) <= 0.001 {
+		baseAngle = 0
+	}
+
+	radii := []float64{
+		interactionRange - defaultMovementActorRadius - 0.25,
+		interactionRange * 0.85,
+		interactionRange * 0.65,
+		interactionRange * 0.45,
+		interactionRange * 0.25,
+	}
+	angleOffsets := []float64{
+		0,
+		math.Pi / 6,
+		-math.Pi / 6,
+		math.Pi / 4,
+		-math.Pi / 4,
+		math.Pi / 2,
+		-math.Pi / 2,
+		3 * math.Pi / 4,
+		-3 * math.Pi / 4,
+		math.Pi,
+	}
+
+	candidates := make([]runtimePoint, 0, 1+len(radii)*len(angleOffsets))
+	candidates = append(candidates, approachDestinationForRange(start, target, interactionRange))
+	for _, radius := range radii {
+		if radius <= 0 {
+			continue
+		}
+		for _, offset := range angleOffsets {
+			angle := baseAngle + offset
+			candidates = append(candidates, runtimePoint{
+				X: target.X + math.Cos(angle)*radius,
+				Z: target.Z + math.Sin(angle)*radius,
+			})
+		}
+	}
+	return candidates
+}
+
 func (runtime *attachedRuntime) syncMovementTo(now time.Time) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
@@ -284,11 +419,9 @@ func (runtime *attachedRuntime) collectTickMessagesWithStore(now time.Time, stor
 
 	movementChanged := runtime.advanceMovementLocked(now)
 	resourceChanged := runtime.applyIdleRegenLocked(now)
-	queuedSkillMessages := runtime.resolveQueuedSkillLocked(now)
-	queuedBasicAttackMessages := runtime.resolveQueuedBasicAttackLocked(now)
-	queuedLootPickupMessages := runtime.resolveQueuedLootPickupLocked(now, store)
-	outbound := make([]map[string]any, 0, 2+len(queuedSkillMessages)+len(queuedBasicAttackMessages)+len(queuedLootPickupMessages))
-	if movementChanged || resourceChanged {
+	mobPatches, mobAIChanged := runtime.resolveMobAILocked(now)
+	outbound := make([]map[string]any, 0, 2)
+	if movementChanged || resourceChanged || mobAIChanged {
 		runtime.revision++
 		self := runtime.selfDelta(now, nil)
 		if movementChanged {
@@ -299,12 +432,18 @@ func (runtime *attachedRuntime) collectTickMessagesWithStore(now time.Time, stor
 			"",
 			0,
 			self,
-			nil,
+			mobPatches,
 			nil,
 		))
 	}
+
+	queuedSkillMessages := runtime.resolveQueuedSkillLocked(now)
+	queuedBasicAttackMessages := runtime.resolveQueuedBasicAttackLocked(now)
+	autoBasicAttackMessages := runtime.resolveAutoBasicAttackLocked(now)
+	queuedLootPickupMessages := runtime.resolveQueuedLootPickupLocked(now, store)
 	outbound = append(outbound, queuedSkillMessages...)
 	outbound = append(outbound, queuedBasicAttackMessages...)
+	outbound = append(outbound, autoBasicAttackMessages...)
 	outbound = append(outbound, queuedLootPickupMessages...)
 
 	lifecycleMessages := runtime.collectLifecycleMessagesLocked(now)

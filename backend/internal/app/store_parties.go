@@ -55,17 +55,21 @@ func (repo memoryPartyRepo) Create(_ context.Context, party *Party, leader Party
 	if _, exists := repo.backend.parties[party.ID]; exists {
 		return errRecordConflict
 	}
-	if _, exists := repo.backend.partyByCharacter[leader.CharacterID]; exists {
-		return errRecordConflict
-	}
-	if _, exists := repo.backend.characters[leader.CharacterID]; !exists {
-		return errRecordNotFound
+	if leader.CharacterID != "" {
+		if _, exists := repo.backend.partyByCharacter[leader.CharacterID]; exists {
+			return errRecordConflict
+		}
+		if _, exists := repo.backend.characters[leader.CharacterID]; !exists {
+			return errRecordNotFound
+		}
 	}
 	partyCopy := *party
 	repo.backend.parties[party.ID] = &partyCopy
-	memberCopy := leader
-	repo.backend.partyMembers[party.ID] = []PartyMember{memberCopy}
-	repo.backend.partyByCharacter[leader.CharacterID] = party.ID
+	if leader.CharacterID != "" {
+		memberCopy := leader
+		repo.backend.partyMembers[party.ID] = []PartyMember{memberCopy}
+		repo.backend.partyByCharacter[leader.CharacterID] = party.ID
+	}
 	return nil
 }
 
@@ -161,6 +165,23 @@ func (repo memoryPartyRepo) ListPendingInvitesByInvitee(_ context.Context, chara
 	invites := make([]PartyInvite, 0)
 	for _, invite := range repo.backend.partyInvites {
 		if invite == nil || invite.InviteeCharacterID != characterID || !invite.ExpiresAt.After(now) {
+			continue
+		}
+		invites = append(invites, *invite)
+	}
+	if len(invites) == 0 {
+		return nil, errRecordNotFound
+	}
+	return normalizePartyInvites(invites), nil
+}
+
+func (repo memoryPartyRepo) ListPendingInvitesByInviter(_ context.Context, characterID string, now time.Time) ([]PartyInvite, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	invites := make([]PartyInvite, 0)
+	for _, invite := range repo.backend.partyInvites {
+		if invite == nil || invite.InviterCharacterID != characterID || !invite.ExpiresAt.After(now) {
 			continue
 		}
 		invites = append(invites, *invite)
@@ -372,17 +393,19 @@ func (p *postgresStoreBackend) CreateParty(ctx context.Context, party *Party, le
 		return mapPostgresError(err)
 	}
 
-	if _, err := tx.ExecContext(
-		ctx,
-		`INSERT INTO party_members (party_id, character_id, joined_at, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		leader.PartyID,
-		leader.CharacterID,
-		leader.JoinedAt,
-		leader.CreatedAt,
-		leader.UpdatedAt,
-	); err != nil {
-		return mapPostgresError(err)
+	if leader.CharacterID != "" {
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO party_members (party_id, character_id, joined_at, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5)`,
+			leader.PartyID,
+			leader.CharacterID,
+			leader.JoinedAt,
+			leader.CreatedAt,
+			leader.UpdatedAt,
+		); err != nil {
+			return mapPostgresError(err)
+		}
 	}
 
 	return tx.Commit()
@@ -492,6 +515,19 @@ func (p *postgresStoreBackend) ListPendingPartyInvitesByInvitee(ctx context.Cont
 		`SELECT invite_id, party_id, inviter_character_id, invitee_character_id, expires_at, created_at, updated_at
 		 FROM party_invites
 		 WHERE invitee_character_id = $1
+		   AND expires_at > $2
+		 ORDER BY expires_at, invite_id`,
+		characterID,
+		now,
+	)
+}
+
+func (p *postgresStoreBackend) ListPendingPartyInvitesByInviter(ctx context.Context, characterID string, now time.Time) ([]PartyInvite, error) {
+	return p.listPartyInvites(
+		ctx,
+		`SELECT invite_id, party_id, inviter_character_id, invitee_character_id, expires_at, created_at, updated_at
+		 FROM party_invites
+		 WHERE inviter_character_id = $1
 		   AND expires_at > $2
 		 ORDER BY expires_at, invite_id`,
 		characterID,
@@ -627,6 +663,10 @@ func (repo postgresPartyRepo) Delete(ctx context.Context, partyID string) error 
 
 func (repo postgresPartyRepo) ListPendingInvitesByInvitee(ctx context.Context, characterID string, now time.Time) ([]PartyInvite, error) {
 	return repo.backend.ListPendingPartyInvitesByInvitee(ctx, characterID, now)
+}
+
+func (repo postgresPartyRepo) ListPendingInvitesByInviter(ctx context.Context, characterID string, now time.Time) ([]PartyInvite, error) {
+	return repo.backend.ListPendingPartyInvitesByInviter(ctx, characterID, now)
 }
 
 func (repo postgresPartyRepo) ListPendingInvitesByParty(ctx context.Context, partyID string, now time.Time) ([]PartyInvite, error) {

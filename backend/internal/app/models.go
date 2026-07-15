@@ -54,8 +54,8 @@ type Character struct {
 	BaseClass    string  `json:"base_class"`
 	Sex          string  `json:"sex"`
 	HairStyle    int     `json:"hair_style"`
-	HairColor    int     `json:"hair_color"`
-	Face         int     `json:"face"`
+	HairColor    string  `json:"hair_color"`
+	SkinType     int     `json:"skin_type"`
 	Level        int     `json:"level"`
 	XP           int     `json:"-"`
 	CurrentCP    int     `json:"-"`

@@ -14,6 +14,21 @@ type partyTestClient struct {
 	messages []map[string]any
 }
 
+func aimPartyInviteTarget(inviter *partyTestClient, target *partyTestClient) {
+	inviter.runtime.mu.Lock()
+	defer inviter.runtime.mu.Unlock()
+
+	inviter.runtime.targetID = target.session.CharacterID
+	inviter.runtime.knownEntities[target.session.CharacterID] = runtimeEntity{
+		EntityID:   target.session.CharacterID,
+		EntityType: "player",
+		Position: runtimePoint{
+			X: target.runtime.position.X,
+			Z: target.runtime.position.Z,
+		},
+	}
+}
+
 func stagePartyTestClient(t *testing.T, server *Server, store *Store, sessionID string, character *Character) *partyTestClient {
 	t.Helper()
 
@@ -139,6 +154,27 @@ func requirePartyDeltaWithMemberCount(t *testing.T, messages []map[string]any, m
 	}
 }
 
+func requirePartyDeltaCleared(t *testing.T, messages []map[string]any) {
+	t.Helper()
+	delta := findOutboundMessage(messages, "delta")
+	if delta == nil {
+		t.Fatalf("expected delta, got %+v", messages)
+	}
+	self, ok := delta["self"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected delta self payload, got %+v", delta)
+	}
+	switch party := self["party"].(type) {
+	case nil:
+		return
+	case *CharacterPartySnapshot:
+		if party == nil {
+			return
+		}
+	}
+	t.Fatalf("expected party to be cleared, got %+v", self["party"])
+}
+
 func TestServerPartyInviteAcceptPersistsRosterAndDedupsMembership(t *testing.T) {
 	store := newMemoryStore()
 	server := NewServer(":0", "", store)
@@ -167,14 +203,13 @@ func TestServerPartyInviteAcceptPersistsRosterAndDedupsMembership(t *testing.T) 
 	})
 	leader.resetMessages()
 	recruit.resetMessages()
+	aimPartyInviteTarget(leader, recruit)
 
-	inviteOutbound := dispatchPartyCommand(t, server, leader, "cmd_party_invite_1", 1, "invite_party_member", map[string]any{
-		"target_character_id": recruit.session.CharacterID,
-	})
+	inviteOutbound := dispatchPartyCommand(t, server, leader, "cmd_party_invite_1", 1, "invite_party_member", map[string]any{})
 	if findOutboundMessage(inviteOutbound, "ack") == nil {
 		t.Fatalf("expected ack on invite, got %+v", inviteOutbound)
 	}
-	requirePartyDeltaWithMemberCount(t, inviteOutbound, 1)
+	requirePartyDeltaCleared(t, inviteOutbound)
 	if findPartyNotice(inviteOutbound, partyNoticeStatusInviteSent) == nil {
 		t.Fatalf("expected invite_sent notice, got %+v", inviteOutbound)
 	}
@@ -257,10 +292,9 @@ func TestServerPartyDeclineAndKickRespectAuthorityRules(t *testing.T) {
 	})
 	leader.resetMessages()
 	member.resetMessages()
+	aimPartyInviteTarget(leader, member)
 
-	_ = dispatchPartyCommand(t, server, leader, "cmd_party_invite_decline", 1, "invite_party_member", map[string]any{
-		"target_character_id": member.session.CharacterID,
-	})
+	_ = dispatchPartyCommand(t, server, leader, "cmd_party_invite_decline", 1, "invite_party_member", map[string]any{})
 	inviteID, _ := findPartyNotice(member.messages, partyNoticeStatusInviteReceived)["invite_id"].(string)
 	member.resetMessages()
 	leader.resetMessages()
@@ -277,9 +311,8 @@ func TestServerPartyDeclineAndKickRespectAuthorityRules(t *testing.T) {
 
 	leader.resetMessages()
 	member.resetMessages()
-	_ = dispatchPartyCommand(t, server, leader, "cmd_party_invite_accept", 2, "invite_party_member", map[string]any{
-		"target_character_id": member.session.CharacterID,
-	})
+	aimPartyInviteTarget(leader, member)
+	_ = dispatchPartyCommand(t, server, leader, "cmd_party_invite_accept", 2, "invite_party_member", map[string]any{})
 	inviteID, _ = findPartyNotice(member.messages, partyNoticeStatusInviteReceived)["invite_id"].(string)
 	member.resetMessages()
 	leader.resetMessages()
@@ -300,14 +333,17 @@ func TestServerPartyDeclineAndKickRespectAuthorityRules(t *testing.T) {
 	if findOutboundMessage(leaderKickOutbound, "ack") == nil {
 		t.Fatalf("expected kick ack, got %+v", leaderKickOutbound)
 	}
-	if findPartyNotice(leaderKickOutbound, partyNoticeStatusMemberKicked) == nil {
-		t.Fatalf("expected kick notice, got %+v", leaderKickOutbound)
+	if findPartyNotice(leaderKickOutbound, partyNoticeStatusPartyDissolved) == nil {
+		t.Fatalf("expected party dissolved notice after kick reduces roster to one, got %+v", leaderKickOutbound)
 	}
 	if findPartyNotice(member.messages, partyNoticeStatusMemberKicked) == nil {
 		t.Fatalf("expected kicked member notice, got %+v", member.messages)
 	}
 	if _, err := store.Parties.GetByCharacterID(context.Background(), member.session.CharacterID); !errors.Is(err, errRecordNotFound) {
 		t.Fatalf("expected kicked member to be removed from party, got err = %v", err)
+	}
+	if _, err := store.Parties.GetByCharacterID(context.Background(), leader.session.CharacterID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("expected leader party to dissolve after kick reduces roster to one, got err = %v", err)
 	}
 }
 
@@ -351,10 +387,9 @@ func TestServerPartyLeaderLeaveTransfersLeadershipDeterministically(t *testing.T
 	leader.resetMessages()
 	firstMember.resetMessages()
 	secondMember.resetMessages()
+	aimPartyInviteTarget(leader, firstMember)
 
-	_ = dispatchPartyCommand(t, server, leader, "cmd_party_transfer_invite_first", 1, "invite_party_member", map[string]any{
-		"target_character_id": firstMember.session.CharacterID,
-	})
+	_ = dispatchPartyCommand(t, server, leader, "cmd_party_transfer_invite_first", 1, "invite_party_member", map[string]any{})
 	firstInviteID, _ := findPartyNotice(firstMember.messages, partyNoticeStatusInviteReceived)["invite_id"].(string)
 	firstMember.resetMessages()
 	leader.resetMessages()
@@ -365,9 +400,8 @@ func TestServerPartyLeaderLeaveTransfersLeadershipDeterministically(t *testing.T
 	time.Sleep(5 * time.Millisecond)
 	leader.resetMessages()
 	secondMember.resetMessages()
-	_ = dispatchPartyCommand(t, server, leader, "cmd_party_transfer_invite_second", 2, "invite_party_member", map[string]any{
-		"target_character_id": secondMember.session.CharacterID,
-	})
+	aimPartyInviteTarget(leader, secondMember)
+	_ = dispatchPartyCommand(t, server, leader, "cmd_party_transfer_invite_second", 2, "invite_party_member", map[string]any{})
 	secondInviteID, _ := findPartyNotice(secondMember.messages, partyNoticeStatusInviteReceived)["invite_id"].(string)
 	secondMember.resetMessages()
 	leader.resetMessages()
@@ -404,5 +438,122 @@ func TestServerPartyLeaderLeaveTransfersLeadershipDeterministically(t *testing.T
 	}
 	if len(members) != 2 {
 		t.Fatalf("expected two remaining members after leader leaves, got %+v", members)
+	}
+}
+
+func TestServerPartyInviteRemainsEphemeralAndExpiresOnLateAccept(t *testing.T) {
+	store := newMemoryStore()
+	server := NewServer(":0", "", store)
+
+	leader := stagePartyTestClient(t, server, store, "sess_party_ephemeral_leader", &Character{
+		ID:           "char_party_ephemeral_leader",
+		AccountID:    "acc_party_ephemeral_leader",
+		Name:         "Leader",
+		BaseClass:    "Fighter",
+		Sex:          "Male",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+		PositionX:    -8,
+		PositionZ:    0,
+	})
+	recruit := stagePartyTestClient(t, server, store, "sess_party_ephemeral_recruit", &Character{
+		ID:           "char_party_ephemeral_recruit",
+		AccountID:    "acc_party_ephemeral_recruit",
+		Name:         "Recruit",
+		BaseClass:    "Mage",
+		Sex:          "Female",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+		PositionX:    -8,
+		PositionZ:    0,
+	})
+	leader.resetMessages()
+	recruit.resetMessages()
+	aimPartyInviteTarget(leader, recruit)
+
+	inviteOutbound := dispatchPartyCommand(t, server, leader, "cmd_party_ephemeral_invite", 1, "invite_party_member", map[string]any{})
+	if findOutboundMessage(inviteOutbound, "ack") == nil {
+		t.Fatalf("expected invite ack, got %+v", inviteOutbound)
+	}
+	requirePartyDeltaCleared(t, inviteOutbound)
+	if _, err := store.Parties.GetByCharacterID(context.Background(), leader.session.CharacterID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("expected leader to remain outside a party before invite acceptance, got err = %v", err)
+	}
+
+	receivedInvite := findPartyNotice(recruit.messages, partyNoticeStatusInviteReceived)
+	inviteID, _ := receivedInvite["invite_id"].(string)
+	if inviteID == "" {
+		t.Fatalf("expected invite id, got %+v", receivedInvite)
+	}
+	if invite, err := store.Parties.GetInviteByID(context.Background(), inviteID); err != nil {
+		t.Fatalf("GetInviteByID() error = %v", err)
+	} else if got := invite.ExpiresAt.Sub(invite.CreatedAt); got != partyInviteTTL {
+		t.Fatalf("expected invite ttl %s, got %s", partyInviteTTL, got)
+	}
+
+	repo := store.Parties.(memoryPartyRepo)
+	repo.backend.mu.Lock()
+	repo.backend.partyInvites[inviteID].ExpiresAt = time.Now().UTC().Add(-time.Second)
+	repo.backend.mu.Unlock()
+
+	recruit.resetMessages()
+	lateAcceptOutbound := dispatchPartyCommand(t, server, recruit, "cmd_party_ephemeral_accept", 1, "accept_party_invite", map[string]any{
+		"invite_id": inviteID,
+	})
+	requireRejectReason(t, lateAcceptOutbound, "party.invite_expired")
+	if _, err := store.Parties.GetInviteByID(context.Background(), inviteID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("expected expired invite to be removed, got err = %v", err)
+	}
+	if _, err := store.Parties.GetByCharacterID(context.Background(), recruit.session.CharacterID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("expected recruit to remain outside a party after late accept, got err = %v", err)
+	}
+}
+
+func TestServerPartyInviteDisconnectCancelsPendingInvite(t *testing.T) {
+	store := newMemoryStore()
+	server := NewServer(":0", "", store)
+
+	leader := stagePartyTestClient(t, server, store, "sess_party_disconnect_leader", &Character{
+		ID:           "char_party_disconnect_leader",
+		AccountID:    "acc_party_disconnect_leader",
+		Name:         "Leader",
+		BaseClass:    "Fighter",
+		Sex:          "Male",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+		PositionX:    -8,
+		PositionZ:    0,
+	})
+	recruit := stagePartyTestClient(t, server, store, "sess_party_disconnect_recruit", &Character{
+		ID:           "char_party_disconnect_recruit",
+		AccountID:    "acc_party_disconnect_recruit",
+		Name:         "Recruit",
+		BaseClass:    "Mage",
+		Sex:          "Female",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+		PositionX:    -8,
+		PositionZ:    0,
+	})
+	leader.resetMessages()
+	recruit.resetMessages()
+	aimPartyInviteTarget(leader, recruit)
+
+	_ = dispatchPartyCommand(t, server, leader, "cmd_party_disconnect_invite", 1, "invite_party_member", map[string]any{})
+	receivedInvite := findPartyNotice(recruit.messages, partyNoticeStatusInviteReceived)
+	inviteID, _ := receivedInvite["invite_id"].(string)
+	if inviteID == "" {
+		t.Fatalf("expected invite id, got %+v", receivedInvite)
+	}
+
+	recruit.resetMessages()
+	leader.resetMessages()
+	server.closeAttachedSession(recruit.session.ID)
+
+	if _, err := store.Parties.GetInviteByID(context.Background(), inviteID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("expected invite to be removed after disconnect, got err = %v", err)
+	}
+	if findPartyNotice(leader.messages, partyNoticeStatusInviteExpired) == nil {
+		t.Fatalf("expected leader to receive invite_expired on disconnect, got %+v", leader.messages)
 	}
 }

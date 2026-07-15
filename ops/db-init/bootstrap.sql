@@ -40,8 +40,8 @@ CREATE TABLE IF NOT EXISTS characters (
   base_class TEXT NOT NULL,
   sex TEXT NOT NULL,
   hair_style INTEGER NOT NULL DEFAULT 0,
-  hair_color INTEGER NOT NULL DEFAULT 0,
-  face INTEGER NOT NULL DEFAULT 0,
+  hair_color TEXT NOT NULL DEFAULT '#6b4e37',
+  skin_type INTEGER NOT NULL DEFAULT 0,
   level INTEGER NOT NULL DEFAULT 1,
   xp INTEGER NOT NULL DEFAULT 0,
   current_cp INTEGER NOT NULL DEFAULT 80,
@@ -60,8 +60,25 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS current_cp INTEGER NOT NULL DEFA
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS current_hp INTEGER NOT NULL DEFAULT 122;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS current_mp INTEGER NOT NULL DEFAULT 58;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS hair_style INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE characters ADD COLUMN IF NOT EXISTS hair_color INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE characters ADD COLUMN IF NOT EXISTS face INTEGER NOT NULL DEFAULT 0;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'characters'
+      AND column_name = 'hair_color'
+      AND data_type <> 'text'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'characters'
+      AND column_name = 'legacy_hair_color_index'
+  ) THEN
+    ALTER TABLE characters RENAME COLUMN hair_color TO legacy_hair_color_index;
+  END IF;
+END $$;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS hair_color TEXT NOT NULL DEFAULT '#6b4e37';
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS skin_type INTEGER NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_characters_account_id ON characters(account_id);
 
@@ -137,6 +154,43 @@ CREATE TABLE IF NOT EXISTS character_quests (
 );
 
 CREATE INDEX IF NOT EXISTS idx_character_quests_character_id ON character_quests(character_id);
+
+CREATE TABLE IF NOT EXISTS clans (
+  clan_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  leader_character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clans_name_normalized ON clans((LOWER(BTRIM(name))));
+CREATE INDEX IF NOT EXISTS idx_clans_leader_character_id ON clans(leader_character_id);
+
+CREATE TABLE IF NOT EXISTS clan_members (
+  clan_id TEXT NOT NULL REFERENCES clans(clan_id) ON DELETE CASCADE,
+  character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
+  joined_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (clan_id, character_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clan_members_character_id ON clan_members(character_id);
+CREATE INDEX IF NOT EXISTS idx_clan_members_clan_id ON clan_members(clan_id, joined_at, character_id);
+
+CREATE TABLE IF NOT EXISTS clan_invites (
+  invite_id TEXT PRIMARY KEY,
+  clan_id TEXT NOT NULL REFERENCES clans(clan_id) ON DELETE CASCADE,
+  inviter_character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
+  invitee_character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_clan_invites_clan_id ON clan_invites(clan_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_clan_invites_invitee_character_id ON clan_invites(invitee_character_id, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clan_invites_invitee_unique_pending ON clan_invites(invitee_character_id);
 
 CREATE TABLE IF NOT EXISTS parties (
   party_id TEXT PRIMARY KEY,

@@ -84,7 +84,7 @@ func (p *postgresStoreBackend) CreateCharacterWithItemSeed(ctx context.Context, 
 	characterState, _ := resourcePoolsForCharacter(character, items)
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO characters (character_id, account_id, name, race, base_class, sex, hair_style, hair_color, face, level, xp, current_cp, current_hp, current_mp, last_region_id, current_position_x, current_position_z, is_enterable)
+		`INSERT INTO characters (character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, last_region_id, current_position_x, current_position_z, is_enterable)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
 		characterState.ID,
 		characterState.AccountID,
@@ -94,7 +94,7 @@ func (p *postgresStoreBackend) CreateCharacterWithItemSeed(ctx context.Context, 
 		characterState.Sex,
 		characterState.HairStyle,
 		characterState.HairColor,
-		characterState.Face,
+		characterState.SkinType,
 		characterState.Level,
 		characterState.XP,
 		characterState.CurrentCP,
@@ -441,7 +441,7 @@ func (p *postgresStoreBackend) UpdateGameplayCommandRecordOutcome(ctx context.Co
 func (p *postgresStoreBackend) ListByAccountID(ctx context.Context, accountID string) ([]Character, error) {
 	rows, err := p.db.QueryContext(
 		ctx,
-		`SELECT character_id, account_id, name, race, base_class, sex, hair_style, hair_color, face, level, xp, current_cp, current_hp, current_mp, last_region_id, current_position_x, current_position_z, is_enterable
+		`SELECT character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, last_region_id, current_position_x, current_position_z, is_enterable
 		 FROM characters
 		 WHERE account_id = $1
 		 ORDER BY name, character_id`,
@@ -464,7 +464,7 @@ func (p *postgresStoreBackend) ListByAccountID(ctx context.Context, accountID st
 			&character.Sex,
 			&character.HairStyle,
 			&character.HairColor,
-			&character.Face,
+			&character.SkinType,
 			&character.Level,
 			&character.XP,
 			&character.CurrentCP,
@@ -494,7 +494,7 @@ func (p *postgresStoreBackend) CountByAccountID(ctx context.Context, accountID s
 func (p *postgresStoreBackend) GetByIDCharacter(ctx context.Context, characterID string) (*Character, error) {
 	row := p.db.QueryRowContext(
 		ctx,
-		`SELECT character_id, account_id, name, race, base_class, sex, hair_style, hair_color, face, level, xp, current_cp, current_hp, current_mp, last_region_id, current_position_x, current_position_z, is_enterable
+		`SELECT character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, last_region_id, current_position_x, current_position_z, is_enterable
 		 FROM characters
 		 WHERE character_id = $1`,
 		characterID,
@@ -509,7 +509,7 @@ func (p *postgresStoreBackend) GetByIDCharacter(ctx context.Context, characterID
 		&character.Sex,
 		&character.HairStyle,
 		&character.HairColor,
-		&character.Face,
+		&character.SkinType,
 		&character.Level,
 		&character.XP,
 		&character.CurrentCP,
@@ -532,7 +532,7 @@ func (p *postgresStoreBackend) CreateCharacter(ctx context.Context, character *C
 	characterState, _ := resourcePoolsForCharacter(character, nil)
 	_, err := p.db.ExecContext(
 		ctx,
-		`INSERT INTO characters (character_id, account_id, name, race, base_class, sex, hair_style, hair_color, face, level, xp, current_cp, current_hp, current_mp, last_region_id, current_position_x, current_position_z, is_enterable)
+		`INSERT INTO characters (character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, last_region_id, current_position_x, current_position_z, is_enterable)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
 		characterState.ID,
 		characterState.AccountID,
@@ -542,7 +542,7 @@ func (p *postgresStoreBackend) CreateCharacter(ctx context.Context, character *C
 		characterState.Sex,
 		characterState.HairStyle,
 		characterState.HairColor,
-		characterState.Face,
+		characterState.SkinType,
 		characterState.Level,
 		characterState.XP,
 		characterState.CurrentCP,
@@ -3149,7 +3149,7 @@ func (p *postgresStoreBackend) UpdateStatus(ctx context.Context, sessionID strin
 }
 
 func (p *postgresStoreBackend) truncateAllTables(ctx context.Context) error {
-	_, err := p.db.ExecContext(ctx, `TRUNCATE TABLE gameplay_command_records, party_invites, party_members, parties, chat_messages, account_sessions, gameplay_sessions, action_logs, storage_transfer_records, character_hotbar_loadouts, character_skill_cooldowns, character_items, character_quests, character_pets, characters, account_credentials, accounts RESTART IDENTITY CASCADE`)
+	_, err := p.db.ExecContext(ctx, `TRUNCATE TABLE gameplay_command_records, clan_invites, clan_members, clans, party_invites, party_members, parties, chat_messages, account_sessions, gameplay_sessions, action_logs, storage_transfer_records, character_hotbar_loadouts, character_skill_cooldowns, character_items, character_quests, character_pets, characters, account_credentials, accounts RESTART IDENTITY CASCADE`)
 	return err
 }
 

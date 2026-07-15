@@ -26,6 +26,14 @@ var exchangeOffers = map[string]ExchangeOffer{
 		CostTemplateID: "ruin_shard",
 		CostAmount:     6,
 	},
+	"merchant_whisperstep_boots_exchange": {
+		ID:             "merchant_whisperstep_boots_exchange",
+		NPCEntityID:    "npc_merchant",
+		TemplateID:     "whisperstep_boots",
+		Quantity:       1,
+		CostTemplateID: "ruin_shard",
+		CostAmount:     6,
+	},
 }
 
 func exchangeOfferByID(offerID string) (ExchangeOffer, bool) {

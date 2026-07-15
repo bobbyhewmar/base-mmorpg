@@ -419,7 +419,7 @@ func TestServerFanOutsPlayerPresenceLifecycleAcrossSameRegion(t *testing.T) {
 		Sex:          "Male",
 		Level:        4,
 		LastRegionID: "dawn_plaza",
-		PositionX:    -4,
+		PositionX:    -12,
 		PositionZ:    2,
 	}
 	if err := store.CreateCharacterWithItemSeed(context.Background(), sourceCharacter, initialCharacterItemSeed(sourceCharacter)); err != nil {
@@ -476,9 +476,9 @@ func TestServerFanOutsPlayerPresenceLifecycleAcrossSameRegion(t *testing.T) {
 		CommandID:       "cmd_move_presence",
 		CommandSeq:      1,
 		Type:            "move_intent",
-		Payload:         []byte(`{"point":{"x":12,"z":-3}}`),
+		Payload:         []byte(`{"point":{"x":-24,"z":0}}`),
 	})
-	observerRuntime.collectTickMessages(time.Now().Add(3 * time.Second))
+	observerRuntime.collectTickMessages(time.Now().Add(5 * time.Second))
 	server.fanOutPlayerState("sess_presence_observer", observerRuntime)
 
 	if len(sourceMessages) != 2 || sourceMessages[1]["kind"] != "delta" {
@@ -495,11 +495,11 @@ func TestServerFanOutsPlayerPresenceLifecycleAcrossSameRegion(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected runtimePoint in movement patch, got %+v", entityPatches[0]["position"])
 	}
-	if position != (runtimePoint{X: 12, Z: -3}) {
+	if position != (runtimePoint{X: -24, Z: 0}) {
 		t.Fatalf("expected movement patch to fan out authoritative observer position, got %+v", position)
 	}
 	knownObserver, exists := sourceRuntime.knownEntities[observerCharacter.ID]
-	if !exists || knownObserver.Position != (runtimePoint{X: 12, Z: -3}) {
+	if !exists || knownObserver.Position != (runtimePoint{X: -24, Z: 0}) {
 		t.Fatalf("expected source runtime known-set to reconcile observer position, got %+v exists=%v", knownObserver, exists)
 	}
 

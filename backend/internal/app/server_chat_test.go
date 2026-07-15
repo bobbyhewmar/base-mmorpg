@@ -300,9 +300,8 @@ func TestServerChatPartyAuthorityAndDedup(t *testing.T) {
 	})
 	requireRejectReason(t, rejectOutbound, "chat.party_required")
 
-	inviteOutbound := dispatchPartyCommand(t, server, leader, "cmd_party_chat_invite_1", 2, "invite_party_member", map[string]any{
-		"target_character_id": recruit.session.CharacterID,
-	})
+	aimPartyInviteTarget(leader, recruit)
+	inviteOutbound := dispatchPartyCommand(t, server, leader, "cmd_party_chat_invite_1", 2, "invite_party_member", map[string]any{})
 	receivedInvite := findPartyNotice(recruit.messages, partyNoticeStatusInviteReceived)
 	if findOutboundMessage(inviteOutbound, "ack") == nil || receivedInvite == nil {
 		t.Fatalf("expected invite flow before party chat, outbound=%+v recruit=%+v", inviteOutbound, recruit.messages)

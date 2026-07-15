@@ -26,6 +26,7 @@ type Server struct {
 	mux           *http.ServeMux
 	attachedMu    sync.Mutex
 	partyMu       sync.Mutex
+	clanMu        sync.Mutex
 	store         *Store
 	config        ServerConfig
 	corsOrigins   map[string]struct{}
@@ -361,22 +362,35 @@ type raceDefinition struct {
 	BaseClasses      []string
 	SexOptions       []string
 	HairStyleOptions []int
-	HairColorOptions []int
-	FaceOptions      []int
+	SkinTypeOptions  []int
+	DefaultHairColor string
 }
 
-func canonicalAppearanceOptions() []int {
+const defaultHairColor = "#6b4e37"
+
+func canonicalHairStyleOptions() []int {
 	return []int{0, 1, 2}
 }
 
+func canonicalSkinTypeOptions() []int {
+	return []int{0, 1, 2}
+}
+
+func canonicalBaseClasses() []string {
+	return []string{"Fighter", "Mage"}
+}
+
 func validRaces() map[string]raceDefinition {
-	appearanceOptions := canonicalAppearanceOptions()
+	baseClasses := canonicalBaseClasses()
 	return map[string]raceDefinition{
-		"Dark Elf": {Race: "Dark Elf", BaseClasses: []string{"Fighter", "Mage"}, SexOptions: []string{"Male", "Female"}, HairStyleOptions: appearanceOptions, HairColorOptions: appearanceOptions, FaceOptions: appearanceOptions},
-		"Dwarf":    {Race: "Dwarf", BaseClasses: []string{"Fighter"}, SexOptions: []string{"Male", "Female"}, HairStyleOptions: appearanceOptions, HairColorOptions: appearanceOptions, FaceOptions: appearanceOptions},
-		"Elf":      {Race: "Elf", BaseClasses: []string{"Fighter", "Mage"}, SexOptions: []string{"Male", "Female"}, HairStyleOptions: appearanceOptions, HairColorOptions: appearanceOptions, FaceOptions: appearanceOptions},
-		"Human":    {Race: "Human", BaseClasses: []string{"Fighter", "Mage"}, SexOptions: []string{"Male", "Female"}, HairStyleOptions: appearanceOptions, HairColorOptions: appearanceOptions, FaceOptions: appearanceOptions},
-		"Orc":      {Race: "Orc", BaseClasses: []string{"Fighter", "Mage"}, SexOptions: []string{"Male", "Female"}, HairStyleOptions: appearanceOptions, HairColorOptions: appearanceOptions, FaceOptions: appearanceOptions},
+		"Human": {
+			Race:             "Human",
+			BaseClasses:      baseClasses,
+			SexOptions:       []string{"Male", "Female"},
+			HairStyleOptions: canonicalHairStyleOptions(),
+			SkinTypeOptions:  canonicalSkinTypeOptions(),
+			DefaultHairColor: defaultHairColor,
+		},
 	}
 }
 
@@ -409,6 +423,19 @@ func intOptionAllowed(options []int, value int) bool {
 		}
 	}
 	return false
+}
+
+func normalizeCanonicalHairColor(value string) (string, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if len(normalized) != 7 || normalized[0] != '#' {
+		return "", false
+	}
+	for _, character := range normalized[1:] {
+		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+			return "", false
+		}
+	}
+	return normalized, true
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -598,9 +625,9 @@ func (s *Server) handleCharactersCatalog(w http.ResponseWriter, r *http.Request)
 			"base_classes": definition.BaseClasses,
 			"sex_options":  definition.SexOptions,
 			"appearance_options": map[string]any{
-				"hair_styles": definition.HairStyleOptions,
-				"hair_colors": definition.HairColorOptions,
-				"faces":       definition.FaceOptions,
+				"hair_styles":        definition.HairStyleOptions,
+				"hair_color_default": definition.DefaultHairColor,
+				"skin_types":         definition.SkinTypeOptions,
 			},
 		})
 	}
@@ -613,8 +640,8 @@ func (s *Server) handleCreateCharacter(w http.ResponseWriter, r *http.Request, a
 		BaseClass string `json:"base_class"`
 		Sex       string `json:"sex"`
 		HairStyle *int   `json:"hair_style"`
-		HairColor *int   `json:"hair_color"`
-		Face      *int   `json:"face"`
+		HairColor string `json:"hair_color"`
+		SkinType  *int   `json:"skin_type"`
 		Name      string `json:"name"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
@@ -671,12 +698,13 @@ func (s *Server) handleCreateCharacter(w http.ResponseWriter, r *http.Request, a
 		writeError(w, http.StatusBadRequest, "character.invalid_hair_style", "Hairstyle is invalid for the selected template.")
 		return
 	}
-	if request.HairColor == nil || !intOptionAllowed(raceDefinition.HairColorOptions, *request.HairColor) {
-		writeError(w, http.StatusBadRequest, "character.invalid_hair_color", "Hair color is invalid for the selected template.")
+	hairColor, validHairColor := normalizeCanonicalHairColor(request.HairColor)
+	if !validHairColor {
+		writeError(w, http.StatusBadRequest, "character.invalid_hair_color", "Hair color must be a canonical #RRGGBB value.")
 		return
 	}
-	if request.Face == nil || !intOptionAllowed(raceDefinition.FaceOptions, *request.Face) {
-		writeError(w, http.StatusBadRequest, "character.invalid_face", "Face is invalid for the selected template.")
+	if request.SkinType == nil || !intOptionAllowed(raceDefinition.SkinTypeOptions, *request.SkinType) {
+		writeError(w, http.StatusBadRequest, "character.invalid_skin_type", "Skin type is invalid for the selected template.")
 		return
 	}
 
@@ -706,12 +734,12 @@ func (s *Server) handleCreateCharacter(w http.ResponseWriter, r *http.Request, a
 		BaseClass:    request.BaseClass,
 		Sex:          request.Sex,
 		HairStyle:    *request.HairStyle,
-		HairColor:    *request.HairColor,
-		Face:         *request.Face,
+		HairColor:    hairColor,
+		SkinType:     *request.SkinType,
 		Level:        1,
-		LastRegionID: "dawn_plaza",
-		PositionX:    -8,
-		PositionZ:    0,
+		LastRegionID: startingRegionID,
+		PositionX:    startingPositionX,
+		PositionZ:    startingPositionZ,
 		IsEnterable:  true,
 		AccountID:    account.ID,
 	}
@@ -804,8 +832,13 @@ func (s *Server) handleWorldEnter(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "Unable to load character party state.")
 		return
 	}
+	clanState, clanInvites, err := s.loadCharacterClanState(r.Context(), character.ID, now)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "Unable to load character clan state.")
+		return
+	}
 	cooldownSnapshot := cooldownSnapshotFromRecords(cooldowns, now)
-	selfState := selfStateFromItems(character, items, cooldownSnapshot, hotbarState, pets, questState, partyState, partyInvites)
+	selfState := selfStateFromItems(character, items, cooldownSnapshot, hotbarState, pets, questState, partyState, partyInvites, clanState, clanInvites)
 
 	if err := s.store.GameplaySessions.ExpireStalePendingAttach(r.Context(), character.ID, now); err != nil {
 		s.recordStoreError("gameplay_sessions.expire_stale_pending_attach", err)
@@ -1023,8 +1056,13 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 						s.fanOutPresenceState(session.ID, runtime)
 					}
 				}
-				if attached != nil && attached.runtime != nil && attached.runtime.partyInviteExpirationDue(now) {
-					s.sendPartyStateRefresh(loopCtx, session.CharacterID)
+				if attached != nil && attached.runtime != nil {
+					if attached.runtime.partyInviteExpirationDue(now) {
+						s.sendPartyStateRefresh(loopCtx, session.CharacterID)
+					}
+					if attached.runtime.clanInviteExpirationDue(now) {
+						s.sendClanStateRefresh(loopCtx, session.CharacterID)
+					}
 				}
 			}
 		}
@@ -1396,17 +1434,40 @@ func (s *Server) closeAttachedSession(sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
+	characterID := ""
+	s.attachedMu.Lock()
+	if attached := s.attached[sessionID]; attached != nil && attached.runtime != nil {
+		characterID = attached.runtime.characterID
+	}
+	s.attachedMu.Unlock()
+
 	session, err := s.store.GameplaySessions.GetByID(ctx, sessionID)
 	if err != nil {
 		s.recordStoreError("gameplay_sessions.get_by_id", err, errRecordNotFound)
+		if characterID != "" {
+			s.expirePartyInvitesForDisconnectedCharacter(ctx, characterID)
+			s.expireClanInvitesForDisconnectedCharacter(ctx, characterID)
+		}
 		return
 	}
 	if session.Status != sessionStatusAttached {
+		if characterID == "" {
+			characterID = session.CharacterID
+		}
+		if characterID != "" {
+			s.expirePartyInvitesForDisconnectedCharacter(ctx, characterID)
+			s.expireClanInvitesForDisconnectedCharacter(ctx, characterID)
+		}
 		return
 	}
 	if err := s.store.GameplaySessions.UpdateStatus(ctx, sessionID, sessionStatusClosed); err != nil {
 		s.recordStoreError("gameplay_sessions.update_status", err)
 	}
+	if characterID == "" {
+		characterID = session.CharacterID
+	}
+	s.expirePartyInvitesForDisconnectedCharacter(ctx, characterID)
+	s.expireClanInvitesForDisconnectedCharacter(ctx, characterID)
 }
 
 func (s *Server) persistCharacterWorldState(characterID string, runtime *attachedRuntime) {
@@ -1497,8 +1558,12 @@ func (s *Server) buildAttachedRuntime(ctx context.Context, session *Session, cha
 	if err != nil {
 		return nil, err
 	}
+	clanState, clanInvites, err := s.loadCharacterClanState(ctx, character.ID, now)
+	if err != nil {
+		return nil, err
+	}
 
-	runtime := newAttachedRuntime(session.ID, character)
+	runtime := newCleanAttachedRuntime(session.ID, character)
 	runtime.deferRewardResolution = true
 	runtime.characterItems = cloneCharacterItems(items)
 	runtime.derivedStats = deriveCharacterStats(character, items)
@@ -1507,6 +1572,7 @@ func (s *Server) buildAttachedRuntime(ctx context.Context, session *Session, cha
 	runtime.loadCooldownState(cooldowns, now)
 	runtime.loadQuestState([]CharacterQuestState{questState})
 	runtime.loadPartyState(partyState, partyInvites)
+	runtime.loadClanState(clanState, clanInvites)
 	runtime.reconcileResourcePools()
 	return runtime, nil
 }

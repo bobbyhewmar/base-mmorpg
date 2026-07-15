@@ -90,7 +90,7 @@ func (runtime *attachedRuntime) validateHotbarStateLocked(ctx context.Context, s
 
 func isSupportedHotbarActionID(actionID string) bool {
 	switch actionID {
-	case "basic_attack", "pick_up_nearby", "tame_target", "summon_pet", "dismiss_pet", "mount_pet", "dismount_pet":
+	case "basic_attack", "pick_up_nearby", "party_invite", "party_leave", "tame_target", "summon_pet", "dismiss_pet", "mount_pet", "dismount_pet", "toggle_walk_run":
 		return true
 	default:
 		return false

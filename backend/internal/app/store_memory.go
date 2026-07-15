@@ -25,6 +25,11 @@ type memoryStoreBackend struct {
 	partyMembers       map[string][]PartyMember
 	partyByCharacter   map[string]string
 	partyInvites       map[string]*PartyInvite
+	clans              map[string]*Clan
+	clanMembers        map[string][]ClanMember
+	clanByCharacter    map[string]string
+	clanInvites        map[string]*ClanInvite
+	clanByName         map[string]string
 	chatMessages       map[string][]ChatMessageRecord
 	characterItems     map[string][]CharacterItem
 	storageTransfers   map[string][]StorageTransferRecord
@@ -44,6 +49,7 @@ type memoryCharacterHotbarRepo struct{ backend *memoryStoreBackend }
 type memoryCharacterPetRepo struct{ backend *memoryStoreBackend }
 type memoryCharacterQuestRepo struct{ backend *memoryStoreBackend }
 type memoryPartyRepo struct{ backend *memoryStoreBackend }
+type memoryClanRepo struct{ backend *memoryStoreBackend }
 type memoryChatMessageRepo struct{ backend *memoryStoreBackend }
 type memoryCharacterItemRepo struct{ backend *memoryStoreBackend }
 type memoryStorageTransferRecordRepo struct{ backend *memoryStoreBackend }
@@ -66,6 +72,11 @@ func newMemoryStore() *Store {
 		partyMembers:       map[string][]PartyMember{},
 		partyByCharacter:   map[string]string{},
 		partyInvites:       map[string]*PartyInvite{},
+		clans:              map[string]*Clan{},
+		clanMembers:        map[string][]ClanMember{},
+		clanByCharacter:    map[string]string{},
+		clanInvites:        map[string]*ClanInvite{},
+		clanByName:         map[string]string{},
 		chatMessages:       map[string][]ChatMessageRecord{},
 		characterItems:     map[string][]CharacterItem{},
 		storageTransfers:   map[string][]StorageTransferRecord{},
@@ -86,6 +97,7 @@ func newMemoryStore() *Store {
 		CharacterPets:      memoryCharacterPetRepo{backend: backend},
 		CharacterQuests:    memoryCharacterQuestRepo{backend: backend},
 		Parties:            memoryPartyRepo{backend: backend},
+		Clans:              memoryClanRepo{backend: backend},
 		ChatMessages:       memoryChatMessageRepo{backend: backend},
 		Items:              memoryCharacterItemRepo{backend: backend},
 		StorageTransfers:   memoryStorageTransferRecordRepo{backend: backend},
