@@ -48,6 +48,13 @@ func decodeItemInstanceAttributesJSON(payload string) (*ItemInstanceAttributes, 
 	return normalizeItemInstanceAttributes(&attrs), nil
 }
 
+func nullableTimeValue(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value.UTC()
+}
+
 func scanCharacterItemRow(scanner rowScanner) (CharacterItem, error) {
 	var item CharacterItem
 	var containerKind string
@@ -84,8 +91,8 @@ func (p *postgresStoreBackend) CreateCharacterWithItemSeed(ctx context.Context, 
 	characterState, _ := resourcePoolsForCharacter(character, items)
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO characters (character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, last_region_id, current_position_x, current_position_z, is_enterable)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+		`INSERT INTO characters (character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, last_region_id, current_position_x, current_position_z, is_enterable)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
 		characterState.ID,
 		characterState.AccountID,
 		characterState.Name,
@@ -100,6 +107,10 @@ func (p *postgresStoreBackend) CreateCharacterWithItemSeed(ctx context.Context, 
 		characterState.CurrentCP,
 		characterState.CurrentHP,
 		characterState.CurrentMP,
+		characterState.PvPKills,
+		characterState.PKCount,
+		characterState.Karma,
+		nullableTimeValue(characterState.PvPFlagUntil),
 		characterState.LastRegionID,
 		characterState.PositionX,
 		characterState.PositionZ,
@@ -441,7 +452,7 @@ func (p *postgresStoreBackend) UpdateGameplayCommandRecordOutcome(ctx context.Co
 func (p *postgresStoreBackend) ListByAccountID(ctx context.Context, accountID string) ([]Character, error) {
 	rows, err := p.db.QueryContext(
 		ctx,
-		`SELECT character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, last_region_id, current_position_x, current_position_z, is_enterable
+		`SELECT character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, last_region_id, current_position_x, current_position_z, is_enterable
 		 FROM characters
 		 WHERE account_id = $1
 		 ORDER BY name, character_id`,
@@ -455,6 +466,7 @@ func (p *postgresStoreBackend) ListByAccountID(ctx context.Context, accountID st
 	characters := make([]Character, 0)
 	for rows.Next() {
 		var character Character
+		var pvpFlagUntil sql.NullTime
 		if err := rows.Scan(
 			&character.ID,
 			&character.AccountID,
@@ -470,12 +482,19 @@ func (p *postgresStoreBackend) ListByAccountID(ctx context.Context, accountID st
 			&character.CurrentCP,
 			&character.CurrentHP,
 			&character.CurrentMP,
+			&character.PvPKills,
+			&character.PKCount,
+			&character.Karma,
+			&pvpFlagUntil,
 			&character.LastRegionID,
 			&character.PositionX,
 			&character.PositionZ,
 			&character.IsEnterable,
 		); err != nil {
 			return nil, err
+		}
+		if pvpFlagUntil.Valid {
+			character.PvPFlagUntil = pvpFlagUntil.Time.UTC()
 		}
 		characters = append(characters, character)
 	}
@@ -494,12 +513,13 @@ func (p *postgresStoreBackend) CountByAccountID(ctx context.Context, accountID s
 func (p *postgresStoreBackend) GetByIDCharacter(ctx context.Context, characterID string) (*Character, error) {
 	row := p.db.QueryRowContext(
 		ctx,
-		`SELECT character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, last_region_id, current_position_x, current_position_z, is_enterable
+		`SELECT character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, last_region_id, current_position_x, current_position_z, is_enterable
 		 FROM characters
 		 WHERE character_id = $1`,
 		characterID,
 	)
 	var character Character
+	var pvpFlagUntil sql.NullTime
 	if err := row.Scan(
 		&character.ID,
 		&character.AccountID,
@@ -515,6 +535,10 @@ func (p *postgresStoreBackend) GetByIDCharacter(ctx context.Context, characterID
 		&character.CurrentCP,
 		&character.CurrentHP,
 		&character.CurrentMP,
+		&character.PvPKills,
+		&character.PKCount,
+		&character.Karma,
+		&pvpFlagUntil,
 		&character.LastRegionID,
 		&character.PositionX,
 		&character.PositionZ,
@@ -525,6 +549,9 @@ func (p *postgresStoreBackend) GetByIDCharacter(ctx context.Context, characterID
 		}
 		return nil, err
 	}
+	if pvpFlagUntil.Valid {
+		character.PvPFlagUntil = pvpFlagUntil.Time.UTC()
+	}
 	return &character, nil
 }
 
@@ -532,8 +559,8 @@ func (p *postgresStoreBackend) CreateCharacter(ctx context.Context, character *C
 	characterState, _ := resourcePoolsForCharacter(character, nil)
 	_, err := p.db.ExecContext(
 		ctx,
-		`INSERT INTO characters (character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, last_region_id, current_position_x, current_position_z, is_enterable)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+		`INSERT INTO characters (character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, last_region_id, current_position_x, current_position_z, is_enterable)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
 		characterState.ID,
 		characterState.AccountID,
 		characterState.Name,
@@ -548,6 +575,10 @@ func (p *postgresStoreBackend) CreateCharacter(ctx context.Context, character *C
 		characterState.CurrentCP,
 		characterState.CurrentHP,
 		characterState.CurrentMP,
+		characterState.PvPKills,
+		characterState.PKCount,
+		characterState.Karma,
+		nullableTimeValue(characterState.PvPFlagUntil),
 		characterState.LastRegionID,
 		characterState.PositionX,
 		characterState.PositionZ,
@@ -612,6 +643,136 @@ func (p *postgresStoreBackend) UpdateCharacterProgression(ctx context.Context, c
 		return errRecordNotFound
 	}
 	return nil
+}
+
+func (p *postgresStoreBackend) UpdateCharacterPvPFlagUntil(ctx context.Context, characterID string, flagUntil time.Time) error {
+	result, err := p.db.ExecContext(
+		ctx,
+		`UPDATE characters
+		 SET pvp_flag_until = $2,
+		     updated_at = NOW()
+		 WHERE character_id = $1`,
+		characterID,
+		nullableTimeValue(flagUntil),
+	)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errRecordNotFound
+	}
+	return nil
+}
+
+func (p *postgresStoreBackend) ApplyCharacterPvPCombatState(ctx context.Context, attacker CharacterPvPCombatState, target CharacterPvPCombatState, event PvPCombatEvent) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	update := func(state CharacterPvPCombatState) error {
+		result, err := tx.ExecContext(
+			ctx,
+			`UPDATE characters
+			 SET current_cp = $2,
+			     current_hp = $3,
+			     current_mp = $4,
+			     pvp_kills = $5,
+			     pk_count = $6,
+			     karma = $7,
+			     pvp_flag_until = $8,
+			     updated_at = NOW()
+			 WHERE character_id = $1`,
+			state.CharacterID,
+			max(0, state.CurrentCP),
+			max(0, state.CurrentHP),
+			max(0, state.CurrentMP),
+			max(0, state.PvPKills),
+			max(0, state.PKCount),
+			max(0, state.Karma),
+			nullableTimeValue(state.PvPFlagUntil),
+		)
+		if err != nil {
+			return err
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			return errRecordNotFound
+		}
+		return nil
+	}
+
+	if err := update(attacker); err != nil {
+		return err
+	}
+	if err := update(target); err != nil {
+		return err
+	}
+	if target.CurrentHP <= 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM character_skill_cooldowns WHERE character_id = $1`, target.CharacterID); err != nil {
+			return err
+		}
+	}
+	if err := insertPvPCombatEvent(ctx, tx, event); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func insertPvPCombatEvent(ctx context.Context, executor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, event PvPCombatEvent) error {
+	_, err := executor.ExecContext(
+		ctx,
+		`INSERT INTO pvp_combat_events (
+		   event_id, attacker_character_id, attacker_account_id, victim_character_id, victim_account_id,
+		   action_type, skill_id, damage, cp_damage, hp_damage, result,
+		   attacker_flagged_before, attacker_flagged_after, victim_flagged_before, victim_flagged_after,
+		   pvp_kills_before, pvp_kills_after, pk_count_before, pk_count_after,
+		   karma_before, karma_after, karma_delta, session_id, command_id, command_seq, created_at
+		 ) VALUES (
+		   $1, $2, NULLIF($3, ''), $4, NULLIF($5, ''),
+		   $6, NULLIF($7, ''), $8, $9, $10, $11,
+		   $12, $13, $14, $15,
+		   $16, $17, $18, $19,
+		   $20, $21, $22, NULLIF($23, ''), NULLIF($24, ''), $25, $26
+		 )`,
+		event.ID,
+		event.AttackerCharacterID,
+		event.AttackerAccountID,
+		event.VictimCharacterID,
+		event.VictimAccountID,
+		event.ActionType,
+		event.SkillID,
+		max(0, event.Damage),
+		max(0, event.CPDamage),
+		max(0, event.HPDamage),
+		event.Result,
+		event.AttackerFlaggedBefore,
+		event.AttackerFlaggedAfter,
+		event.VictimFlaggedBefore,
+		event.VictimFlaggedAfter,
+		max(0, event.PvPKillsBefore),
+		max(0, event.PvPKillsAfter),
+		max(0, event.PKCountBefore),
+		max(0, event.PKCountAfter),
+		max(0, event.KarmaBefore),
+		max(0, event.KarmaAfter),
+		event.KarmaDelta,
+		event.SessionID,
+		event.CommandID,
+		event.CommandSeq,
+		event.CreatedAt.UTC(),
+	)
+	return err
 }
 
 func (p *postgresStoreBackend) ListCharacterCooldownsByCharacterID(ctx context.Context, characterID string) ([]CharacterSkillCooldown, error) {
@@ -3149,7 +3310,7 @@ func (p *postgresStoreBackend) UpdateStatus(ctx context.Context, sessionID strin
 }
 
 func (p *postgresStoreBackend) truncateAllTables(ctx context.Context) error {
-	_, err := p.db.ExecContext(ctx, `TRUNCATE TABLE gameplay_command_records, clan_invites, clan_members, clans, party_invites, party_members, parties, chat_messages, account_sessions, gameplay_sessions, action_logs, storage_transfer_records, character_hotbar_loadouts, character_skill_cooldowns, character_items, character_quests, character_pets, characters, account_credentials, accounts RESTART IDENTITY CASCADE`)
+	_, err := p.db.ExecContext(ctx, `TRUNCATE TABLE gameplay_command_records, clan_invites, clan_members, clans, party_invites, party_members, parties, chat_messages, account_sessions, gameplay_sessions, pvp_combat_events, action_logs, storage_transfer_records, character_hotbar_loadouts, character_skill_cooldowns, character_items, character_quests, character_pets, characters, account_credentials, accounts RESTART IDENTITY CASCADE`)
 	return err
 }
 
@@ -3176,6 +3337,7 @@ type postgresCharacterQuestRepo struct{ backend *postgresStoreBackend }
 type postgresCharacterItemRepo struct{ backend *postgresStoreBackend }
 type postgresStorageTransferRecordRepo struct{ backend *postgresStoreBackend }
 type postgresActionLogRepo struct{ backend *postgresStoreBackend }
+type postgresPvPCombatEventRepo struct{ backend *postgresStoreBackend }
 type postgresGameplaySessionRepo struct{ backend *postgresStoreBackend }
 
 func (repo postgresAccountRepo) Create(ctx context.Context, account *Account) error {
@@ -3258,6 +3420,14 @@ func (repo postgresCharacterRepo) UpdateWorldState(ctx context.Context, characte
 
 func (repo postgresCharacterRepo) UpdateProgression(ctx context.Context, characterID string, level int, xp int, currentCP int, currentHP int, currentMP int) error {
 	return repo.backend.UpdateCharacterProgression(ctx, characterID, level, xp, currentCP, currentHP, currentMP)
+}
+
+func (repo postgresCharacterRepo) UpdatePvPFlagUntil(ctx context.Context, characterID string, flagUntil time.Time) error {
+	return repo.backend.UpdateCharacterPvPFlagUntil(ctx, characterID, flagUntil)
+}
+
+func (repo postgresCharacterRepo) ApplyPvPCombatState(ctx context.Context, attacker CharacterPvPCombatState, target CharacterPvPCombatState, event PvPCombatEvent) error {
+	return repo.backend.ApplyCharacterPvPCombatState(ctx, attacker, target, event)
 }
 
 func (repo postgresCharacterCooldownRepo) ListByCharacterID(ctx context.Context, characterID string) ([]CharacterSkillCooldown, error) {
@@ -3390,6 +3560,92 @@ func (repo postgresActionLogRepo) Create(ctx context.Context, record ActionLogRe
 		return err
 	}
 	return insertActionLog(ctx, repo.backend.db, applyActionLogAuditFromContext(ctx, accountID, record))
+}
+
+func (repo postgresPvPCombatEventRepo) ListByFilter(ctx context.Context, query PvPCombatEventQuery) ([]PvPCombatEvent, error) {
+	baseQuery := strings.Builder{}
+	baseQuery.WriteString(
+		`SELECT event_id, attacker_character_id, COALESCE(attacker_account_id, ''), victim_character_id, COALESCE(victim_account_id, ''),
+		        action_type, COALESCE(skill_id, ''), damage, cp_damage, hp_damage, result,
+		        attacker_flagged_before, attacker_flagged_after, victim_flagged_before, victim_flagged_after,
+		        pvp_kills_before, pvp_kills_after, pk_count_before, pk_count_after,
+		        karma_before, karma_after, karma_delta, COALESCE(session_id, ''), COALESCE(command_id, ''), command_seq, created_at
+		 FROM pvp_combat_events`,
+	)
+	conditions := make([]string, 0, 7)
+	args := make([]any, 0, 9)
+	addCondition := func(column string, value string) {
+		if value == "" {
+			return
+		}
+		args = append(args, value)
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	addCondition("attacker_character_id", query.AttackerCharacterID)
+	addCondition("victim_character_id", query.VictimCharacterID)
+	if query.InvolvedCharacterID != "" {
+		args = append(args, query.InvolvedCharacterID)
+		conditions = append(conditions, fmt.Sprintf("(attacker_character_id = $%d OR victim_character_id = $%d)", len(args), len(args)))
+	}
+	addCondition("action_type", query.ActionType)
+	addCondition("result", query.Result)
+	if query.OccurredAfter != nil {
+		args = append(args, *query.OccurredAfter)
+		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", len(args)))
+	}
+	if query.OccurredBefore != nil {
+		args = append(args, *query.OccurredBefore)
+		conditions = append(conditions, fmt.Sprintf("created_at <= $%d", len(args)))
+	}
+	if len(conditions) > 0 {
+		baseQuery.WriteString(" WHERE ")
+		baseQuery.WriteString(strings.Join(conditions, " AND "))
+	}
+	query.Limit, query.Offset = normalizeAuditPagination(query.Limit, query.Offset)
+	args = append(args, query.Limit, query.Offset)
+	baseQuery.WriteString(fmt.Sprintf(" ORDER BY created_at DESC, event_id DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args)))
+
+	rows, err := repo.backend.db.QueryContext(ctx, baseQuery.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]PvPCombatEvent, 0)
+	for rows.Next() {
+		var record PvPCombatEvent
+		if err := rows.Scan(
+			&record.ID,
+			&record.AttackerCharacterID,
+			&record.AttackerAccountID,
+			&record.VictimCharacterID,
+			&record.VictimAccountID,
+			&record.ActionType,
+			&record.SkillID,
+			&record.Damage,
+			&record.CPDamage,
+			&record.HPDamage,
+			&record.Result,
+			&record.AttackerFlaggedBefore,
+			&record.AttackerFlaggedAfter,
+			&record.VictimFlaggedBefore,
+			&record.VictimFlaggedAfter,
+			&record.PvPKillsBefore,
+			&record.PvPKillsAfter,
+			&record.PKCountBefore,
+			&record.PKCountAfter,
+			&record.KarmaBefore,
+			&record.KarmaAfter,
+			&record.KarmaDelta,
+			&record.SessionID,
+			&record.CommandID,
+			&record.CommandSeq,
+			&record.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
 }
 
 func (repo postgresGameplaySessionRepo) Create(ctx context.Context, session *Session) error {

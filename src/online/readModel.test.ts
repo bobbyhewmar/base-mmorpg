@@ -460,7 +460,7 @@ describe('online read model', () => {
 
     const inviteCommand = model.createInviteClanMember();
     expect(inviteCommand?.type).toBe('invite_clan_member');
-    expect(inviteCommand?.payload).toEqual({ target_character_id: 'char_2' });
+    expect(inviteCommand?.payload).toEqual({});
 
     const acceptCommand = model.createAcceptClanInvite('clan_invite_accept_1');
     expect(acceptCommand?.type).toBe('accept_clan_invite');
@@ -536,10 +536,20 @@ describe('online read model', () => {
       },
     });
 
-    expect(model.selectProjectedPlayerTarget('char_other')).toBe(true);
+    const selectPlayer = model.createSelectTarget('char_other');
+    expect(selectPlayer).not.toBeNull();
+    expect(model.snapshot.targetId).toBeNull();
+    model.applyMessage({
+      kind: 'delta',
+      emitted_at_ms: Date.now(),
+      revision: 1,
+      applies_to_command_id: selectPlayer!.command_id,
+      applies_to_command_seq: selectPlayer!.command_seq,
+      self: {
+        target_id: 'char_other',
+      },
+    });
     expect(model.snapshot.targetId).toBe('char_other');
-    expect(model.snapshot.targetId).toBe('char_other');
-    expect(model.snapshot.logs[0].text).toBe('Selene is now your target.');
 
     const partyInvite = model.createInvitePartyMember();
     expect(partyInvite?.type).toBe('invite_party_member');
@@ -547,7 +557,91 @@ describe('online read model', () => {
 
     const clanInvite = model.createInviteClanMember();
     expect(clanInvite?.type).toBe('invite_clan_member');
-    expect(clanInvite?.payload).toEqual({ target_character_id: 'char_other' });
+    expect(clanInvite?.payload).toEqual({});
+  });
+
+  it('keeps clan membership unchanged after ack or notice and applies it only from a correlated authoritative delta', () => {
+    const model = new OnlineReadModel(partyRegionContext, character, initialItemState, {
+      ...initialSelfState,
+      clan: null,
+      clan_invites: [
+        {
+          invite_id: 'clan_invite_authoritative_1',
+          clan_id: 'clan_authoritative_1',
+          clan_name: 'Dawnwatch',
+          inviter_character_id: 'char_2',
+          inviter_name: 'Selene',
+          expires_at_ms: Date.now() + 30_000,
+        },
+      ],
+    });
+
+    const command = model.createAcceptClanInvite('clan_invite_authoritative_1');
+    expect(command).not.toBeNull();
+    model.applyMessage({
+      kind: 'ack',
+      emitted_at_ms: Date.now(),
+      command_id: command!.command_id,
+      command_seq: command!.command_seq,
+      status: 'received',
+    });
+    expect(model.getStateInfo().pendingCommands.find((entry) => entry.commandId === command!.command_id)?.status).toBe(
+      'acked',
+    );
+    expect(model.snapshot.clan).toBeNull();
+    expect(model.snapshot.clanInvites).toHaveLength(1);
+
+    model.applyMessage({
+      kind: 'clan_notice',
+      emitted_at_ms: Date.now(),
+      status: 'invite_accepted',
+      clan_id: 'clan_authoritative_1',
+      invite_id: 'clan_invite_authoritative_1',
+      message: 'You join Dawnwatch.',
+    });
+    expect(model.snapshot.clan).toBeNull();
+    expect(model.snapshot.clanInvites).toHaveLength(1);
+
+    model.applyMessage({
+      kind: 'delta',
+      emitted_at_ms: Date.now(),
+      revision: 1,
+      applies_to_command_id: command!.command_id,
+      applies_to_command_seq: command!.command_seq,
+      self: {
+        clan: {
+          clan_id: 'clan_authoritative_1',
+          name: 'Dawnwatch',
+          leader_character_id: 'char_2',
+          members: [
+            {
+              character_id: 'char_2',
+              name: 'Selene',
+              level: 4,
+              base_class: 'Mage',
+              online: true,
+              is_leader: true,
+            },
+            {
+              character_id: character.character_id,
+              name: character.name,
+              level: character.level,
+              base_class: character.base_class,
+              online: true,
+              is_leader: false,
+            },
+          ],
+        },
+        clan_invites: [],
+      },
+    });
+
+    expect(model.getStateInfo().pendingCommands.find((entry) => entry.commandId === command!.command_id)?.status).toBe(
+      'applied',
+    );
+    expect(model.snapshot.clan?.clanId).toBe('clan_authoritative_1');
+    expect(model.snapshot.clan?.members).toHaveLength(2);
+    expect(model.snapshot.clanInvites).toEqual([]);
   });
 
   it('creates authoritative chat envelopes and projects region plus whisper messages into logs', () => {
@@ -955,8 +1049,14 @@ describe('online read model', () => {
       skinType: 1,
       archetypeId: 'ashen_oracle',
       level: 4,
+      cp: 0,
       hp: 118,
       dead: false,
+      pvpFlagged: false,
+      pvpFlagUntilMs: null,
+      pvpKills: 0,
+      pkCount: 0,
+      karma: 0,
       position: { x: -4, z: 2 },
       facing: 0.5,
       mountedPetId: null,
@@ -1629,6 +1729,96 @@ describe('online read model', () => {
 
     expect(model.createUseSkill('crescent_strike')).toBeNull();
     expect(model.snapshot.targetId).toBeNull();
+  });
+
+  it('creates basic attack and skill commands for a living player target without projecting damage locally', () => {
+    const model = new OnlineReadModel(partyRegionContext, character, initialItemState, initialSelfState);
+    const select = model.createSelectTarget('char_2');
+    expect(select).not.toBeNull();
+    model.applyMessage({
+      kind: 'delta',
+      emitted_at_ms: Date.now(),
+      revision: 1,
+      applies_to_command_id: select!.command_id,
+      applies_to_command_seq: select!.command_seq,
+      self: { target_id: 'char_2' },
+    });
+
+    const before = model.snapshot.otherPlayers.char_2;
+    const attack = model.createBasicAttack();
+    const skill = model.createUseSkill('crescent_strike');
+    expect(attack?.payload).toEqual({ target_id: 'char_2' });
+    expect(skill?.payload).toEqual({ skill_id: 'crescent_strike', target_id: 'char_2' });
+    expect(model.snapshot.otherPlayers.char_2).toEqual(before);
+  });
+
+  it('projects PvP, PK, karma, CP and death only from authoritative snapshot and delta', () => {
+    const flagUntil = Date.now() + 30_000;
+    const model = new OnlineReadModel(partyRegionContext, character, initialItemState, {
+      ...initialSelfState,
+      pvp_flagged: true,
+      pvp_flag_until_ms: flagUntil,
+      pvp_kills: 2,
+      pk_count: 1,
+      karma: 100,
+    });
+    expect(model.snapshot.player).toMatchObject({
+      pvpFlagged: true,
+      pvpFlagUntilMs: flagUntil,
+      pvpKills: 2,
+      pkCount: 1,
+      karma: 100,
+    });
+
+    model.applyMessage({
+      kind: 'delta',
+      emitted_at_ms: Date.now(),
+      revision: 1,
+      applies_to_command_id: '',
+      applies_to_command_seq: 0,
+      self: {
+        cp: 0,
+        hp: 0,
+        dead: true,
+        pvp_flagged: false,
+        pvp_flag_until_ms: null,
+        pvp_kills: 3,
+        pk_count: 2,
+        karma: 200,
+      },
+      entities: [
+        {
+          entity_id: 'char_2',
+          cp: 12,
+          hp: 50,
+          dead: false,
+          pvp_flagged: true,
+          pvp_flag_until_ms: flagUntil,
+          pvp_kills: 4,
+          pk_count: 3,
+          karma: 300,
+        },
+      ],
+    });
+
+    expect(model.snapshot.player).toMatchObject({
+      cp: 0,
+      hp: 0,
+      pvpFlagged: false,
+      pvpFlagUntilMs: null,
+      pvpKills: 3,
+      pkCount: 2,
+      karma: 200,
+    });
+    expect(model.snapshot.otherPlayers.char_2).toMatchObject({
+      cp: 12,
+      hp: 50,
+      pvpFlagged: true,
+      pvpFlagUntilMs: flagUntil,
+      pvpKills: 4,
+      pkCount: 3,
+      karma: 300,
+    });
   });
 
   it('removes entity from the projected known-set on entity_disappear and clears target', () => {

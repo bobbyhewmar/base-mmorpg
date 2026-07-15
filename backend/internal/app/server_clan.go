@@ -394,9 +394,6 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 	actorCharacterID := runtime.characterID
 	actorName := runtime.characterName
 	inviteTargetID := runtime.targetID
-	if parsed.targetID != "" {
-		inviteTargetID = parsed.targetID
-	}
 	knownTarget, targetKnown := runtime.knownEntities[inviteTargetID]
 	runtime.mu.Unlock()
 
@@ -438,6 +435,9 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 		}
 		if err := s.store.Clans.Create(ctx, clan, leaderMember); err != nil {
 			if errors.Is(err, errRecordConflict) {
+				if _, actorClanErr := s.store.Clans.GetByCharacterID(ctx, actorCharacterID); actorClanErr == nil {
+					return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "clan.already_in_clan", "Character is already in a clan."))
+				}
 				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "clan.name_taken", "Clan name is already in use."))
 			}
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist clan state."))
@@ -447,7 +447,7 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 		if err != nil {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to project clan state."))
 		}
-		outbound = append(outbound, runtime.clanDeltaMessage(actorClan, actorInvites))
+		outbound = append(outbound, runtime.clanCommandDeltaMessage(actorClan, actorInvites, command))
 		outbound = append(outbound, clanNoticeMessage(
 			clanNoticeStatusCreated,
 			clan.ID,
@@ -537,7 +537,7 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 				}
 			})
 		}
-		outbound = append(outbound, runtime.clanDeltaMessage(actorClan, actorInvites))
+		outbound = append(outbound, runtime.clanCommandDeltaMessage(actorClan, actorInvites, command))
 		outbound = append(outbound, clanNoticeMessage(
 			clanNoticeStatusInviteSent,
 			clan.ID,
@@ -558,6 +558,9 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 
 		invite, err := s.store.Clans.GetInviteByID(ctx, parsed.inviteID)
 		if err != nil {
+			if !errors.Is(err, errRecordNotFound) {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect clan invite state."))
+			}
 			return s.rejectClanCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "clan.invite_expired", "Clan invite is no longer valid.")
 		}
 		if invite.InviteeCharacterID != actorCharacterID {
@@ -570,6 +573,9 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 
 		clan, err := s.store.Clans.GetByID(ctx, invite.ClanID)
 		if err != nil {
+			if !errors.Is(err, errRecordNotFound) {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect clan state."))
+			}
 			_ = s.store.Clans.DeleteInvite(ctx, invite.ID)
 			return s.rejectClanCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "clan.invite_expired", "Clan invite is no longer valid.")
 		}
@@ -592,7 +598,7 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 			return s.rejectClanCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "clan.invite_expired", "Clan invite is no longer valid.")
 		}
 
-		if err := s.store.Clans.AddMember(ctx, &ClanMember{
+		if err := s.store.Clans.AcceptInvite(ctx, invite.ID, &ClanMember{
 			ClanID:      clan.ID,
 			CharacterID: actorCharacterID,
 			JoinedAt:    now,
@@ -603,9 +609,6 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 				return s.rejectClanCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "clan.already_in_clan", "Character is already in a clan.")
 			}
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist clan membership."))
-		}
-		if err := s.store.Clans.DeleteInvite(ctx, invite.ID); err != nil && !errors.Is(err, errRecordNotFound) {
-			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist clan invite state."))
 		}
 
 		affected := make([]string, 0, len(members)+1)
@@ -632,7 +635,7 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 				))
 			}
 		}
-		outbound = append(outbound, runtime.clanDeltaMessage(actorClan, actorInvites))
+		outbound = append(outbound, runtime.clanCommandDeltaMessage(actorClan, actorInvites, command))
 		outbound = append(outbound, clanNoticeMessage(
 			clanNoticeStatusInviteAccepted,
 			clan.ID,
@@ -647,6 +650,9 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 	case "decline_clan_invite":
 		invite, err := s.store.Clans.GetInviteByID(ctx, parsed.inviteID)
 		if err != nil {
+			if !errors.Is(err, errRecordNotFound) {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect clan invite state."))
+			}
 			return s.rejectClanCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "clan.invite_expired", "Clan invite is no longer valid.")
 		}
 		if invite.InviteeCharacterID != actorCharacterID {
@@ -660,7 +666,7 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 		if err != nil {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to project clan state."))
 		}
-		outbound = append(outbound, runtime.clanDeltaMessage(actorClan, actorInvites))
+		outbound = append(outbound, runtime.clanCommandDeltaMessage(actorClan, actorInvites, command))
 		if attached := s.attachedSessionByCharacterID(invite.InviterCharacterID); attached != nil {
 			_ = attached.sendSerialized(clanNoticeMessage(
 				clanNoticeStatusInviteDeclined,
@@ -733,7 +739,7 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 				))
 			}
 		}
-		outbound = append(outbound, runtime.clanDeltaMessage(actorClan, actorInvites))
+		outbound = append(outbound, runtime.clanCommandDeltaMessage(actorClan, actorInvites, command))
 		outbound = append(outbound, clanNoticeMessage(
 			clanNoticeStatusMemberLeft,
 			clan.ID,
@@ -812,7 +818,7 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 				"You were removed from the clan by "+actorName+".",
 			))
 		}
-		outbound = append(outbound, runtime.clanDeltaMessage(actorClan, actorInvites))
+		outbound = append(outbound, runtime.clanCommandDeltaMessage(actorClan, actorInvites, command))
 		outbound = append(outbound, clanNoticeMessage(
 			clanNoticeStatusMemberKicked,
 			clan.ID,
@@ -843,9 +849,6 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 		pendingInvites, err := s.store.Clans.ListPendingInvitesByClan(ctx, clan.ID, now)
 		if err != nil && !errors.Is(err, errRecordNotFound) {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect clan invites."))
-		}
-		if err := s.store.Clans.DeleteInvitesByClan(ctx, clan.ID); err != nil && !errors.Is(err, errRecordNotFound) {
-			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist clan invite state."))
 		}
 		if err := s.store.Clans.Delete(ctx, clan.ID); err != nil {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist clan state."))
@@ -894,7 +897,7 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 		if err != nil {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to project clan state."))
 		}
-		outbound = append(outbound, runtime.clanDeltaMessage(actorClan, actorInvites))
+		outbound = append(outbound, runtime.clanCommandDeltaMessage(actorClan, actorInvites, command))
 		outbound = append(outbound, clanNoticeMessage(
 			clanNoticeStatusClanDissolved,
 			clan.ID,

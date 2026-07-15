@@ -1,5 +1,7 @@
 package app
 
+import "time"
+
 type CharacterDerivedStats struct {
 	MaxCP     int     `json:"max_cp"`
 	MaxHP     int     `json:"max_hp"`
@@ -16,6 +18,11 @@ type CharacterSelfState struct {
 	HP             int                            `json:"hp"`
 	MP             int                            `json:"mp"`
 	Dead           bool                           `json:"dead"`
+	PvPFlagged     bool                           `json:"pvp_flagged"`
+	PvPFlagUntilMS *int64                         `json:"pvp_flag_until_ms"`
+	PvPKills       int                            `json:"pvp_kills"`
+	PKCount        int                            `json:"pk_count"`
+	Karma          int                            `json:"karma"`
 	Cooldowns      map[string]int                 `json:"cooldowns,omitempty"`
 	Stats          CharacterDerivedStats          `json:"stats"`
 	KnownSkills    []CharacterKnownSkill          `json:"known_skills"`
@@ -98,6 +105,9 @@ func persistedCharacterState(character *Character) Character {
 	if state.XP < 0 {
 		state.XP = 0
 	}
+	state.PvPKills = max(0, state.PvPKills)
+	state.PKCount = max(0, state.PKCount)
+	state.Karma = max(0, state.Karma)
 	if state.CurrentHP <= 0 {
 		state.CurrentHP = baseCharacterDerivedStats(&state).MaxHP
 	}
@@ -264,23 +274,33 @@ func selfStateFromItems(
 ) CharacterSelfState {
 	state, stats := resourcePoolsForCharacter(character, items)
 	stats = applyMountedPetMoveSpeed(stats, pets)
+	var pvpFlagUntilMS *int64
+	if state.PvPFlagUntil.After(time.Now()) {
+		value := state.PvPFlagUntil.UnixMilli()
+		pvpFlagUntilMS = &value
+	}
 	return CharacterSelfState{
-		Level:        state.Level,
-		XP:           state.XP,
-		CP:           state.CurrentCP,
-		HP:           state.CurrentHP,
-		MP:           state.CurrentMP,
-		Dead:         false,
-		Cooldowns:    cooldowns,
-		Stats:        stats,
-		KnownSkills:  learnedSkillsForCharacter(state.BaseClass, state.Level),
-		Hotbar:       normalizeCharacterHotbarState(hotbar, &state),
-		Pets:         petSnapshots(pets),
-		Quest:        questSnapshot(quest),
-		Party:        cloneCharacterPartySnapshot(party),
-		PartyInvites: cloneCharacterPartyInviteSnapshots(partyInvites),
-		Clan:         cloneCharacterClanSnapshot(clan),
-		ClanInvites:  cloneCharacterClanInviteSnapshots(clanInvites),
+		Level:          state.Level,
+		XP:             state.XP,
+		CP:             state.CurrentCP,
+		HP:             state.CurrentHP,
+		MP:             state.CurrentMP,
+		Dead:           false,
+		PvPFlagged:     pvpFlagUntilMS != nil,
+		PvPFlagUntilMS: pvpFlagUntilMS,
+		PvPKills:       state.PvPKills,
+		PKCount:        state.PKCount,
+		Karma:          state.Karma,
+		Cooldowns:      cooldowns,
+		Stats:          stats,
+		KnownSkills:    learnedSkillsForCharacter(state.BaseClass, state.Level),
+		Hotbar:         normalizeCharacterHotbarState(hotbar, &state),
+		Pets:           petSnapshots(pets),
+		Quest:          questSnapshot(quest),
+		Party:          cloneCharacterPartySnapshot(party),
+		PartyInvites:   cloneCharacterPartyInviteSnapshots(partyInvites),
+		Clan:           cloneCharacterClanSnapshot(clan),
+		ClanInvites:    cloneCharacterClanInviteSnapshots(clanInvites),
 	}
 }
 

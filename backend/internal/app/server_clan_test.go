@@ -260,7 +260,7 @@ func TestServerClanInviteAuthorityLeaveKickAndDissolve(t *testing.T) {
 	}
 }
 
-func TestServerClanInviteUsesExplicitTargetPayloadWhenRuntimeTargetIsUnset(t *testing.T) {
+func TestServerClanInviteRejectsClientAuthoredTargetPayload(t *testing.T) {
 	store := newMemoryStore()
 	server := NewServer(":0", "", store)
 
@@ -294,11 +294,15 @@ func TestServerClanInviteUsesExplicitTargetPayloadWhenRuntimeTargetIsUnset(t *te
 	inviteOutbound := dispatchPartyCommand(t, server, leader, "cmd_clan_payload_invite", 2, "invite_clan_member", map[string]any{
 		"target_character_id": recruit.session.CharacterID,
 	})
-	if findClanNotice(inviteOutbound, clanNoticeStatusInviteSent) == nil {
-		t.Fatalf("expected invite sent notice, got %+v", inviteOutbound)
+	requireRejectReason(t, inviteOutbound, "protocol.invalid_envelope")
+	if findOutboundMessage(inviteOutbound, "ack") != nil {
+		t.Fatalf("expected invalid target payload to fail before ack, got %+v", inviteOutbound)
 	}
-	if notice := findClanNotice(recruit.messages, clanNoticeStatusInviteReceived); notice == nil {
-		t.Fatalf("expected invite received notice, got %+v", recruit.messages)
+	if notice := findClanNotice(recruit.messages, clanNoticeStatusInviteReceived); notice != nil {
+		t.Fatalf("expected no invite delivery from client-authored target, got %+v", recruit.messages)
+	}
+	if invites, err := store.Clans.ListPendingInvitesByInvitee(context.Background(), recruit.session.CharacterID, time.Now().UTC()); !errors.Is(err, errRecordNotFound) || len(invites) != 0 {
+		t.Fatalf("expected no persisted invite from client-authored target, invites=%+v err=%v", invites, err)
 	}
 }
 
@@ -416,5 +420,165 @@ func TestServerClanInviteExpiryAndDisconnectCancel(t *testing.T) {
 	}
 	if findClanNotice(inviterDisconnectRecruit.messages, clanNoticeStatusInviteExpired) == nil {
 		t.Fatalf("expected invitee to receive invite_expired after inviter disconnect, got %+v", inviterDisconnectRecruit.messages)
+	}
+}
+
+func TestServerClanLifecycleIsReplaySafeAndCorrelatesAppliedDeltas(t *testing.T) {
+	store := newMemoryStore()
+	server := NewServer(":0", "", store)
+	stage := func(sessionID string, characterID string, name string) *partyTestClient {
+		return stagePartyTestClient(t, server, store, sessionID, &Character{
+			ID:           characterID,
+			AccountID:    "acc_" + characterID,
+			Name:         name,
+			BaseClass:    "Fighter",
+			Sex:          "Male",
+			Level:        1,
+			LastRegionID: "dawn_plaza",
+			PositionX:    -8,
+			PositionZ:    0,
+		})
+	}
+	leader := stage("sess_clan_replay_leader", "char_clan_replay_leader", "ReplayLeader")
+	recruit := stage("sess_clan_replay_recruit", "char_clan_replay_recruit", "ReplayRecruit")
+
+	dispatchReplay := func(client *partyTestClient, commandID string, commandSeq int, commandType string, payload any) []map[string]any {
+		t.Helper()
+		first := dispatchPartyCommand(t, server, client, commandID, commandSeq, commandType, payload)
+		replay := dispatchPartyCommand(t, server, client, commandID, commandSeq, commandType, payload)
+		if marshalOutcomeJSON(t, cloneOutboundMessages(first)) != marshalOutcomeJSON(t, replay) {
+			t.Fatalf("expected deterministic replay for %s, first=%+v replay=%+v", commandType, first, replay)
+		}
+		if delta := findOutboundMessage(first, "delta"); delta != nil {
+			if delta["applies_to_command_id"] != commandID || delta["applies_to_command_seq"] != commandSeq {
+				t.Fatalf("expected correlated clan delta for %s, got %+v", commandType, delta)
+			}
+		}
+		return first
+	}
+
+	createOutbound := dispatchReplay(leader, "cmd_clan_replay_create", 1, "create_clan", map[string]any{"name": "ReplayClan"})
+	requireClanDeltaWithMemberCount(t, createOutbound, 1)
+
+	aimPartyInviteTarget(leader, recruit)
+	recruit.resetMessages()
+	inviteOutbound := dispatchReplay(leader, "cmd_clan_replay_invite_decline", 2, "invite_clan_member", map[string]any{})
+	if findClanNotice(inviteOutbound, clanNoticeStatusInviteSent) == nil {
+		t.Fatalf("expected replay-safe invite success, got %+v", inviteOutbound)
+	}
+	declineInviteNotice := findClanNotice(recruit.messages, clanNoticeStatusInviteReceived)
+	declineInviteID, _ := declineInviteNotice["invite_id"].(string)
+	if declineInviteID == "" {
+		t.Fatalf("expected decline invite id, got %+v", declineInviteNotice)
+	}
+	declineOutbound := dispatchReplay(recruit, "cmd_clan_replay_decline", 1, "decline_clan_invite", map[string]any{"invite_id": declineInviteID})
+	if findClanNotice(declineOutbound, clanNoticeStatusInviteDeclined) == nil {
+		t.Fatalf("expected replay-safe decline success, got %+v", declineOutbound)
+	}
+	if _, err := store.Clans.GetInviteByID(context.Background(), declineInviteID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("expected declined invite to stay consumed after replay, err=%v", err)
+	}
+
+	aimPartyInviteTarget(leader, recruit)
+	recruit.resetMessages()
+	_ = dispatchReplay(leader, "cmd_clan_replay_invite_accept", 3, "invite_clan_member", map[string]any{})
+	acceptInviteNotice := findClanNotice(recruit.messages, clanNoticeStatusInviteReceived)
+	acceptInviteID, _ := acceptInviteNotice["invite_id"].(string)
+	acceptOutbound := dispatchReplay(recruit, "cmd_clan_replay_accept", 2, "accept_clan_invite", map[string]any{"invite_id": acceptInviteID})
+	requireClanDeltaWithMemberCount(t, acceptOutbound, 2)
+	clan, err := store.Clans.GetByCharacterID(context.Background(), leader.session.CharacterID)
+	if err != nil {
+		t.Fatalf("Clans.GetByCharacterID(leader) error = %v", err)
+	}
+	members, err := store.Clans.ListMembers(context.Background(), clan.ID)
+	if err != nil || len(members) != 2 {
+		t.Fatalf("expected accept replay to keep exactly two members, members=%+v err=%v", members, err)
+	}
+
+	leaveOutbound := dispatchReplay(recruit, "cmd_clan_replay_leave", 3, "leave_clan", map[string]any{})
+	requireClanDeltaCleared(t, leaveOutbound)
+	if _, err := store.Clans.GetByCharacterID(context.Background(), recruit.session.CharacterID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("expected leave replay to keep recruit outside clan, err=%v", err)
+	}
+
+	aimPartyInviteTarget(leader, recruit)
+	recruit.resetMessages()
+	_ = dispatchReplay(leader, "cmd_clan_replay_invite_kick", 4, "invite_clan_member", map[string]any{})
+	kickInviteNotice := findClanNotice(recruit.messages, clanNoticeStatusInviteReceived)
+	kickInviteID, _ := kickInviteNotice["invite_id"].(string)
+	_ = dispatchReplay(recruit, "cmd_clan_replay_accept_kick", 4, "accept_clan_invite", map[string]any{"invite_id": kickInviteID})
+	kickOutbound := dispatchReplay(leader, "cmd_clan_replay_kick", 5, "kick_clan_member", map[string]any{"target_character_id": recruit.session.CharacterID})
+	requireClanDeltaWithMemberCount(t, kickOutbound, 1)
+	if _, err := store.Clans.GetByCharacterID(context.Background(), recruit.session.CharacterID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("expected kick replay to keep recruit outside clan, err=%v", err)
+	}
+
+	dissolveOutbound := dispatchReplay(leader, "cmd_clan_replay_dissolve", 6, "dissolve_clan", map[string]any{})
+	requireClanDeltaCleared(t, dissolveOutbound)
+	if _, err := store.Clans.GetByID(context.Background(), clan.ID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("expected dissolve replay to keep clan deleted, err=%v", err)
+	}
+
+	conflictOutbound := dispatchPartyCommand(t, server, leader, "cmd_clan_replay_conflict", 6, "dissolve_clan", map[string]any{})
+	requireRejectReason(t, conflictOutbound, "sequence.conflicting_replay")
+	if findOutboundMessage(conflictOutbound, "ack") != nil {
+		t.Fatalf("expected conflicting replay to fail before ack, got %+v", conflictOutbound)
+	}
+}
+
+func TestServerClanMembershipRehydratesAfterDisconnectAndReconnect(t *testing.T) {
+	store := newMemoryStore()
+	server := NewServer(":0", "", store)
+	leader := stagePartyTestClient(t, server, store, "sess_clan_reconnect_leader", &Character{
+		ID:           "char_clan_reconnect_leader",
+		AccountID:    "acc_clan_reconnect_leader",
+		Name:         "ReconnectLeader",
+		BaseClass:    "Fighter",
+		Sex:          "Male",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+		PositionX:    -8,
+		PositionZ:    0,
+	})
+	recruit := stagePartyTestClient(t, server, store, "sess_clan_reconnect_recruit", &Character{
+		ID:           "char_clan_reconnect_recruit",
+		AccountID:    "acc_clan_reconnect_recruit",
+		Name:         "ReconnectRecruit",
+		BaseClass:    "Mage",
+		Sex:          "Female",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+		PositionX:    -8,
+		PositionZ:    0,
+	})
+
+	_ = dispatchPartyCommand(t, server, leader, "cmd_clan_reconnect_create", 1, "create_clan", map[string]any{"name": "ReconnectClan"})
+	aimPartyInviteTarget(leader, recruit)
+	recruit.resetMessages()
+	_ = dispatchPartyCommand(t, server, leader, "cmd_clan_reconnect_invite", 2, "invite_clan_member", map[string]any{})
+	inviteNotice := findClanNotice(recruit.messages, clanNoticeStatusInviteReceived)
+	inviteID, _ := inviteNotice["invite_id"].(string)
+	acceptOutbound := dispatchPartyCommand(t, server, recruit, "cmd_clan_reconnect_accept", 1, "accept_clan_invite", map[string]any{"invite_id": inviteID})
+	requireClanDeltaWithMemberCount(t, acceptOutbound, 2)
+
+	server.closeAttachedSession(recruit.session.ID)
+	server.unregisterAttachedSession(recruit.session.ID)
+	character, err := store.Characters.GetByID(context.Background(), recruit.session.CharacterID)
+	if err != nil {
+		t.Fatalf("Characters.GetByID(recruit) error = %v", err)
+	}
+	rehydrated, err := server.buildAttachedRuntime(context.Background(), recruit.session, character, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("buildAttachedRuntime(reconnect) error = %v", err)
+	}
+	rehydrated.mu.Lock()
+	rehydratedClan := cloneCharacterClanSnapshot(rehydrated.clan)
+	rehydratedInvites := cloneCharacterClanInviteSnapshots(rehydrated.clanInvites)
+	rehydrated.mu.Unlock()
+	if rehydratedClan == nil || len(rehydratedClan.Members) != 2 || rehydratedClan.LeaderCharacterID != leader.session.CharacterID {
+		t.Fatalf("expected authoritative clan membership after reconnect, got %+v", rehydratedClan)
+	}
+	if len(rehydratedInvites) != 0 {
+		t.Fatalf("expected no stale invites after accepted membership reconnect, got %+v", rehydratedInvites)
 	}
 }

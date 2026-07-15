@@ -791,6 +791,11 @@ export interface SelfStateSnapshot {
   hp?: number;
   mp?: number;
   dead?: boolean;
+  pvp_flagged?: boolean;
+  pvp_flag_until_ms?: number | null;
+  pvp_kills?: number;
+  pk_count?: number;
+  karma?: number;
   cooldowns?: Record<string, number>;
   stats: AuthoritativePlayerStatsRecord;
   known_skills?: KnownSkillSnapshot[];

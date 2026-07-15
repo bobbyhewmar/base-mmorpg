@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS characters (
   current_cp INTEGER NOT NULL DEFAULT 80,
   current_hp INTEGER NOT NULL DEFAULT 122,
   current_mp INTEGER NOT NULL DEFAULT 58,
+  pvp_kills INTEGER NOT NULL DEFAULT 0,
+  pk_count INTEGER NOT NULL DEFAULT 0,
+  karma INTEGER NOT NULL DEFAULT 0,
+  pvp_flag_until TIMESTAMPTZ NULL,
   last_region_id TEXT NOT NULL,
   is_enterable BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -59,6 +63,10 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS xp INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS current_cp INTEGER NOT NULL DEFAULT 80;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS current_hp INTEGER NOT NULL DEFAULT 122;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS current_mp INTEGER NOT NULL DEFAULT 58;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS pvp_kills INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS pk_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS karma INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS pvp_flag_until TIMESTAMPTZ NULL;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS hair_style INTEGER NOT NULL DEFAULT 0;
 DO $$
 BEGIN
@@ -81,6 +89,40 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS hair_color TEXT NOT NULL DEFAULT
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS skin_type INTEGER NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_characters_account_id ON characters(account_id);
+CREATE INDEX IF NOT EXISTS idx_characters_pvp_flag_until ON characters(pvp_flag_until) WHERE pvp_flag_until IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS pvp_combat_events (
+  event_id TEXT PRIMARY KEY,
+  attacker_character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
+  attacker_account_id TEXT NULL REFERENCES accounts(account_id) ON DELETE SET NULL,
+  victim_character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
+  victim_account_id TEXT NULL REFERENCES accounts(account_id) ON DELETE SET NULL,
+  action_type TEXT NOT NULL,
+  skill_id TEXT NULL,
+  damage INTEGER NOT NULL,
+  cp_damage INTEGER NOT NULL,
+  hp_damage INTEGER NOT NULL,
+  result TEXT NOT NULL,
+  attacker_flagged_before BOOLEAN NOT NULL,
+  attacker_flagged_after BOOLEAN NOT NULL,
+  victim_flagged_before BOOLEAN NOT NULL,
+  victim_flagged_after BOOLEAN NOT NULL,
+  pvp_kills_before INTEGER NOT NULL,
+  pvp_kills_after INTEGER NOT NULL,
+  pk_count_before INTEGER NOT NULL,
+  pk_count_after INTEGER NOT NULL,
+  karma_before INTEGER NOT NULL,
+  karma_after INTEGER NOT NULL,
+  karma_delta INTEGER NOT NULL,
+  session_id TEXT NULL,
+  command_id TEXT NULL,
+  command_seq INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pvp_combat_events_attacker ON pvp_combat_events(attacker_character_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pvp_combat_events_victim ON pvp_combat_events(victim_character_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pvp_combat_events_result ON pvp_combat_events(result, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS character_skill_cooldowns (
   character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
@@ -190,6 +232,7 @@ CREATE TABLE IF NOT EXISTS clan_invites (
 
 CREATE INDEX IF NOT EXISTS idx_clan_invites_clan_id ON clan_invites(clan_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_clan_invites_invitee_character_id ON clan_invites(invitee_character_id, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clan_invites_clan_unique_pending ON clan_invites(clan_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clan_invites_invitee_unique_pending ON clan_invites(invitee_character_id);
 
 CREATE TABLE IF NOT EXISTS parties (

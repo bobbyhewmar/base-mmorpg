@@ -265,20 +265,9 @@ describe('ClientApp', () => {
     ]);
   });
 
-  it('treats player target selection as a local projection in online mode while keeping mob targets authoritative', () => {
+  it('sends both player and mob target selection through the authoritative command path', () => {
     const app = Object.assign(Object.create(ClientApp.prototype), {
       onlineReadModel: {
-        snapshot: {
-          otherPlayers: {
-            char_other: {
-              id: 'char_other',
-              name: 'Selene',
-            },
-          },
-        },
-        selectProjectedPlayerTarget: (targetId: string) => {
-          expect(targetId).toBe('char_other');
-        },
         createSelectTarget: (targetId: string) => ({ type: 'select_target', payload: { target_id: targetId } }),
       },
       sessionClient: {
@@ -294,6 +283,9 @@ describe('ClientApp', () => {
     app.sendSelectTarget('char_other');
     app.sendSelectTarget('mob_1');
 
-    expect(sentCommands).toEqual([{ type: 'select_target', payload: { target_id: 'mob_1' } }]);
+    expect(sentCommands).toEqual([
+      { type: 'select_target', payload: { target_id: 'char_other' } },
+      { type: 'select_target', payload: { target_id: 'mob_1' } },
+    ]);
   });
 });

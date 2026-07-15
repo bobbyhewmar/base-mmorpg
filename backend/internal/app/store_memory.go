@@ -34,6 +34,7 @@ type memoryStoreBackend struct {
 	characterItems     map[string][]CharacterItem
 	storageTransfers   map[string][]StorageTransferRecord
 	actionLogs         map[string][]ActionLogRecord
+	pvpCombatEvents    []PvPCombatEvent
 	claimedLoot        map[string]struct{}
 	nameIndex          map[string]string
 	sessions           map[string]*Session
@@ -54,6 +55,7 @@ type memoryChatMessageRepo struct{ backend *memoryStoreBackend }
 type memoryCharacterItemRepo struct{ backend *memoryStoreBackend }
 type memoryStorageTransferRecordRepo struct{ backend *memoryStoreBackend }
 type memoryActionLogRepo struct{ backend *memoryStoreBackend }
+type memoryPvPCombatEventRepo struct{ backend *memoryStoreBackend }
 type memoryGameplaySessionRepo struct{ backend *memoryStoreBackend }
 
 func newMemoryStore() *Store {
@@ -102,6 +104,7 @@ func newMemoryStore() *Store {
 		Items:              memoryCharacterItemRepo{backend: backend},
 		StorageTransfers:   memoryStorageTransferRecordRepo{backend: backend},
 		ActionLogs:         memoryActionLogRepo{backend: backend},
+		PvPCombatEvents:    memoryPvPCombatEventRepo{backend: backend},
 		GameplaySessions:   memoryGameplaySessionRepo{backend: backend},
 		registration:       backend,
 		loginLookup:        backend,
@@ -373,6 +376,48 @@ func (repo memoryCharacterRepo) UpdateProgression(_ context.Context, characterID
 	character.CurrentCP = currentCP
 	character.CurrentHP = currentHP
 	character.CurrentMP = currentMP
+	return nil
+}
+
+func (repo memoryCharacterRepo) UpdatePvPFlagUntil(_ context.Context, characterID string, flagUntil time.Time) error {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	character, exists := repo.backend.characters[characterID]
+	if !exists {
+		return errRecordNotFound
+	}
+	character.PvPFlagUntil = flagUntil.UTC()
+	return nil
+}
+
+func (repo memoryCharacterRepo) ApplyPvPCombatState(_ context.Context, attacker CharacterPvPCombatState, target CharacterPvPCombatState, event PvPCombatEvent) error {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	attackerCharacter, attackerExists := repo.backend.characters[attacker.CharacterID]
+	targetCharacter, targetExists := repo.backend.characters[target.CharacterID]
+	if !attackerExists || !targetExists {
+		return errRecordNotFound
+	}
+	attackerCharacter.CurrentCP = max(0, attacker.CurrentCP)
+	attackerCharacter.CurrentHP = max(0, attacker.CurrentHP)
+	attackerCharacter.CurrentMP = max(0, attacker.CurrentMP)
+	attackerCharacter.PvPKills = max(0, attacker.PvPKills)
+	attackerCharacter.PKCount = max(0, attacker.PKCount)
+	attackerCharacter.Karma = max(0, attacker.Karma)
+	attackerCharacter.PvPFlagUntil = attacker.PvPFlagUntil.UTC()
+	targetCharacter.CurrentCP = max(0, target.CurrentCP)
+	targetCharacter.CurrentHP = max(0, target.CurrentHP)
+	targetCharacter.CurrentMP = max(0, target.CurrentMP)
+	targetCharacter.PvPKills = max(0, target.PvPKills)
+	targetCharacter.PKCount = max(0, target.PKCount)
+	targetCharacter.Karma = max(0, target.Karma)
+	targetCharacter.PvPFlagUntil = target.PvPFlagUntil.UTC()
+	if targetCharacter.CurrentHP == 0 {
+		delete(repo.backend.characterCooldowns, target.CharacterID)
+	}
+	repo.backend.pvpCombatEvents = append(repo.backend.pvpCombatEvents, event)
 	return nil
 }
 
@@ -1640,6 +1685,49 @@ func (repo memoryActionLogRepo) Create(ctx context.Context, record ActionLogReco
 
 	repo.backend.recordActionLog(ctx, record.CharacterID, record)
 	return nil
+}
+
+func (repo memoryPvPCombatEventRepo) ListByFilter(_ context.Context, query PvPCombatEventQuery) ([]PvPCombatEvent, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	records := make([]PvPCombatEvent, 0)
+	for _, record := range repo.backend.pvpCombatEvents {
+		if query.AttackerCharacterID != "" && record.AttackerCharacterID != query.AttackerCharacterID {
+			continue
+		}
+		if query.VictimCharacterID != "" && record.VictimCharacterID != query.VictimCharacterID {
+			continue
+		}
+		if query.InvolvedCharacterID != "" && record.AttackerCharacterID != query.InvolvedCharacterID && record.VictimCharacterID != query.InvolvedCharacterID {
+			continue
+		}
+		if query.ActionType != "" && record.ActionType != query.ActionType {
+			continue
+		}
+		if query.Result != "" && record.Result != query.Result {
+			continue
+		}
+		if query.OccurredAfter != nil && record.CreatedAt.Before(*query.OccurredAfter) {
+			continue
+		}
+		if query.OccurredBefore != nil && record.CreatedAt.After(*query.OccurredBefore) {
+			continue
+		}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].CreatedAt.Equal(records[j].CreatedAt) {
+			return records[i].ID > records[j].ID
+		}
+		return records[i].CreatedAt.After(records[j].CreatedAt)
+	})
+	limit, offset := normalizeAuditPagination(query.Limit, query.Offset)
+	if offset >= len(records) {
+		return []PvPCombatEvent{}, nil
+	}
+	end := min(len(records), offset+limit)
+	return append([]PvPCombatEvent(nil), records[offset:end]...), nil
 }
 
 func (repo memoryGameplaySessionRepo) Create(_ context.Context, session *Session) error {

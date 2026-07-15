@@ -402,9 +402,10 @@ const getTargetHudView = (state: GameState): TargetHudView | null => {
 
   const otherPlayer = state.otherPlayers[state.targetId];
   if (otherPlayer) {
+    const combatState = otherPlayer.karma > 0 ? `PK · Karma ${otherPlayer.karma}` : otherPlayer.pvpFlagged ? 'PvP flagged' : 'Neutral';
     return {
       name: otherPlayer.name,
-      subtitle: `Player - Lv ${otherPlayer.level}`,
+      subtitle: `Player - Lv ${otherPlayer.level} · ${combatState}`,
       hpPercent: otherPlayer.dead ? 0 : Math.max(0, Math.min(100, otherPlayer.hp)),
       hpLabel: otherPlayer.dead ? 'Dead' : `HP ${Math.round(otherPlayer.hp)}`,
       tone: 'player',
@@ -669,6 +670,9 @@ const renderStatusPanel = (state: GameState, stats: DerivedStats, cp: number, ma
       <div><span>HP</span><strong>${Math.round(state.player.hp)}/${stats.maxHp}</strong></div>
       <div><span>MP</span><strong>${Math.round(state.player.mp)}/${stats.maxMp}</strong></div>
       <div><span>Exp</span><strong>${((state.player.xp / xpGoalForLevel(state.player.level)) * 100).toFixed(2)}%</strong></div>
+      <div><span>PvP</span><strong>${state.player.pvpKills}</strong></div>
+      <div><span>PK</span><strong>${state.player.pkCount}</strong></div>
+      <div><span>Karma</span><strong>${state.player.karma}</strong></div>
     </div>
     <div class="lineage-status-section">
       <h4>Combat</h4>
@@ -1587,6 +1591,10 @@ export class Hud {
         <div class="classic-companion-row">
           <span>Companion</span>
           <strong>${companionStatus}</strong>
+        </div>
+        <div class="classic-companion-row">
+          <span>Combat</span>
+          <strong>${state.player.pvpFlagged ? 'PvP flagged' : state.player.karma > 0 ? 'PK' : 'Neutral'} · PvP ${state.player.pvpKills} · PK ${state.player.pkCount} · Karma ${state.player.karma}</strong>
         </div>
       </div>
 

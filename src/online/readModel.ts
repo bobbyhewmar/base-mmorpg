@@ -256,8 +256,14 @@ const otherPlayerSnapshot = (
     skinType: requireAppearanceIndex(entity.state.skin_type, 'other player skin_type'),
     archetypeId: getArchetypeIdForBaseClass(baseClass),
     level: typeof entity.state.level === 'number' ? entity.state.level : 1,
+    cp: typeof entity.state.cp === 'number' ? entity.state.cp : 0,
     hp: typeof entity.state.hp === 'number' ? entity.state.hp : 1,
     dead: entity.state.dead === true,
+    pvpFlagged: entity.state.pvp_flagged === true,
+    pvpFlagUntilMs: typeof entity.state.pvp_flag_until_ms === 'number' ? entity.state.pvp_flag_until_ms : null,
+    pvpKills: typeof entity.state.pvp_kills === 'number' ? entity.state.pvp_kills : 0,
+    pkCount: typeof entity.state.pk_count === 'number' ? entity.state.pk_count : 0,
+    karma: typeof entity.state.karma === 'number' ? entity.state.karma : 0,
     position: { ...visualPosition },
     facing: visualFacing,
     mountedPetId: typeof entity.state.mounted_pet_id === 'string' ? entity.state.mounted_pet_id : null,
@@ -391,6 +397,11 @@ export class OnlineReadModel {
   private authoritativeHotbar: PlayerHotbarState;
   private authoritativePets: OwnedPetState[];
   private authoritativeDead = false;
+  private authoritativePvPFlagged = false;
+  private authoritativePvPFlagUntilMs: number | null = null;
+  private authoritativePvPKills = 0;
+  private authoritativePKCount = 0;
+  private authoritativeKarma = 0;
   private authoritativeQuest: GameState['quest'] | null;
   private authoritativeParty: GameState['party'] | null;
   private authoritativePartyInvites: PendingPartyInviteState[] = [];
@@ -432,6 +443,11 @@ export class OnlineReadModel {
     this.authoritativeHotbar = parseHotbarState(selfState?.hotbar, this.authoritativeBaseClass);
     this.authoritativePets = parseOwnedPets(selfState?.pets);
     this.authoritativeDead = parseAuthoritativeDead(selfState?.dead) ?? false;
+    this.authoritativePvPFlagged = selfState?.pvp_flagged === true;
+    this.authoritativePvPFlagUntilMs = typeof selfState?.pvp_flag_until_ms === 'number' ? selfState.pvp_flag_until_ms : null;
+    this.authoritativePvPKills = typeof selfState?.pvp_kills === 'number' ? selfState.pvp_kills : 0;
+    this.authoritativePKCount = typeof selfState?.pk_count === 'number' ? selfState.pk_count : 0;
+    this.authoritativeKarma = typeof selfState?.karma === 'number' ? selfState.karma : 0;
     this.authoritativeQuest = parseQuestSnapshot(selfState?.quest);
     this.authoritativeParty = parsePartySnapshot(selfState?.party);
     this.authoritativePartyInvites = parsePartyInvites(selfState?.party_invites);
@@ -479,6 +495,11 @@ export class OnlineReadModel {
     state.player.activePetId = activePetIdFromRoster(this.authoritativePets);
     state.player.mountedPetId = mountedPetIdFromRoster(this.authoritativePets);
     state.player.deadUntilMs = this.authoritativeDead ? Number.MAX_SAFE_INTEGER : null;
+    state.player.pvpFlagged = this.authoritativePvPFlagged;
+    state.player.pvpFlagUntilMs = this.authoritativePvPFlagUntilMs;
+    state.player.pvpKills = this.authoritativePvPKills;
+    state.player.pkCount = this.authoritativePKCount;
+    state.player.karma = this.authoritativeKarma;
     state.player.authoritativeStats = this.authoritativeStats ? { ...this.authoritativeStats } : null;
     if (this.authoritativeCP !== null) {
       const maxCp = state.player.authoritativeStats?.maxCp ?? state.player.cp;
@@ -711,18 +732,6 @@ export class OnlineReadModel {
     return envelope;
   }
 
-  selectProjectedPlayerTarget(targetId: string): boolean {
-    const target = this.entities.get(targetId);
-    if (!target || target.entityType !== 'player') {
-      this.pushLog('Player targeting failed: target is no longer known in the current region.', 'warning');
-      return false;
-    }
-    this.targetId = targetId;
-    const targetName = (target.state['name'] as string | undefined)?.trim() || 'Player';
-    this.pushLog(`${targetName} is now your target.`, 'neutral');
-    return true;
-  }
-
   createClearTarget(): GameplayCommandEnvelope | null {
     if (this.isCommandFlowBlocked()) {
       this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
@@ -783,7 +792,7 @@ export class OnlineReadModel {
     }
     const requiresLivingTarget =
       skillTemplate?.targetType === 'single_target_enemy' || skillTemplate?.targetType === 'target_centered_aoe';
-    const resolvedTarget = requiresLivingTarget ? this.getLivingMobTarget(this.targetId) : null;
+    const resolvedTarget = requiresLivingTarget ? this.getAttackableCombatTarget(this.targetId) : null;
     if (requiresLivingTarget && !resolvedTarget) {
       this.clearInvalidTargetIfNeeded();
       this.pushLog(`${skillId} requires a living target.`, 'warning');
@@ -825,7 +834,7 @@ export class OnlineReadModel {
       this.pushLog('Actor is currently dead.', 'warning');
       return null;
     }
-    const resolvedTarget = this.getLivingMobTarget(this.targetId);
+    const resolvedTarget = this.getAttackableCombatTarget(this.targetId);
     if (!resolvedTarget) {
       this.clearInvalidTargetIfNeeded();
       this.pushLog('Basic attack requires a living target.', 'warning');
@@ -1743,9 +1752,7 @@ export class OnlineReadModel {
       command_seq: commandSeq,
       client_sent_at_ms: Date.now(),
       type: 'invite_clan_member',
-      payload: {
-        target_character_id: resolvedTargetCharacterId,
-      },
+      payload: {},
     };
     this.pendingCommands.set(commandId, {
       commandId,
@@ -2340,6 +2347,21 @@ export class OnlineReadModel {
         this.pushLog('You return with restored vitality.', 'success');
       }
     }
+    if (typeof self.pvp_flagged === 'boolean') {
+      this.authoritativePvPFlagged = self.pvp_flagged;
+    }
+    if (typeof self.pvp_flag_until_ms === 'number' || self.pvp_flag_until_ms === null) {
+      this.authoritativePvPFlagUntilMs = self.pvp_flag_until_ms;
+    }
+    if (typeof self.pvp_kills === 'number') {
+      this.authoritativePvPKills = Math.max(0, self.pvp_kills);
+    }
+    if (typeof self.pk_count === 'number') {
+      this.authoritativePKCount = Math.max(0, self.pk_count);
+    }
+    if (typeof self.karma === 'number') {
+      this.authoritativeKarma = Math.max(0, self.karma);
+    }
     const maybeStats = parseAuthoritativeStats(self.stats);
     if (maybeStats) {
       this.authoritativeStats = maybeStats;
@@ -2773,6 +2795,23 @@ export class OnlineReadModel {
       return null;
     }
     return entity;
+  }
+
+  private getAttackableCombatTarget(targetId: string | null): OnlineEntityState | null {
+    if (!targetId) {
+      return null;
+    }
+    const entity = this.entities.get(targetId);
+    if (!entity) {
+      return null;
+    }
+    if (entity.entityType === 'mob') {
+      return entity.state.alive === false ? null : entity;
+    }
+    if (entity.entityType === 'player') {
+      return entity.state.dead === true ? null : entity;
+    }
+    return null;
   }
 
   private hasProjectedTarget(targetId: string | null): boolean {

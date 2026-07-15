@@ -27,6 +27,7 @@ type Server struct {
 	attachedMu    sync.Mutex
 	partyMu       sync.Mutex
 	clanMu        sync.Mutex
+	pvpMu         sync.Mutex
 	store         *Store
 	config        ServerConfig
 	corsOrigins   map[string]struct{}
@@ -246,6 +247,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/internal/economy/events", s.handleInternalEconomyEvents)
 	s.mux.HandleFunc("/internal/economy/warehouse-transfers", s.handleInternalWarehouseTransfers)
 	s.mux.HandleFunc("/internal/economy/trades", s.handleInternalTradeEvents)
+	s.mux.HandleFunc("/internal/pvp/events", s.handleInternalPvPEvents)
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -1050,6 +1052,9 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 					s.persistCharacterCooldownState(session.CharacterID, runtime)
 					s.persistCharacterQuestState(session.CharacterID, runtime)
 				}
+				if containsPlayerDeathDelta(tickMessages) {
+					s.persistCharacterCooldownState(session.CharacterID, runtime)
+				}
 				if respawned {
 					s.persistCharacterProgression(session.CharacterID, runtime)
 					if !movementChanged {
@@ -1270,16 +1275,18 @@ func (s *Server) attachedSessionBySessionID(sessionID string) *attachedSession {
 }
 
 func (s *Server) unregisterAttachedSession(sessionID string) {
+	s.pvpMu.Lock()
 	s.attachedMu.Lock()
 	attached := s.attached[sessionID]
 	delete(s.attached, sessionID)
 	s.attachedMu.Unlock()
+	s.pvpMu.Unlock()
+	if attached == nil || attached.runtime == nil {
+		return
+	}
 	if pending := attached.clearPendingMove(0); pending != nil {
 		pending.cancel()
 		s.finalizeSupersededMovementOutcome(sessionID, pending)
-	}
-	if attached == nil || attached.runtime == nil {
-		return
 	}
 	for _, notification := range s.clearPendingTradesForSession(sessionID) {
 		notification.send(notification.payload)
@@ -1650,6 +1657,23 @@ func containsPlayerRespawnDelta(outboundMessages []map[string]any) bool {
 		}
 		dead, _ := self["dead"].(bool)
 		if !dead {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPlayerDeathDelta(outboundMessages []map[string]any) bool {
+	for _, outbound := range outboundMessages {
+		if outbound["kind"] != "delta" {
+			continue
+		}
+		self, ok := outbound["self"].(map[string]any)
+		if !ok {
+			continue
+		}
+		dead, present := self["dead"].(bool)
+		if present && dead {
 			return true
 		}
 	}

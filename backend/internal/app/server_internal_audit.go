@@ -115,6 +115,59 @@ func (s *Server) handleInternalTradeEvents(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+func (s *Server) handleInternalPvPEvents(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuditAccess(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "protocol.method_not_allowed", "Method not allowed.")
+		return
+	}
+	if s.store == nil || s.store.PvPCombatEvents == nil {
+		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "PvP audit repository is unavailable.")
+		return
+	}
+	limit, offset, from, to, ok := parseInternalAuditQuery(w, r)
+	if !ok {
+		return
+	}
+	events, err := s.store.PvPCombatEvents.ListByFilter(r.Context(), PvPCombatEventQuery{
+		AttackerCharacterID: strings.TrimSpace(r.URL.Query().Get("attacker_character_id")),
+		VictimCharacterID:   strings.TrimSpace(r.URL.Query().Get("victim_character_id")),
+		InvolvedCharacterID: strings.TrimSpace(r.URL.Query().Get("character_id")),
+		ActionType:          strings.TrimSpace(r.URL.Query().Get("action_type")),
+		Result:              strings.TrimSpace(r.URL.Query().Get("result")),
+		OccurredAfter:       from,
+		OccurredBefore:      to,
+		Limit:               limit,
+		Offset:              offset,
+	})
+	if err != nil {
+		s.recordStoreError("pvp_audit.list", err)
+		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "Unable to query PvP combat events.")
+		return
+	}
+	filters := map[string]any{
+		"attacker_character_id": strings.TrimSpace(r.URL.Query().Get("attacker_character_id")),
+		"victim_character_id":   strings.TrimSpace(r.URL.Query().Get("victim_character_id")),
+		"character_id":          strings.TrimSpace(r.URL.Query().Get("character_id")),
+		"action_type":           strings.TrimSpace(r.URL.Query().Get("action_type")),
+		"result":                strings.TrimSpace(r.URL.Query().Get("result")),
+	}
+	if from != nil {
+		filters["from"] = from.Format(time.RFC3339)
+	}
+	if to != nil {
+		filters["to"] = to.Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"events":  events,
+		"limit":   limit,
+		"offset":  offset,
+		"filters": filters,
+	})
+}
+
 func (s *Server) requireInternalAuditAccess(w http.ResponseWriter, r *http.Request) bool {
 	if s == nil || !s.config.InternalAuditEnabled {
 		http.NotFound(w, r)

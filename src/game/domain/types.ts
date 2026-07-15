@@ -191,6 +191,11 @@ export interface PlayerState {
   cp: number;
   hp: number;
   mp: number;
+  pvpFlagged: boolean;
+  pvpFlagUntilMs: number | null;
+  pvpKills: number;
+  pkCount: number;
+  karma: number;
   authoritativeStats?: DerivedStats | null;
   position: Vec2;
   facing: number;
@@ -268,8 +273,14 @@ export interface OtherPlayerState {
   skinType: AppearanceOptionIndex;
   archetypeId: string;
   level: number;
+  cp: number;
   hp: number;
   dead: boolean;
+  pvpFlagged: boolean;
+  pvpFlagUntilMs: number | null;
+  pvpKills: number;
+  pkCount: number;
+  karma: number;
   position: Vec2;
   facing: number;
   mountedPetId: EntityId | null;

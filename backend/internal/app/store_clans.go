@@ -246,8 +246,50 @@ func (repo memoryClanRepo) CreateInvite(_ context.Context, invite *ClanInvite) e
 	if _, exists := repo.backend.clans[invite.ClanID]; !exists {
 		return errRecordNotFound
 	}
+	if _, exists := repo.backend.characters[invite.InviterCharacterID]; !exists {
+		return errRecordNotFound
+	}
+	if _, exists := repo.backend.characters[invite.InviteeCharacterID]; !exists {
+		return errRecordNotFound
+	}
+	for _, existing := range repo.backend.clanInvites {
+		if existing == nil || !existing.ExpiresAt.After(invite.CreatedAt) {
+			continue
+		}
+		if existing.ClanID == invite.ClanID || existing.InviteeCharacterID == invite.InviteeCharacterID {
+			return errRecordConflict
+		}
+	}
 	cloned := *invite
 	repo.backend.clanInvites[invite.ID] = &cloned
+	return nil
+}
+
+func (repo memoryClanRepo) AcceptInvite(_ context.Context, inviteID string, member *ClanMember) error {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	if member == nil {
+		return errRecordNotFound
+	}
+	invite, exists := repo.backend.clanInvites[inviteID]
+	if !exists || invite == nil || invite.ClanID != member.ClanID || invite.InviteeCharacterID != member.CharacterID || !invite.ExpiresAt.After(member.JoinedAt) {
+		return errRecordNotFound
+	}
+	if _, exists := repo.backend.clans[member.ClanID]; !exists {
+		return errRecordNotFound
+	}
+	if _, exists := repo.backend.characters[member.CharacterID]; !exists {
+		return errRecordNotFound
+	}
+	if _, exists := repo.backend.clanByCharacter[member.CharacterID]; exists {
+		return errRecordConflict
+	}
+
+	memberCopy := *member
+	repo.backend.clanMembers[member.ClanID] = append(repo.backend.clanMembers[member.ClanID], memberCopy)
+	repo.backend.clanByCharacter[member.CharacterID] = member.ClanID
+	delete(repo.backend.clanInvites, inviteID)
 	return nil
 }
 
@@ -590,6 +632,63 @@ func (p *postgresStoreBackend) CreateClanInvite(ctx context.Context, invite *Cla
 	return mapPostgresError(err)
 }
 
+func (p *postgresStoreBackend) AcceptClanInvite(ctx context.Context, inviteID string, member *ClanMember) error {
+	if member == nil {
+		return errRecordNotFound
+	}
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var clanID string
+	var inviteeCharacterID string
+	var expiresAt time.Time
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT clan_id, invitee_character_id, expires_at
+		 FROM clan_invites
+		 WHERE invite_id = $1
+		 FOR UPDATE`,
+		inviteID,
+	).Scan(&clanID, &inviteeCharacterID, &expiresAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errRecordNotFound
+		}
+		return err
+	}
+	if clanID != member.ClanID || inviteeCharacterID != member.CharacterID || !expiresAt.After(member.JoinedAt) {
+		return errRecordNotFound
+	}
+
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO clan_members (clan_id, character_id, joined_at, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		member.ClanID,
+		member.CharacterID,
+		member.JoinedAt,
+		member.CreatedAt,
+		member.UpdatedAt,
+	); err != nil {
+		return mapPostgresError(err)
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM clan_invites WHERE invite_id = $1`, inviteID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected != 1 {
+		return errRecordNotFound
+	}
+	return tx.Commit()
+}
+
 func (p *postgresStoreBackend) DeleteClanInvite(ctx context.Context, inviteID string) error {
 	result, err := p.db.ExecContext(ctx, `DELETE FROM clan_invites WHERE invite_id = $1`, inviteID)
 	if err != nil {
@@ -699,6 +798,10 @@ func (repo postgresClanRepo) GetInviteByID(ctx context.Context, inviteID string)
 
 func (repo postgresClanRepo) CreateInvite(ctx context.Context, invite *ClanInvite) error {
 	return repo.backend.CreateClanInvite(ctx, invite)
+}
+
+func (repo postgresClanRepo) AcceptInvite(ctx context.Context, inviteID string, member *ClanMember) error {
+	return repo.backend.AcceptClanInvite(ctx, inviteID, member)
 }
 
 func (repo postgresClanRepo) DeleteInvite(ctx context.Context, inviteID string) error {

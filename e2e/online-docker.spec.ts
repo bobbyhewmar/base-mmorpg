@@ -22,7 +22,7 @@ type BridgeSnapshot = {
     lastRevision: number;
     lastRegionRevision: number;
     nextCommandSeq: number;
-    pendingCommands: Array<{ commandId: string; status: string }>;
+    pendingCommands: Array<{ commandId: string; type: string; status: string }>;
     commandFlowBlocked: boolean;
     desyncState: string;
   } | null;
@@ -31,6 +31,13 @@ type BridgeSnapshot = {
 type WorldState = {
   player: {
     position: { x: number; z: number };
+	cp: number;
+	hp: number;
+	mp: number;
+	pvpFlagged: boolean;
+	pvpKills: number;
+	pkCount: number;
+	karma: number;
   };
   destinationMarker: { x: number; z: number } | null;
   pendingPath: Array<{ x: number; z: number }>;
@@ -49,8 +56,15 @@ type WorldState = {
     itemTemplateId: string;
     quantity: number;
   } | null;
-  otherPlayers: Record<string, { id: string; name: string; position: { x: number; z: number }; facing: number; dead: boolean }>;
+	otherPlayers: Record<string, { id: string; name: string; position: { x: number; z: number }; facing: number; cp: number; hp: number; dead: boolean; pvpFlagged: boolean; karma: number }>;
   targetId: string | null;
+  clan: {
+    clanId: string;
+    name: string;
+    leaderCharacterId: string;
+    members: Array<{ characterId: string; name: string; isLeader: boolean; online: boolean }>;
+  } | null;
+  clanInvites: Array<{ inviteId: string; clanId: string; clanName: string; expiresAtMs: number }>;
   logs: Array<{ id: string; text: string; tone: string }>;
   mobs: Record<string, { id: string; position: { x: number; z: number }; hp: number; aiState: string }>;
   loot: Record<string, { id: string; position: { x: number; z: number }; label: string }>;
@@ -71,6 +85,17 @@ const waitForBridgePhase = async (page: Page, phase: BridgeSnapshot['phase']): P
   await page.waitForFunction(
     (expectedPhase) => (window as any).__l2bgE2E?.getSnapshot?.()?.phase === expectedPhase,
     phase,
+  );
+};
+
+const waitForAppliedCommand = async (page: Page, commandType: string): Promise<void> => {
+  await page.waitForFunction(
+    (expectedType) => {
+      const commands = (window as any).__l2bgE2E?.getSnapshot?.()?.onlineState?.pendingCommands ?? [];
+      return commands.some((command: any) => command.type === expectedType && command.status === 'applied');
+    },
+    commandType,
+	{ timeout: 15_000 },
   );
 };
 
@@ -182,12 +207,16 @@ const bootstrapOnlineCharacter = async (
 
   await page.fill('form[data-action="login"] input[name="login"]', login);
   await page.fill('form[data-action="login"] input[name="password"]', password);
-  await submitAuthActionWithRetry(page, 'form[data-action="login"] button[type="submit"]', '.list-card');
+  await submitAuthActionWithRetry(
+    page,
+    'form[data-action="login"] button[type="submit"]',
+    '[data-click-action="open-create-character"]',
+  );
   await page.click('[data-click-action="open-create-character"]');
 
-  await page.selectOption('form[data-action="create-character"] select[name="race"]', 'Human');
-  await page.selectOption('form[data-action="create-character"] select[name="base_class"]', 'Fighter');
-  await page.selectOption('form[data-action="create-character"] select[name="sex"]', 'Male');
+  await expect(page.locator('form[data-action="create-character"] input[name="race"]')).toHaveValue('Human');
+  await expect(page.locator('form[data-action="create-character"] input[name="base_class"]')).toHaveValue('Fighter');
+  await expect(page.locator('form[data-action="create-character"] input[name="sex"]')).toHaveValue('Male');
   await page.fill('form[data-action="create-character"] input[name="name"]', characterName);
   await page.click('form[data-action="create-character"] button[type="submit"]');
 
@@ -217,12 +246,16 @@ const createAndEnterCharacterForExistingAccount = async (
   await page.goto('/');
   await page.fill('form[data-action="login"] input[name="login"]', login);
   await page.fill('form[data-action="login"] input[name="password"]', password);
-  await submitAuthActionWithRetry(page, 'form[data-action="login"] button[type="submit"]', '.list-card');
+  await submitAuthActionWithRetry(
+    page,
+    'form[data-action="login"] button[type="submit"]',
+    '[data-click-action="open-create-character"]',
+  );
   await page.click('[data-click-action="open-create-character"]');
 
-  await page.selectOption('form[data-action="create-character"] select[name="race"]', 'Human');
-  await page.selectOption('form[data-action="create-character"] select[name="base_class"]', 'Fighter');
-  await page.selectOption('form[data-action="create-character"] select[name="sex"]', 'Male');
+  await expect(page.locator('form[data-action="create-character"] input[name="race"]')).toHaveValue('Human');
+  await expect(page.locator('form[data-action="create-character"] input[name="base_class"]')).toHaveValue('Fighter');
+  await expect(page.locator('form[data-action="create-character"] input[name="sex"]')).toHaveValue('Male');
   await page.fill('form[data-action="create-character"] input[name="name"]', characterName);
   await page.click('form[data-action="create-character"] button[type="submit"]');
 
@@ -237,6 +270,26 @@ const createAndEnterCharacterForExistingAccount = async (
     characterId: snapshot.selectedCharacterId!,
     characterName,
   };
+};
+
+const loginAndEnterExistingCharacter = async (
+  page: Page,
+  login: string,
+  password: string,
+  characterName: string,
+): Promise<void> => {
+  await page.goto('/');
+  await page.fill('form[data-action="login"] input[name="login"]', login);
+  await page.fill('form[data-action="login"] input[name="password"]', password);
+  await submitAuthActionWithRetry(
+    page,
+    'form[data-action="login"] button[type="submit"]',
+    '[data-click-action="open-create-character"]',
+  );
+  await expect(page.locator('.character-card', { hasText: characterName })).toBeVisible();
+  await page.click(`.character-card:has-text("${characterName}")`);
+  await page.click('[data-click-action="enter-world"]');
+  await waitForBridgePhase(page, 'online_ready');
 };
 
 test('executa o fluxo online ponta a ponta via browser real e Docker Compose', async ({ page }) => {
@@ -304,12 +357,16 @@ test('executa o fluxo online ponta a ponta via browser real e Docker Compose', a
 
   await page.fill('form[data-action="login"] input[name="login"]', login);
   await page.fill('form[data-action="login"] input[name="password"]', password);
-  await submitAuthActionWithRetry(page, 'form[data-action="login"] button[type="submit"]', '.list-card');
+  await submitAuthActionWithRetry(
+    page,
+    'form[data-action="login"] button[type="submit"]',
+    '[data-click-action="open-create-character"]',
+  );
   await page.click('[data-click-action="open-create-character"]');
 
-  await page.selectOption('form[data-action="create-character"] select[name="race"]', 'Human');
-  await page.selectOption('form[data-action="create-character"] select[name="base_class"]', 'Fighter');
-  await page.selectOption('form[data-action="create-character"] select[name="sex"]', 'Male');
+  await expect(page.locator('form[data-action="create-character"] input[name="race"]')).toHaveValue('Human');
+  await expect(page.locator('form[data-action="create-character"] input[name="base_class"]')).toHaveValue('Fighter');
+  await expect(page.locator('form[data-action="create-character"] input[name="sex"]')).toHaveValue('Male');
   await page.fill('form[data-action="create-character"] input[name="name"]', characterName);
   await page.click('form[data-action="create-character"] button[type="submit"]');
 
@@ -720,4 +777,199 @@ test('executa trade P2P autoritativo entre duas sessÃµes online', async ({ bro
   } finally {
     await peerPage.close().catch(() => undefined);
   }
+});
+
+test('hardeniza o lifecycle autoritativo de clan entre dois personagens com reconnect', async ({ browser, page }) => {
+  test.setTimeout(240_000);
+  const suffixBase = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const peerPage = await browser.newPage();
+
+  try {
+    const leader = await bootstrapOnlineCharacter(page, `${suffixBase}a`);
+    const peer = await bootstrapOnlineCharacter(peerPage, `${suffixBase}b`);
+    const clanName = `C${suffixBase.slice(-10)}`;
+
+    await page.waitForFunction(
+      (characterId) => Boolean((window as any).__l2bgE2E?.getWorldState?.()?.otherPlayers?.[characterId]),
+      peer.characterId,
+    );
+    await peerPage.waitForFunction(
+      (characterId) => Boolean((window as any).__l2bgE2E?.getWorldState?.()?.otherPlayers?.[characterId]),
+      leader.characterId,
+    );
+
+    await page.evaluate((name) => (window as any).__l2bgE2E.sendCreateClan(name), clanName);
+    await page.waitForFunction(
+      (expectedName) => (window as any).__l2bgE2E?.getWorldState?.()?.clan?.name === expectedName,
+      clanName,
+    );
+    await waitForAppliedCommand(page, 'create_clan');
+
+    const invitePeer = async (): Promise<string> => {
+      await page.evaluate((targetId) => (window as any).__l2bgE2E.sendSelectTarget(targetId), peer.characterId);
+      await page.waitForFunction(
+        (targetId) => (window as any).__l2bgE2E?.getWorldState?.()?.targetId === targetId,
+        peer.characterId,
+      );
+      await page.evaluate(() => (window as any).__l2bgE2E.sendInviteClanMember());
+      await peerPage.waitForFunction(
+        (expectedClanName) =>
+          ((window as any).__l2bgE2E?.getWorldState?.()?.clanInvites ?? []).some(
+            (invite: any) => invite.clanName === expectedClanName,
+          ),
+        clanName,
+      );
+      const invite = (await getWorldState(peerPage))?.clanInvites.find((entry) => entry.clanName === clanName);
+      expect(invite?.inviteId).toBeTruthy();
+      return invite!.inviteId;
+    };
+
+    const firstInviteID = await invitePeer();
+    await waitForAppliedCommand(page, 'invite_clan_member');
+    await peerPage.evaluate((inviteId) => (window as any).__l2bgE2E.sendAcceptClanInvite(inviteId), firstInviteID);
+    await peerPage.waitForFunction(
+      (expectedClanName) =>
+        (window as any).__l2bgE2E?.getWorldState?.()?.clan?.name === expectedClanName &&
+        (window as any).__l2bgE2E?.getWorldState?.()?.clan?.members?.length === 2,
+      clanName,
+    );
+    await page.waitForFunction(() => (window as any).__l2bgE2E?.getWorldState?.()?.clan?.members?.length === 2);
+    await waitForAppliedCommand(peerPage, 'accept_clan_invite');
+
+    await loginAndEnterExistingCharacter(peerPage, peer.login, peer.password, peer.characterName);
+    await peerPage.waitForFunction(
+      (expectedClanName) =>
+        (window as any).__l2bgE2E?.getWorldState?.()?.clan?.name === expectedClanName &&
+        (window as any).__l2bgE2E?.getWorldState?.()?.clan?.members?.length === 2,
+      clanName,
+    );
+
+    await peerPage.evaluate(() => (window as any).__l2bgE2E.sendLeaveClan());
+    await peerPage.waitForFunction(() => (window as any).__l2bgE2E?.getWorldState?.()?.clan === null);
+    await page.waitForFunction(() => (window as any).__l2bgE2E?.getWorldState?.()?.clan?.members?.length === 1);
+    await waitForAppliedCommand(peerPage, 'leave_clan');
+
+    const declinedInviteID = await invitePeer();
+    await peerPage.evaluate((inviteId) => (window as any).__l2bgE2E.sendDeclineClanInvite(inviteId), declinedInviteID);
+    await peerPage.waitForFunction(() => (window as any).__l2bgE2E?.getWorldState?.()?.clanInvites?.length === 0);
+    await page.waitForFunction(() =>
+      ((window as any).__l2bgE2E?.getWorldState?.()?.logs ?? []).some((entry: any) => entry.text.includes('declined the clan invitation')),
+    );
+    await waitForAppliedCommand(peerPage, 'decline_clan_invite');
+
+    const kickInviteID = await invitePeer();
+    await peerPage.evaluate((inviteId) => (window as any).__l2bgE2E.sendAcceptClanInvite(inviteId), kickInviteID);
+    await page.waitForFunction(() => (window as any).__l2bgE2E?.getWorldState?.()?.clan?.members?.length === 2);
+    await page.evaluate(
+      (targetCharacterId) => (window as any).__l2bgE2E.sendKickClanMember(targetCharacterId),
+      peer.characterId,
+    );
+    await peerPage.waitForFunction(() => (window as any).__l2bgE2E?.getWorldState?.()?.clan === null);
+    await page.waitForFunction(() => (window as any).__l2bgE2E?.getWorldState?.()?.clan?.members?.length === 1);
+    await waitForAppliedCommand(page, 'kick_clan_member');
+
+    await page.evaluate(() => (window as any).__l2bgE2E.sendDissolveClan());
+    await page.waitForFunction(() => (window as any).__l2bgE2E?.getWorldState?.()?.clan === null);
+    await waitForAppliedCommand(page, 'dissolve_clan');
+  } finally {
+    await peerPage.close().catch(() => undefined);
+  }
+});
+
+test('aplica ataque e skill PvP autoritativos entre duas sessões online', async ({ browser, page }) => {
+	test.setTimeout(240_000);
+	const suffixBase = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+	const peerPage = await browser.newPage();
+
+	try {
+	  const [attacker, target] = await Promise.all([
+		bootstrapOnlineCharacter(page, `${suffixBase}a`),
+		bootstrapOnlineCharacter(peerPage, `${suffixBase}b`),
+	  ]);
+	  await page.waitForFunction(
+		(characterId) => Boolean((window as any).__l2bgE2E?.getWorldState?.()?.otherPlayers?.[characterId]),
+		target.characterId,
+		{ timeout: 15_000 },
+	  );
+	  await peerPage.waitForFunction(
+		(characterId) => Boolean((window as any).__l2bgE2E?.getWorldState?.()?.otherPlayers?.[characterId]),
+		attacker.characterId,
+		{ timeout: 15_000 },
+	  );
+
+	  const attackerCombatPosition = { x: 0, z: 0 };
+	  const targetCombatPosition = { x: 1, z: 0 };
+	  await Promise.all([
+		page.evaluate((point) => (window as any).__l2bgE2E.sendMoveIntent(point), attackerCombatPosition),
+		peerPage.evaluate((point) => (window as any).__l2bgE2E.sendMoveIntent(point), targetCombatPosition),
+	  ]);
+	  await Promise.all([
+		waitForPlayerDistance(page, attackerCombatPosition, 0.25),
+		waitForPlayerDistance(peerPage, targetCombatPosition, 0.25),
+	  ]);
+
+	  const targetBeforeSelect = await getWorldState(peerPage);
+	  await page.evaluate((targetId) => (window as any).__l2bgE2E.sendSelectTarget(targetId), target.characterId);
+	  await page.waitForFunction(
+		(targetId) => (window as any).__l2bgE2E?.getWorldState?.()?.targetId === targetId,
+		target.characterId,
+		{ timeout: 15_000 },
+	  );
+	  expect((await getWorldState(peerPage))?.player.cp).toBe(targetBeforeSelect?.player.cp);
+	  expect((await getWorldState(peerPage))?.player.hp).toBe(targetBeforeSelect?.player.hp);
+
+	  await page.evaluate(() => (window as any).__l2bgE2E.sendBasicAttack());
+	  await waitForAppliedCommand(page, 'basic_attack');
+	  await peerPage.waitForFunction(
+		({ previousCP, previousHP }) => {
+		  const player = (window as any).__l2bgE2E?.getWorldState?.()?.player;
+		  return Boolean(player) && (player.cp < previousCP || player.hp < previousHP);
+		},
+		{ previousCP: targetBeforeSelect!.player.cp, previousHP: targetBeforeSelect!.player.hp },
+		{ timeout: 15_000 },
+	  );
+	  await page.waitForFunction(
+		() => (window as any).__l2bgE2E?.getWorldState?.()?.player?.pvpFlagged === true,
+		undefined,
+		{ timeout: 15_000 },
+	  );
+
+	  await loginAndEnterExistingCharacter(page, attacker.login, attacker.password, attacker.characterName);
+	  await page.waitForFunction(
+		() => (window as any).__l2bgE2E?.getWorldState?.()?.player?.pvpFlagged === true,
+		undefined,
+		{ timeout: 15_000 },
+	  );
+	  await page.waitForFunction(
+		(characterId) => Boolean((window as any).__l2bgE2E?.getWorldState?.()?.otherPlayers?.[characterId]),
+		target.characterId,
+		{ timeout: 15_000 },
+	  );
+	  await page.evaluate((targetId) => (window as any).__l2bgE2E.sendSelectTarget(targetId), target.characterId);
+	  await page.waitForFunction(
+		(targetId) => (window as any).__l2bgE2E?.getWorldState?.()?.targetId === targetId,
+		target.characterId,
+		{ timeout: 15_000 },
+	  );
+
+	  const afterBasic = await getWorldState(peerPage);
+	  await page.evaluate(() => (window as any).__l2bgE2E.sendUseSkill('crescent_strike'));
+	  await waitForAppliedCommand(page, 'use_skill');
+	  await peerPage.waitForFunction(
+		({ previousCP, previousHP }) => {
+		  const player = (window as any).__l2bgE2E?.getWorldState?.()?.player;
+		  return Boolean(player) && (player.cp < previousCP || player.hp < previousHP);
+		},
+		{ previousCP: afterBasic!.player.cp, previousHP: afterBasic!.player.hp },
+		{ timeout: 15_000 },
+	  );
+
+	  const attackerAfter = await getWorldState(page);
+	  const targetAfter = await getWorldState(peerPage);
+	  expect(attackerAfter?.player.pvpFlagged).toBe(true);
+	  expect(attackerAfter?.player.mp).toBeLessThan(58);
+	  expect(targetAfter?.player.cp ?? 0).toBeLessThan(targetBeforeSelect?.player.cp ?? 0);
+	} finally {
+	  await peerPage.close().catch(() => undefined);
+	}
 });

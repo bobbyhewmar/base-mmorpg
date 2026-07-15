@@ -34,7 +34,7 @@ func (runtime *attachedRuntime) preValidate(command commandEnvelope) (*parsedCom
 		var payload struct {
 			TargetID string `json:"target_id"`
 		}
-		if err := json.Unmarshal(command.Payload, &payload); err != nil {
+		if err := decodeCommandPayloadStrict(command.Payload, &payload); err != nil {
 			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Target payload is invalid.")
 		}
 		if payload.TargetID == "" {
@@ -57,7 +57,7 @@ func (runtime *attachedRuntime) preValidate(command commandEnvelope) (*parsedCom
 			SkillID  string `json:"skill_id"`
 			TargetID string `json:"target_id"`
 		}
-		if err := json.Unmarshal(command.Payload, &payload); err != nil {
+		if err := decodeCommandPayloadStrict(command.Payload, &payload); err != nil {
 			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Skill payload is invalid.")
 		}
 		if payload.SkillID == "" {
@@ -72,7 +72,7 @@ func (runtime *attachedRuntime) preValidate(command commandEnvelope) (*parsedCom
 		var payload struct {
 			TargetID string `json:"target_id"`
 		}
-		if err := json.Unmarshal(command.Payload, &payload); err != nil {
+		if err := decodeCommandPayloadStrict(command.Payload, &payload); err != nil {
 			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Basic attack payload is invalid.")
 		}
 		if payload.TargetID == "" {
@@ -422,15 +422,12 @@ func (runtime *attachedRuntime) preValidate(command commandEnvelope) (*parsedCom
 			clanName:    payload.Name,
 		}, nil
 	case "invite_clan_member":
-		var payload struct {
-			TargetCharacterID string `json:"target_character_id"`
-		}
+		var payload struct{}
 		if err := decodeCommandPayloadStrict(command.Payload, &payload); err != nil {
 			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Clan invite payload is invalid.")
 		}
 		return &parsedCommand{
 			commandType: command.Type,
-			targetID:    payload.TargetCharacterID,
 		}, nil
 	case "accept_clan_invite":
 		var payload struct {

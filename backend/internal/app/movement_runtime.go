@@ -420,12 +420,35 @@ func (runtime *attachedRuntime) collectTickMessagesWithStore(now time.Time, stor
 	movementChanged := runtime.advanceMovementLocked(now)
 	resourceChanged := runtime.applyIdleRegenLocked(now)
 	mobPatches, mobAIChanged := runtime.resolveMobAILocked(now)
+	pvpPresenceChanged := runtime.pvpStateDirty
+	pvpFlagReason := ""
+	if !runtime.pvpFlagUntil.IsZero() && !now.Before(runtime.pvpFlagUntil) {
+		runtime.pvpFlagPersistenceDirty = true
+		if store == nil || store.Characters == nil || store.Characters.UpdatePvPFlagUntil(context.Background(), runtime.characterID, time.Time{}) == nil {
+			runtime.pvpFlagUntil = time.Time{}
+			runtime.pvpFlagPersistenceDirty = false
+			pvpPresenceChanged = true
+			pvpFlagReason = "pvp.flag_expired"
+		}
+	} else if runtime.pvpFlagPersistenceDirty {
+		if store == nil || store.Characters == nil || store.Characters.UpdatePvPFlagUntil(context.Background(), runtime.characterID, runtime.pvpFlagUntil) == nil {
+			runtime.pvpFlagPersistenceDirty = false
+		}
+	}
+	runtime.pvpStateDirty = false
 	outbound := make([]map[string]any, 0, 2)
-	if movementChanged || resourceChanged || mobAIChanged {
+	if movementChanged || resourceChanged || mobAIChanged || pvpPresenceChanged {
 		runtime.revision++
-		self := runtime.selfDelta(now, nil)
+		extra := map[string]any{}
+		if pvpFlagReason != "" {
+			extra["pvp_flag_reason"] = pvpFlagReason
+		}
+		self := runtime.selfDelta(now, extra)
 		if movementChanged {
 			self = runtime.movementSelfDeltaLocked(now, "")
+			if pvpFlagReason != "" {
+				self["pvp_flag_reason"] = pvpFlagReason
+			}
 		}
 		outbound = append(outbound, deltaMessage(
 			runtime.revision,
@@ -448,5 +471,5 @@ func (runtime *attachedRuntime) collectTickMessagesWithStore(now time.Time, stor
 
 	lifecycleMessages := runtime.collectLifecycleMessagesLocked(now)
 	outbound = append(outbound, lifecycleMessages...)
-	return outbound, movementChanged, containsPlayerRespawnDelta(lifecycleMessages)
+	return outbound, movementChanged || pvpPresenceChanged, containsPlayerRespawnDelta(lifecycleMessages)
 }

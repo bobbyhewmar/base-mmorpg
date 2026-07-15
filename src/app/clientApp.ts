@@ -32,6 +32,7 @@ declare global {
       sendClearTarget: () => void;
       sendInteractNpc: (npcId: string, actionId?: 'accept_task' | 'turn_in_task') => void;
       sendUseSkill: (skillId: string) => void;
+      sendBasicAttack: () => void;
       sendPickUpLoot: (lootId: string) => void;
       sendUseItem: (itemId: string) => void;
       sendEquipItem: (itemId: string) => void;
@@ -661,12 +662,6 @@ export class ClientApp {
 
   private sendSelectTarget(targetId: string): void {
     if (!this.onlineReadModel || !this.sessionClient) {
-      return;
-    }
-    const snapshot = this.onlineReadModel.snapshot;
-    if (snapshot.otherPlayers[targetId]) {
-      this.onlineReadModel.selectProjectedPlayerTarget(targetId);
-      this.refreshOnlineRuntime();
       return;
     }
     const command = this.onlineReadModel.createSelectTarget(targetId);
@@ -1888,6 +1883,9 @@ export class ClientApp {
       },
       sendUseSkill: (skillId) => {
         this.sendUseSkill(skillId);
+      },
+      sendBasicAttack: () => {
+        this.sendHotbarAction('basic_attack');
       },
       sendPickUpLoot: (lootId) => {
         this.sendPickUpLoot(lootId);

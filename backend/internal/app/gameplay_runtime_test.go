@@ -340,6 +340,35 @@ func TestAttachedRuntimeRejectsTargetOutsideKnownSet(t *testing.T) {
 	}
 }
 
+func TestAttachedRuntimeSelectsKnownPlayerAuthoritatively(t *testing.T) {
+	runtime := newAttachedRuntime("sess_1", &Character{ID: "char_1", LastRegionID: "dawn_plaza"})
+	runtime.knownEntities["char_2"] = runtimeEntity{
+		EntityID:   "char_2",
+		EntityType: "player",
+		TemplateID: "player_character",
+		State:      map[string]any{"name": "Selene", "dead": true},
+	}
+
+	outbound := runtime.processCommand(commandEnvelope{
+		ProtocolVersion: 1,
+		CommandID:       "cmd_select_player",
+		CommandSeq:      1,
+		Type:            "select_target",
+		Payload:         []byte(`{"target_id":"char_2"}`),
+	})
+
+	if len(outbound) != 2 || outbound[0]["kind"] != "ack" || outbound[1]["kind"] != "delta" {
+		t.Fatalf("expected ack and authoritative delta, got %+v", outbound)
+	}
+	if runtime.targetID != "char_2" {
+		t.Fatalf("expected authoritative player target char_2, got %q", runtime.targetID)
+	}
+	self, ok := outbound[1]["self"].(map[string]any)
+	if !ok || self["target_id"] != "char_2" {
+		t.Fatalf("expected correlated target_id in delta, got %+v", outbound[1])
+	}
+}
+
 func TestAttachedRuntimeEarlyRejectsInvalidPayloadWithoutAck(t *testing.T) {
 	runtime := newAttachedRuntime("sess_1", &Character{ID: "char_1", LastRegionID: "dawn_plaza"})
 

@@ -110,6 +110,7 @@ type attachedRuntime struct {
 	mu                      sync.Mutex
 	sessionID               string
 	characterID             string
+	accountID               string
 	characterName           string
 	characterRace           string
 	characterBaseClass      string
@@ -122,6 +123,12 @@ type attachedRuntime struct {
 	currentCP               int
 	currentHP               int
 	currentMP               int
+	pvpKills                int
+	pkCount                 int
+	karma                   int
+	pvpFlagUntil            time.Time
+	pvpStateDirty           bool
+	pvpFlagPersistenceDirty bool
 	expectedCommandSeq      int
 	revision                int
 	regionRevision          int
@@ -451,6 +458,7 @@ func newCleanAttachedRuntime(sessionID string, character *Character) *attachedRu
 func newAttachedRuntimeWithInitialEntities(sessionID string, character *Character, includeFixtureEntities bool) *attachedRuntime {
 	state := persistedCharacterState(character)
 	now := time.Now()
+	activePvPDeadline := activePvPFlagUntil(state.PvPFlagUntil, now)
 	knownEntities := map[string]runtimeEntity{}
 	spawnEntities := map[string]runtimeEntity{}
 	if includeFixtureEntities {
@@ -459,37 +467,43 @@ func newAttachedRuntimeWithInitialEntities(sessionID string, character *Characte
 	}
 
 	return &attachedRuntime{
-		sessionID:          sessionID,
-		characterID:        state.ID,
-		characterName:      state.Name,
-		characterRace:      state.Race,
-		characterBaseClass: state.BaseClass,
-		characterSex:       state.Sex,
-		characterHairStyle: state.HairStyle,
-		characterHairColor: state.HairColor,
-		characterSkinType:  state.SkinType,
-		characterLevel:     state.Level,
-		currentXP:          state.XP,
-		currentCP:          state.CurrentCP,
-		currentHP:          state.CurrentHP,
-		currentMP:          state.CurrentMP,
-		expectedCommandSeq: 1,
-		revision:           0,
-		regionRevision:     1,
-		regionID:           state.LastRegionID,
-		position:           runtimePoint{X: state.PositionX, Z: state.PositionZ},
-		facing:             0,
-		respawnPosition:    runtimePoint{X: state.PositionX, Z: state.PositionZ},
-		knownEntities:      knownEntities,
-		spawnEntities:      spawnEntities,
-		cooldownEndsAt:     map[string]time.Time{},
-		nextLootSeq:        1,
-		derivedStats:       baseCharacterDerivedStats(&state),
-		hotbarState:        defaultCharacterHotbarState(&state),
-		questState:         defaultCharacterQuestState(),
-		movementPlanner:    defaultMovementPlanner,
-		stationarySince:    now,
-		lastIdleRegenAt:    now,
+		sessionID:               sessionID,
+		characterID:             state.ID,
+		accountID:               state.AccountID,
+		characterName:           state.Name,
+		characterRace:           state.Race,
+		characterBaseClass:      state.BaseClass,
+		characterSex:            state.Sex,
+		characterHairStyle:      state.HairStyle,
+		characterHairColor:      state.HairColor,
+		characterSkinType:       state.SkinType,
+		characterLevel:          state.Level,
+		currentXP:               state.XP,
+		currentCP:               state.CurrentCP,
+		currentHP:               state.CurrentHP,
+		currentMP:               state.CurrentMP,
+		pvpKills:                state.PvPKills,
+		pkCount:                 state.PKCount,
+		karma:                   state.Karma,
+		pvpFlagUntil:            activePvPDeadline,
+		pvpFlagPersistenceDirty: !state.PvPFlagUntil.IsZero() && activePvPDeadline.IsZero(),
+		expectedCommandSeq:      1,
+		revision:                0,
+		regionRevision:          1,
+		regionID:                state.LastRegionID,
+		position:                runtimePoint{X: state.PositionX, Z: state.PositionZ},
+		facing:                  0,
+		respawnPosition:         runtimePoint{X: state.PositionX, Z: state.PositionZ},
+		knownEntities:           knownEntities,
+		spawnEntities:           spawnEntities,
+		cooldownEndsAt:          map[string]time.Time{},
+		nextLootSeq:             1,
+		derivedStats:            baseCharacterDerivedStats(&state),
+		hotbarState:             defaultCharacterHotbarState(&state),
+		questState:              defaultCharacterQuestState(),
+		movementPlanner:         defaultMovementPlanner,
+		stationarySince:         now,
+		lastIdleRegenAt:         now,
 	}
 }
 
@@ -739,10 +753,10 @@ func (runtime *attachedRuntime) domainValidateAndApply(command commandEnvelope, 
 		if !exists {
 			return []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "world.entity_not_known", "Referenced entity is not in the current known-set.")}
 		}
-		if entity.EntityType != "mob" {
+		if entity.EntityType != "mob" && entity.EntityType != "player" {
 			return []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "world.entity_not_interactable", "Referenced entity is not targetable.")}
 		}
-		if !isRuntimeEntityAlive(entity) {
+		if entity.EntityType == "mob" && !isRuntimeEntityAlive(entity) {
 			return []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "combat.target_dead", "Referenced target is already dead.")}
 		}
 		if runtime.queuedSkill != nil && runtime.queuedSkill.TargetID != parsed.targetID {
@@ -1125,26 +1139,42 @@ func (runtime *attachedRuntime) projectedTargetID() any {
 	return runtime.targetID
 }
 
+func (runtime *attachedRuntime) pvpFlaggedAt(now time.Time) bool {
+	return !runtime.pvpFlagUntil.IsZero() && now.Before(runtime.pvpFlagUntil)
+}
+
+func (runtime *attachedRuntime) projectedPvPFlagUntilMS(now time.Time) any {
+	if !runtime.pvpFlaggedAt(now) {
+		return nil
+	}
+	return runtime.pvpFlagUntil.UnixMilli()
+}
+
 func (runtime *attachedRuntime) selfDelta(now time.Time, extra map[string]any) map[string]any {
 	payload := map[string]any{
-		"target_id":     runtime.projectedTargetID(),
-		"cooldowns":     runtime.currentCooldownSnapshot(now),
-		"dead":          runtime.isPlayerDead(),
-		"facing":        runtime.facing,
-		"level":         runtime.characterLevel,
-		"xp":            runtime.currentXP,
-		"cp":            runtime.currentCP,
-		"hp":            runtime.currentHP,
-		"mp":            runtime.currentMP,
-		"stats":         runtime.derivedStats,
-		"known_skills":  runtime.knownSkillsSnapshot(),
-		"hotbar":        runtime.hotbarSnapshot(),
-		"pets":          runtime.petSnapshotsLocked(),
-		"quest":         runtime.questSnapshotLocked(),
-		"party":         cloneCharacterPartySnapshot(runtime.party),
-		"party_invites": cloneCharacterPartyInviteSnapshots(runtime.partyInvites),
-		"clan":          cloneCharacterClanSnapshot(runtime.clan),
-		"clan_invites":  cloneCharacterClanInviteSnapshots(runtime.clanInvites),
+		"target_id":         runtime.projectedTargetID(),
+		"cooldowns":         runtime.currentCooldownSnapshot(now),
+		"dead":              runtime.isPlayerDead(),
+		"facing":            runtime.facing,
+		"level":             runtime.characterLevel,
+		"xp":                runtime.currentXP,
+		"cp":                runtime.currentCP,
+		"hp":                runtime.currentHP,
+		"mp":                runtime.currentMP,
+		"pvp_flagged":       runtime.pvpFlaggedAt(now),
+		"pvp_flag_until_ms": runtime.projectedPvPFlagUntilMS(now),
+		"pvp_kills":         runtime.pvpKills,
+		"pk_count":          runtime.pkCount,
+		"karma":             runtime.karma,
+		"stats":             runtime.derivedStats,
+		"known_skills":      runtime.knownSkillsSnapshot(),
+		"hotbar":            runtime.hotbarSnapshot(),
+		"pets":              runtime.petSnapshotsLocked(),
+		"quest":             runtime.questSnapshotLocked(),
+		"party":             cloneCharacterPartySnapshot(runtime.party),
+		"party_invites":     cloneCharacterPartyInviteSnapshots(runtime.partyInvites),
+		"clan":              cloneCharacterClanSnapshot(runtime.clan),
+		"clan_invites":      cloneCharacterClanInviteSnapshots(runtime.clanInvites),
 	}
 	for key, value := range extra {
 		payload[key] = value
@@ -1234,13 +1264,30 @@ func (runtime *attachedRuntime) clanDeltaMessage(
 	clan *CharacterClanSnapshot,
 	invites []CharacterClanInviteSnapshot,
 ) map[string]any {
+	return runtime.clanDeltaMessageForCommand(clan, invites, "", 0)
+}
+
+func (runtime *attachedRuntime) clanCommandDeltaMessage(
+	clan *CharacterClanSnapshot,
+	invites []CharacterClanInviteSnapshot,
+	command commandEnvelope,
+) map[string]any {
+	return runtime.clanDeltaMessageForCommand(clan, invites, command.CommandID, command.CommandSeq)
+}
+
+func (runtime *attachedRuntime) clanDeltaMessageForCommand(
+	clan *CharacterClanSnapshot,
+	invites []CharacterClanInviteSnapshot,
+	commandID string,
+	commandSeq int,
+) map[string]any {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 
 	runtime.clan = cloneCharacterClanSnapshot(clan)
 	runtime.clanInvites = cloneCharacterClanInviteSnapshots(invites)
 	runtime.revision++
-	return deltaMessage(runtime.revision, "", 0, runtime.selfDelta(time.Now(), nil), nil, nil)
+	return deltaMessage(runtime.revision, commandID, commandSeq, runtime.selfDelta(time.Now(), nil), nil, nil)
 }
 
 func (runtime *attachedRuntime) partyRosterMemberSnapshot(isLeader bool) CharacterPartyMemberSnapshot {
@@ -1301,6 +1348,33 @@ func (runtime *attachedRuntime) characterProgressionState() (int, int, int, int,
 		return runtime.characterLevel, runtime.currentXP, runtime.derivedStats.MaxCP, runtime.derivedStats.MaxHP, runtime.derivedStats.MaxMP
 	}
 	return runtime.characterLevel, runtime.currentXP, runtime.currentCP, runtime.currentHP, runtime.currentMP
+}
+
+func (runtime *attachedRuntime) characterPvPCombatState() CharacterPvPCombatState {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	return runtime.characterPvPCombatStateLocked()
+}
+
+func (runtime *attachedRuntime) characterPvPCombatStateLocked() CharacterPvPCombatState {
+	return CharacterPvPCombatState{
+		CharacterID:  runtime.characterID,
+		CurrentCP:    runtime.currentCP,
+		CurrentHP:    runtime.currentHP,
+		CurrentMP:    runtime.currentMP,
+		PvPKills:     runtime.pvpKills,
+		PKCount:      runtime.pkCount,
+		Karma:        runtime.karma,
+		PvPFlagUntil: runtime.pvpFlagUntil,
+	}
+}
+
+func activePvPFlagUntil(flagUntil time.Time, now time.Time) time.Time {
+	if flagUntil.After(now) {
+		return flagUntil.UTC()
+	}
+	return time.Time{}
 }
 
 func (runtime *attachedRuntime) characterCooldownState(now time.Time) []CharacterSkillCooldown {
@@ -1377,20 +1451,26 @@ func (runtime *attachedRuntime) playerPresenceEntityLocked() runtimeEntity {
 }
 
 func (runtime *attachedRuntime) playerPresenceStateLocked() map[string]any {
+	now := time.Now()
 	return map[string]any{
-		"name":           runtime.characterName,
-		"level":          runtime.characterLevel,
-		"race":           runtime.characterRace,
-		"base_class":     runtime.characterBaseClass,
-		"sex":            runtime.characterSex,
-		"hair_style":     runtime.characterHairStyle,
-		"hair_color":     runtime.characterHairColor,
-		"skin_type":      runtime.characterSkinType,
-		"cp":             runtime.currentCP,
-		"hp":             runtime.currentHP,
-		"dead":           runtime.isPlayerDead(),
-		"facing":         runtime.facing,
-		"mounted_pet_id": runtime.projectedMountedPetIDLocked(),
+		"name":              runtime.characterName,
+		"level":             runtime.characterLevel,
+		"race":              runtime.characterRace,
+		"base_class":        runtime.characterBaseClass,
+		"sex":               runtime.characterSex,
+		"hair_style":        runtime.characterHairStyle,
+		"hair_color":        runtime.characterHairColor,
+		"skin_type":         runtime.characterSkinType,
+		"cp":                runtime.currentCP,
+		"hp":                runtime.currentHP,
+		"dead":              runtime.isPlayerDead(),
+		"pvp_flagged":       runtime.pvpFlaggedAt(now),
+		"pvp_flag_until_ms": runtime.projectedPvPFlagUntilMS(now),
+		"pvp_kills":         runtime.pvpKills,
+		"pk_count":          runtime.pkCount,
+		"karma":             runtime.karma,
+		"facing":            runtime.facing,
+		"mounted_pet_id":    runtime.projectedMountedPetIDLocked(),
 	}
 }
 
@@ -1415,7 +1495,7 @@ func playerPresencePatchFromEntity(entity runtimeEntity) map[string]any {
 		"entity_id": entity.EntityID,
 		"position":  entity.Position,
 	}
-	for _, key := range []string{"name", "level", "race", "base_class", "sex", "hair_style", "hair_color", "skin_type", "hp", "dead", "facing", "mounted_pet_id"} {
+	for _, key := range []string{"name", "level", "race", "base_class", "sex", "hair_style", "hair_color", "skin_type", "cp", "hp", "dead", "pvp_flagged", "pvp_flag_until_ms", "pvp_kills", "pk_count", "karma", "facing", "mounted_pet_id"} {
 		if value, exists := entity.State[key]; exists {
 			patch[key] = value
 		}

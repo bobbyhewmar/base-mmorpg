@@ -459,7 +459,14 @@ func (runtime *attachedRuntime) enterDeadState(now time.Time) {
 	runtime.queuedSkill = nil
 	runtime.queuedBasicAttack = nil
 	runtime.autoBasicAttack = nil
+	runtime.queuedLootPickup = nil
+	runtime.clearActiveMovementLocked()
 	runtime.cooldownEndsAt = map[string]time.Time{}
+	if !runtime.pvpFlagUntil.IsZero() {
+		runtime.pvpFlagUntil = time.Time{}
+		runtime.pvpFlagPersistenceDirty = true
+		runtime.pvpStateDirty = true
+	}
 
 	filtered := runtime.scheduledLifecycle[:0]
 	for _, event := range runtime.scheduledLifecycle {

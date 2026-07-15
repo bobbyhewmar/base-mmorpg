@@ -59,6 +59,8 @@ type CharacterRepository interface {
 	Create(ctx context.Context, character *Character) error
 	UpdateWorldState(ctx context.Context, characterID string, regionID string, positionX float64, positionZ float64) error
 	UpdateProgression(ctx context.Context, characterID string, level int, xp int, currentCP int, currentHP int, currentMP int) error
+	UpdatePvPFlagUntil(ctx context.Context, characterID string, flagUntil time.Time) error
+	ApplyPvPCombatState(ctx context.Context, attacker CharacterPvPCombatState, target CharacterPvPCombatState, event PvPCombatEvent) error
 }
 
 type CharacterCooldownRepository interface {
@@ -117,6 +119,7 @@ type ClanRepository interface {
 	ListPendingInvitesByClan(ctx context.Context, clanID string, now time.Time) ([]ClanInvite, error)
 	GetInviteByID(ctx context.Context, inviteID string) (*ClanInvite, error)
 	CreateInvite(ctx context.Context, invite *ClanInvite) error
+	AcceptInvite(ctx context.Context, inviteID string, member *ClanMember) error
 	DeleteInvite(ctx context.Context, inviteID string) error
 	DeleteInvitesByClan(ctx context.Context, clanID string) error
 	DeletePendingInviteForInvitee(ctx context.Context, clanID string, inviteeCharacterID string) error
@@ -156,6 +159,10 @@ type ActionLogRepository interface {
 	Create(ctx context.Context, record ActionLogRecord) error
 }
 
+type PvPCombatEventRepository interface {
+	ListByFilter(ctx context.Context, query PvPCombatEventQuery) ([]PvPCombatEvent, error)
+}
+
 type GameplaySessionRepository interface {
 	Create(ctx context.Context, session *Session) error
 	GetByID(ctx context.Context, sessionID string) (*Session, error)
@@ -193,6 +200,7 @@ type Store struct {
 	Items              CharacterItemRepository
 	StorageTransfers   StorageTransferRecordRepository
 	ActionLogs         ActionLogRepository
+	PvPCombatEvents    PvPCombatEventRepository
 	GameplaySessions   GameplaySessionRepository
 	AccountSessions    AccountSessionRepository
 	GameplayCommands   GameplayCommandRecordRepository
@@ -235,6 +243,7 @@ func NewStore(databaseURL string) (*Store, error) {
 		Items:              postgresCharacterItemRepo{backend: backend},
 		StorageTransfers:   postgresStorageTransferRecordRepo{backend: backend},
 		ActionLogs:         postgresActionLogRepo{backend: backend},
+		PvPCombatEvents:    postgresPvPCombatEventRepo{backend: backend},
 		GameplaySessions:   postgresGameplaySessionRepo{backend: backend},
 		AccountSessions:    postgresAccountSessionRepo{backend: backend},
 		GameplayCommands:   postgresGameplayCommandRecordRepo{backend: backend},
