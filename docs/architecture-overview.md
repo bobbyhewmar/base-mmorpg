@@ -28,8 +28,8 @@ The product direction is a compact MMORPG built around city hubs and short surro
 - Require an explicit pre-game flow: register or log in, then select or create a character, then enter the world.
 - Keep account registration, login, session issuance, and character-entry permission fully authoritative on the backend.
 - Drive character creation from server-owned content and validation rules.
-- Let the player choose race, base class, sex, hairstyle, hair color, face, and name in the client UI, but validate every option combination on the backend before the character exists.
-- Start the first online slice with race-first creation and initial base class choice limited to `Fighter` or `Mage`, with the backend deciding which combinations are legal per race.
+- Let the player choose race, base class, sex, hairstyle, skin type, and name in the client UI, but validate every option combination on the backend before the character exists.
+- Start the current online slice with Human-only creation and initial base class choice limited to `Fighter` or `Mage`; non-human races, extra base classes, and visible face customization stay future content until the authoritative catalog is expanded.
 - Treat selected appearance as persisted character state that must flow unchanged into lobby visuals, world bootstrap, and remote player presence.
 - Treat character name availability, normalization, profanity rules, and uniqueness as backend-only concerns.
 - Do not allow direct world entry from a cold client without an authenticated account flow and a valid character-entry path.
@@ -64,6 +64,9 @@ The product direction is a compact MMORPG built around city hubs and short surro
 - Treat terrain collision and pathfinding as server-side gameplay rules, not client-side rendering helpers.
 - Keep `move_intent` destination-based; the client sends the clicked point, not a path.
 - Resolve movement through region geodata that knows navigable surfaces, static obstacles, bounds, and exits.
+- Default new compact playable regions to 1024x1024 world units unless another size is explicitly documented.
+- Keep client visual terrain, invisible picking plane, spawn/checkpoint coordinates, and server geodata bounds synchronized to the same region contract.
+- Treat `clean_plain_1024_geo_v1` as the current reference: 1024x1024 bounds, no active authored map content, no authoritative blockers, and no legacy `dawn_plaza` clamp.
 - Generate alternate routes around blockers such as rocks, walls, ruins, fences, and cliffs.
 - Keep pathfinding non-blocking from the player's point of view by relying on client prediction plus server reconciliation.
 - Return authoritative path, destination, rejection, or correction through the existing command lifecycle.

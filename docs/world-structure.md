@@ -93,6 +93,27 @@ Art placement and gameplay navigation must stay aligned. If an object looks like
 
 The first implementation should favor region-scoped geodata over seamless-world complexity.
 
+### New Map Contract
+
+New compact playable regions should default to a 1024x1024 world-unit footprint unless a different size is explicitly documented before implementation.
+
+A new map must define one shared region contract before content placement starts:
+
+- visual terrain size
+- client ground raycast and picking bounds
+- server geodata bounds
+- spawn and respawn checkpoint
+- city exits or portals
+- NPC, mob, loot, and landmark placement limits
+- static blockers that are intentionally authoritative
+- tests for walking toward each intended edge or exit
+
+The current active region is a clean 1024x1024 prototype plain using `stonecross_plaza` only as a compatibility id. It has no authored city, mobs, NPCs, buildings, roads, water, grind zones, or initial spawns. It may use selected visual-only MegaKit ground texture and low vegetation from `src/assets/maps/medieval-village-megakit`. The whole region is walkable through `clean_plain_1024_geo_v1` until a new map concept is approved.
+
+Previously imported map assets under `src/assets/maps` remain available as a content library. Do not place them back into the active map or infer collision from them until the next concept is documented and implemented end to end.
+
+`Medieval Village MegaKit[Standard]` is available as a source pack in `3DAssets/Medieval Village MegaKit[Standard]` and should be treated as the primary future medieval city/village construction kit. Publish only the modules a map slice actually uses into `src/assets/maps/...`, and use them only through a documented slice that updates visual layout, client picking bounds, server geodata, spawn/checkpoint rules, and validation together.
+
 ## Session Design Implications
 
 Support short and medium play sessions:

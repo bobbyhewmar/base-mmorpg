@@ -32,7 +32,7 @@ The first authoritative online slice adopts the following decisions:
    - durable authoritative state in PostgreSQL
 5. Region presence and `known-set` are first-class runtime concepts and are required for targeting and interaction legality.
 6. The pre-game flow becomes mandatory: register or log in, then select or create a character, then enter the world.
-7. Character creation is server-authoritative for race, base class, sex, hairstyle, hair color, face, normalized name, and entry permission.
+7. Character creation is server-authoritative for race, base class, sex, hairstyle, skin type through the persisted `skin_type` field, normalized name, and entry permission.
 8. Client-supplied prices, total costs, or economy outcomes are never accepted as truth.
 9. `Fase 1.1` proves account flow, session, region, presence, movement, targeting, and protocol semantics.
 10. `Fase 1.2` extends the same authority model to combat resolution, loot, inventory, and equipment.

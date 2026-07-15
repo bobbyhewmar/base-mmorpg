@@ -158,10 +158,10 @@ Return only the characters owned by the authenticated account.
       "base_class": "Fighter",
       "sex": "Female",
       "hair_style": 1,
-      "hair_color": 2,
-      "face": 1,
+      "hair_color": "#8f5fd3",
+      "skin_type": 2,
       "level": 1,
-      "last_region_id": "dawn_plaza",
+      "last_region_id": "stonecross_plaza",
       "is_enterable": true
     }
   ]
@@ -190,24 +190,14 @@ Return the authoritative creation catalog used by the client to render creation 
       "sex_options": ["Male", "Female"],
       "appearance_options": {
         "hair_styles": [0, 1, 2],
-        "hair_colors": [0, 1, 2],
-        "faces": [0, 1, 2]
-      }
-    },
-    {
-      "race": "Dwarf",
-      "enabled": true,
-      "base_classes": ["Fighter"],
-      "sex_options": ["Male", "Female"],
-      "appearance_options": {
-        "hair_styles": [0, 1, 2],
-        "hair_colors": [0, 1, 2],
-        "faces": [0, 1, 2]
+        "hair_color_default": "#6b4e37",
+        "skin_types": [0, 1, 2]
       }
     }
   ]
 }
 ```
+
 
 #### Minimum Reason Codes
 
@@ -227,8 +217,8 @@ Create a character from the authoritative creation contract.
   "base_class": "Fighter",
   "sex": "Female",
   "hair_style": 1,
-  "hair_color": 2,
-  "face": 1,
+  "hair_color": "#8f5fd3",
+  "skin_type": 2,
   "name": "Arden"
 }
 ```
@@ -244,10 +234,10 @@ Create a character from the authoritative creation contract.
     "base_class": "Fighter",
     "sex": "Female",
     "hair_style": 1,
-    "hair_color": 2,
-    "face": 1,
+    "hair_color": "#8f5fd3",
+    "skin_type": 2,
     "level": 1,
-    "last_region_id": "dawn_plaza",
+    "last_region_id": "stonecross_plaza",
     "is_enterable": true
   },
   "characters": [
@@ -258,10 +248,10 @@ Create a character from the authoritative creation contract.
       "base_class": "Fighter",
       "sex": "Female",
       "hair_style": 1,
-      "hair_color": 2,
-      "face": 1,
+      "hair_color": "#8f5fd3",
+      "skin_type": 2,
       "level": 1,
-      "last_region_id": "dawn_plaza",
+      "last_region_id": "stonecross_plaza",
       "is_enterable": true
     }
   ]
@@ -277,7 +267,7 @@ Create a character from the authoritative creation contract.
 - `character.invalid_sex`
 - `character.invalid_hair_style`
 - `character.invalid_hair_color`
-- `character.invalid_face`
+- `character.invalid_skin_type`
 - `character.invalid_name`
 - `character.name_unavailable`
 

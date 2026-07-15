@@ -12,7 +12,7 @@ This setup is intentionally limited to local development and lightweight homolog
 ## Start
 
 1. Optionally copy `.env.example` to `.env` and adjust values.
-2. Run `docker compose up --build`.
+2. Run `docker compose up -d --build`.
 
 The browser entrypoint is `http://localhost:5173`.
 

@@ -2,60 +2,44 @@
 
 ## Objective
 
-Define the authoritative character-creation contract for `Fase 1.1`.
+Define the authoritative character-creation contract for the current MVP slice.
 
-This document freezes:
+Character creation is backend-authoritative. The client renders options, previews visuals, and submits intent, but the backend owns legality, persistence, name reservation, and the final character shape.
 
-- the authoritative creation catalog
-- the contract for `GET /v1/characters/catalog`
-- the contract for `POST /v1/characters`
-- validation of `race`
-- validation of `base_class`
-- validation of `sex`
-- validation of canonical appearance options
-- validation of `name`
-- success responses
-- minimum reason codes
+## Current Canonical Scope
 
-This document does not permit any client-side authority for creation legality.
+- Race: `Human` only.
+- Base classes: `Fighter` and `Mage`.
+- Sex: `Male` and `Female`.
+- Appearance selectors: `hair_style`, `hair_color`, and `skin_type`.
+- Body selection: no separate field. The selected `sex` chooses the only available body model for that sex.
+- Removed fields: `face` and `body_type` are not part of the active creation contract.
 
-## Decision
+Future body variants may be added only when the asset pack provides real body alternatives. Until then, exposing `Body Type` would be fake choice and is prohibited.
 
-Character creation in `Fase 1.1` is backend-authoritative.
+## Client Responsibilities
 
 The client may:
 
-- fetch the authoritative creation catalog
-- render character-creation UI
-- submit character-creation intent
+- fetch `GET /v1/characters/catalog`
+- preselect the first catalog-backed option for every required selector
+- let the player type only a name and submit immediately
+- preview the selected catalog-backed `sex`, `hair_style`, `hair_color`, and `skin_type`
+- show backend errors for unavailable names or invalid selections
 
 The client must not:
 
-- decide whether a race is enabled
-- decide whether a base class is legal for a race
-- decide whether a sex option is legal
-- decide whether a hairstyle, hair color, or face option is legal
-- replace missing creation appearance with a local default or fallback
-- decide whether a name is valid or available
-- persist a character as if creation succeeded without backend confirmation
+- invent races, classes, sex options, hairstyles, hair-color defaults, skin types, or body variants
+- submit removed fields such as `face` or `body_type`
+- render a `Body Type` selector while each sex has exactly one body
+- treat a preview as persisted state before backend confirmation
+- silently substitute a missing canonical asset with a different character asset
 
-## Authoritative Creation Catalog
+## Catalog Endpoint
 
-The backend must expose a catalog endpoint:
+`GET /v1/characters/catalog`
 
-- `GET /v1/characters/catalog`
-
-The catalog is authoritative for UI rendering inputs.
-
-The catalog is not a substitute for validation at creation time.
-
-## Contract: `GET /v1/characters/catalog`
-
-### Purpose
-
-Return the server-owned creation options for `race`, `base_class`, `sex`, and canonical appearance fields.
-
-### Success Example
+Success example:
 
 ```json
 {
@@ -67,73 +51,26 @@ Return the server-owned creation options for `race`, `base_class`, `sex`, and ca
       "sex_options": ["Male", "Female"],
       "appearance_options": {
         "hair_styles": [0, 1, 2],
-        "hair_colors": [0, 1, 2],
-        "faces": [0, 1, 2]
-      }
-    },
-    {
-      "race": "Elf",
-      "enabled": true,
-      "base_classes": ["Fighter", "Mage"],
-      "sex_options": ["Male", "Female"],
-      "appearance_options": {
-        "hair_styles": [0, 1, 2],
-        "hair_colors": [0, 1, 2],
-        "faces": [0, 1, 2]
-      }
-    },
-    {
-      "race": "Dark Elf",
-      "enabled": true,
-      "base_classes": ["Fighter", "Mage"],
-      "sex_options": ["Male", "Female"],
-      "appearance_options": {
-        "hair_styles": [0, 1, 2],
-        "hair_colors": [0, 1, 2],
-        "faces": [0, 1, 2]
-      }
-    },
-    {
-      "race": "Orc",
-      "enabled": true,
-      "base_classes": ["Fighter", "Mage"],
-      "sex_options": ["Male", "Female"],
-      "appearance_options": {
-        "hair_styles": [0, 1, 2],
-        "hair_colors": [0, 1, 2],
-        "faces": [0, 1, 2]
-      }
-    },
-    {
-      "race": "Dwarf",
-      "enabled": true,
-      "base_classes": ["Fighter"],
-      "sex_options": ["Male", "Female"],
-      "appearance_options": {
-        "hair_styles": [0, 1, 2],
-        "hair_colors": [0, 1, 2],
-        "faces": [0, 1, 2]
+        "hair_color_default": "#6b4e37",
+        "skin_types": [0, 1, 2]
       }
     }
   ]
 }
 ```
 
-### Minimum Rules
+Minimum rules:
 
-- The client must treat the catalog as read-only.
-- The client may cache the catalog only for UX.
-- The server must still validate every submitted creation request against current authoritative rules.
-- The client must not render an enabled appearance selector from hardcoded local options when the catalog does not provide those options.
-- The creation preview may render only from selected catalog-backed options; no temporary visual fallback should be promoted to gameplay state.
+- Catalog values are read-only client inputs.
+- The backend must still validate every submitted value at creation time.
+- The UI may disable submit only while the name is empty or required catalog-backed values are missing.
+- Duplicate or reserved names are decided by `POST /v1/characters`, not by client-only logic.
 
-### Minimum Reason Codes
+## Create Character Endpoint
 
-- `auth.not_authenticated`
+`POST /v1/characters`
 
-## Contract: `POST /v1/characters`
-
-### Request Example
+Request example:
 
 ```json
 {
@@ -141,13 +78,13 @@ Return the server-owned creation options for `race`, `base_class`, `sex`, and ca
   "base_class": "Fighter",
   "sex": "Female",
   "hair_style": 1,
-  "hair_color": 2,
-  "face": 1,
+  "hair_color": "#8f5fd3",
+  "skin_type": 2,
   "name": "Arden"
 }
 ```
 
-### Success Response Example
+Success response example:
 
 ```json
 {
@@ -158,10 +95,10 @@ Return the server-owned creation options for `race`, `base_class`, `sex`, and ca
     "base_class": "Fighter",
     "sex": "Female",
     "hair_style": 1,
-    "hair_color": 2,
-    "face": 1,
+    "hair_color": "#8f5fd3",
+    "skin_type": 2,
     "level": 1,
-    "last_region_id": "dawn_plaza",
+    "last_region_id": "stonecross_plaza",
     "is_enterable": true
   },
   "characters": [
@@ -172,21 +109,17 @@ Return the server-owned creation options for `race`, `base_class`, `sex`, and ca
       "base_class": "Fighter",
       "sex": "Female",
       "hair_style": 1,
-      "hair_color": 2,
-      "face": 1,
+      "hair_color": "#8f5fd3",
+      "skin_type": 2,
       "level": 1,
-      "last_region_id": "dawn_plaza",
+      "last_region_id": "stonecross_plaza",
       "is_enterable": true
     }
   ]
 }
 ```
 
-### Required Authentication
-
-`POST /v1/characters` requires authenticated account context.
-
-### Minimum Reason Codes
+## Minimum Reason Codes
 
 - `auth.not_authenticated`
 - `character.creation_limit_reached`
@@ -198,7 +131,7 @@ Return the server-owned creation options for `race`, `base_class`, `sex`, and ca
 - `character.sex_not_allowed_for_template`
 - `character.invalid_hair_style`
 - `character.invalid_hair_color`
-- `character.invalid_face`
+- `character.invalid_skin_type`
 - `character.invalid_name`
 - `character.name_too_short`
 - `character.name_too_long`
@@ -207,170 +140,41 @@ Return the server-owned creation options for `race`, `base_class`, `sex`, and ca
 - `character.name_profanity_blocked`
 - `character.name_unavailable`
 
-## Validation: `race`
+## Persistence And Runtime Projection
 
-The backend validates:
+The persisted character summary must include:
 
-- the `race` field is present
-- the submitted race exists in the authoritative race set
-- the submitted race is enabled for the current environment
+- `race`
+- `base_class`
+- `sex`
+- `hair_style`
+- `hair_color`
+- `skin_type`
+- `name`
 
-The initial accepted race identifiers are:
+The same values must be projected into:
 
-- `Human`
-- `Elf`
-- `Dark Elf`
-- `Orc`
-- `Dwarf`
+- character list
+- character lobby preview
+- `world/enter` bootstrap
+- gameplay presence for self and other players
+- Three.js character renderer
 
-### Rejections
+The lobby and world renderer must not quietly substitute local prototype defaults. If the user selected `Human`, `Female`, `Mage`, `hair_style = 2`, `hair_color = "#8f5fd3"`, and `skin_type = 1`, every subsequent screen must use that exact persisted shape.
 
-- `character.invalid_race`
-- `character.race_disabled`
+## Asset Mapping
 
-## Validation: `base_class`
+- `sex = Male` maps to the male Universal Base Characters body.
+- `sex = Female` maps to the female Universal Base Characters body.
+- `hair_style` maps to sex-compatible hair assets from the Universal Base Characters pack.
+- `hair_color` is a canonical `#RRGGBB` string and tints only hair materials/meshes; it must not affect skin/body materials.
+- `skin_type` maps to available sex-compatible skin textures.
+- Equipment visuals are separate future content and must come from authoritative equipped items, not from base class selection.
 
-The backend validates:
+## Testing Requirements
 
-- the `base_class` field is present
-- the submitted base class exists in the initial allowed set
-- the submitted base class is legal for the selected `race`
-
-The initial base-class identifiers are:
-
-- `Fighter`
-- `Mage`
-
-### Rejections
-
-- `character.invalid_base_class`
-- `character.base_class_not_allowed_for_race`
-
-## Validation: `sex`
-
-The backend validates:
-
-- the `sex` field is present
-- the submitted sex exists in the allowed representation set
-- the submitted sex is legal for the chosen creation template
-
-This phase assumes a project-owned supported sex set such as:
-
-- `Male`
-- `Female`
-
-The backend remains authoritative if the set changes later.
-
-### Rejections
-
-- `character.invalid_sex`
-- `character.sex_not_allowed_for_template`
-
-## Validation: canonical appearance
-
-The backend validates:
-
-- `hair_style` is present and exists in the selected race template's `appearance_options.hair_styles`
-- `hair_color` is present and exists in the selected race template's `appearance_options.hair_colors`
-- `face` is present and exists in the selected race template's `appearance_options.faces`
-
-Accepted values in the first implementation are numeric option identifiers owned by the backend catalog:
-
-- `0`
-- `1`
-- `2`
-
-These identifiers are not disposable preview flags. They are persisted on the character record, returned by `GET /v1/characters`, injected into gameplay presence, and rendered by the lobby/world 3D character visuals.
-
-### Rejections
-
-- `character.invalid_hair_style`
-- `character.invalid_hair_color`
-- `character.invalid_face`
-
-## Validation: `name`
-
-The backend validates:
-
-- presence
-- normalization
-- minimum length
-- maximum length
-- allowed character set
-- reserved-word policy
-- profanity policy
-- uniqueness
-
-The client may perform advisory validation for UX only.
-
-The client must not interpret advisory validation as authoritative success.
-
-### Rejections
-
-- `character.invalid_name`
-- `character.name_too_short`
-- `character.name_too_long`
-- `character.name_contains_invalid_characters`
-- `character.name_reserved`
-- `character.name_profanity_blocked`
-- `character.name_unavailable`
-
-## Common Failure Shape
-
-Character-creation failure responses should use a stable minimal shape:
-
-```json
-{
-  "reason_code": "character.name_unavailable",
-  "message": "Character name is unavailable."
-}
-```
-
-## Anti-Examples
-
-### Invalid: client invents race legality
-
-If the client shows `Dwarf -> Mage` as selectable due to stale local UI and submits it anyway, the backend must still reject it if the authoritative catalog disallows it.
-
-### Invalid: client trusts local name check
-
-If the client previously marked `Arden` as available but another request reserves it first, the backend must reject creation with `character.name_unavailable`.
-
-### Invalid: local-only creation success
-
-The client must not create a temporary authoritative character record locally and proceed to world entry without backend creation success.
-
-### Invalid: appearance fallback after creation
-
-If the user selected `Orc`, `Female`, `Mystic`, `hair_style = 2`, `hair_color = 1`, and `face = 0`, every subsequent screen must use that exact persisted shape. The lobby and world renderer must not quietly substitute local prototype defaults.
-
-## Invariants
-
-- Character creation is server-authoritative.
-- The catalog is authoritative for rendering inputs, not for skipping validation.
-- `race`, `base_class`, `sex`, `hair_style`, `hair_color`, `face`, and `name` are all validated on the backend.
-- Appearance choices are canonical persisted state, not temporary preview state.
-- `GET /v1/characters`, region presence, and the 3D renderers must preserve the selected appearance exactly.
-- Missing or invalid canonical appearance data should fail loudly at the boundary instead of being replaced with a client fallback.
-- Name normalization and uniqueness are backend-only concerns.
-- The client never decides that creation succeeded.
-
-## Out of Scope
-
-The following remain out of scope for this document:
-
-- later class transfers
-- subclass systems
-- stat allocation customization beyond the accepted template choices
-- cosmetic customization beyond the first canonical `hair_style`, `hair_color`, and `face` option sets
-- economic or item-related creation bonuses
-
-## Acceptance Criteria
-
-- The creation catalog is returned by the backend.
-- Character creation request shape is stable and explicit.
-- Backend validation covers `race`, `base_class`, `sex`, `hair_style`, `hair_color`, `face`, and `name`.
-- Name conflicts are rejected explicitly.
-- Client-side advisory validation never overrides backend validation.
-- The selected appearance persists in PostgreSQL and is returned unchanged when the character list is reloaded.
-- World bootstrap and remote player presence include the persisted appearance fields.
+- Catalog response contains `hair_styles`, `hair_color_default`, and `skin_types`, and does not contain `faces` or `body_types`.
+- Create request accepts `hair_color` as `#RRGGBB`, accepts `skin_type`, and rejects invalid values.
+- Create request does not require any body option beyond `sex`.
+- Character list and world presence include `hair_color` and `skin_type`.
+- Lobby and world preview render from persisted values.

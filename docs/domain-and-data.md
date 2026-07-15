@@ -177,6 +177,21 @@ Combat and skill data should be able to express at least:
 - damage split policy across multiple affected targets
 - cooldown and resource cost independently from cast time
 
+Monster templates should express:
+
+- `personality`: `passive` or `aggressive`
+- aggro radius used only by aggressive monsters to initiate combat
+- chase/leash policy to prevent infinite pursuit across the whole region
+- attack range and attack interval
+- attack, defense, movement speed, XP reward, and loot profile
+
+Runtime monster state should expose enough for clients to render without owning authority:
+
+- `ai_state`: `idle`, `aggro`, or `dead`
+- current HP and alive flag
+- current authoritative position
+- optional aggro target identity for observation/debug only
+
 Class and progression data should be able to express at least:
 
 - stable class identifiers and parent lineage
@@ -205,9 +220,9 @@ Account, session, and character-entry data should be able to express at least:
 - account registration and verification state
 - login throttling and suspicious-access tracking
 - one active gameplay actor binding per accepted online session
-- playable races derived from server-owned content
-- initial base-class choices grouped under `Fighter` and `Mage`
-- sex choice and presentation variant support
+- playable races derived from server-owned content; the current creation catalog exposes only `Human`
+- initial creation base-class choices limited to `Fighter` and `Mage`, with additional classes, transfers, and subclasses retained as future catalog expansion
+- sex choice, hairstyle, and skin type presentation variant support
 - name normalization, profanity filtering, reservation, and uniqueness checks
 - character-entry permission separate from mere account authentication
 
@@ -232,8 +247,15 @@ HUD skill and hotbar data should be able to express at least:
 
 The current repository slice now concretely exercises this model with:
 
-- `Fighter` and `Mage` class content
-- a shipped `dawn_plaza_geo_v1` terrain slice with versioned bounds, static blockers, and deterministic server-side waypoint routing
+- `Fighter` and `Mage` as the only currently creatable base classes; additional class content must be introduced by expanding the authoritative catalog and runtime types together
+- class-specific starter packs grouped by combat family: physical gear for `Fighter` and mystic gear for `Mage`
+- canonical Human body visuals under `src/assets/characters/universal-base`, using `gltf_base_character` definitions, per-sex base character variants, three skin types per sex through persisted `skin_type`, sex-compatible rigged hair, persisted `hair_color` tinting, and Universal Animation Library clips
+- Human hairstyle choices remain persisted as `hair_style`; hair color is persisted as canonical `#RRGGBB`; `Body Type` is not exposed while the pack has only one real body model per sex
+- Modular Character Outfits - Fantasy assets remain available as future equipment visuals only; outfits should map to authoritative equipped item state, not to the base class body
+- legacy character assets are no longer the active character visual source for the MVP classes unless explicitly migrated into the runtime asset catalog
+- a shipped `clean_plain_1024_geo_v1` terrain slice with the default 1024x1024 playable bounds, deterministic server-side waypoint routing, and no authoritative obstacles
+- the active region still uses `stonecross_plaza` as a compatibility id, but the authored city/grind map content has been reset; no NPCs, mobs, props, buildings, roads, water, terrain overlays, or spawn packs are seeded by default
+- legacy `dawn_plaza` region ids resolve to the same clean 1024x1024 geodata so old saves do not reintroduce the old map, but new characters continue to spawn in `stonecross_plaza` until a new canonical region id is defined
 - learned skills unlocked by class plus level
 - passive stat bonuses derived from learned passives
 - a persistent `character_hotbar_loadouts` projection returned through `world/enter` and runtime deltas, updated by `set_hotbar_state`

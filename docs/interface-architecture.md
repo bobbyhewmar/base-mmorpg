@@ -9,7 +9,7 @@ Use a hybrid interface:
 
 This keeps the world immersive while preserving fast iteration, responsiveness, and clean UI layout for an MMORPG client.
 
-Read [source-material-reference.md](source-material-reference.md), [world-structure.md](world-structure.md), [combat-and-targeting.md](combat-and-targeting.md), [client-runtime-strategy.md](client-runtime-strategy.md), [specs/server-terrain-geodata-pathfinding.md](specs/server-terrain-geodata-pathfinding.md), [specs/hud-skills-and-hotbars.md](specs/hud-skills-and-hotbars.md), and [specs/hud-inventory-and-classic-windows.md](specs/hud-inventory-and-classic-windows.md) before changing client direction.
+Read [source-material-reference.md](source-material-reference.md), [world-structure.md](world-structure.md), [combat-and-targeting.md](combat-and-targeting.md), [client-runtime-strategy.md](client-runtime-strategy.md), [specs/server-terrain-geodata-pathfinding.md](specs/server-terrain-geodata-pathfinding.md), [specs/visual-asset-pipeline.md](specs/visual-asset-pipeline.md), [specs/hud-skills-and-hotbars.md](specs/hud-skills-and-hotbars.md), and [specs/hud-inventory-and-classic-windows.md](specs/hud-inventory-and-classic-windows.md) before changing client direction.
 
 ## Visual Model
 
@@ -21,6 +21,21 @@ Read [source-material-reference.md](source-material-reference.md), [world-struct
 - Preserve strong city-hub identity and short surrounding territories.
 - Keep ground-click destinations and targetable mobs visually unambiguous.
 - Keep blockers and walkable routes visually aligned with server geodata so pathfinding outcomes feel fair.
+- Keep player, NPC, companion, and mob scale as renderer-only presentation constants tuned for Mu Online-like world readability; do not change combat ranges, geodata, or backend authority to fix visual proportions.
+- Current player, other-player, and NPC visuals use 50% of the previous character renderer scale. Keep camera target height, orbit distance, zoom limits, and character floating labels aligned with that smaller visual size.
+- Camera defaults are intentionally closer than the original large-character camera: the current orbit offset is `(-7.5, 9, 7.5)`, minimum zoom is `3.8`, and maximum zoom is `28`.
+- Character locomotion speed is a shared frontend/backend gameplay contract, not a cosmetic renderer value. The current class speeds are `Fighter=3.225` and `Mage=3.075`, with `mireling_strider` mounted speed `4.05`.
+- Mob, companion, target-ring, combat range, geodata, and pathfinding remain unchanged by character-only visual rescaling unless explicitly requested and validated separately.
+- Loot visuals must stay small and close to the ground. Preserve a larger invisible click hitbox so low-profile drops remain easy to select without making the visible pickup look oversized.
+- Mob movement snapshots remain backend-owned, but the Three.js scene must interpolate the visible procedural mob toward the latest authoritative position every frame. Never copy mob positions directly into the visual transform if that reintroduces micro-teleports.
+- Procedural mobs need at least simple idle/walk animation on body, head, and legs so pursuit reads as movement instead of sliding chess pieces.
+- Player and other-player class body visuals are canonical Universal Base Characters `gltf_base_character` assets loaded from `src/assets/characters/universal-base`; the current creatable Human `Fighter` and `Mage` classes start from the base body for the selected sex and Universal Animation Library clip set.
+- Modular outfit assets are not the base class body. They should only become visible later when mapped from authoritative equipped item state.
+- Legacy character assets are not the active character source unless a deliberate migration or comparison task says so.
+- Do not show procedural humanoids as visual fallback for characters. Until the configured class asset finishes loading, the character should be invisible/transparent; missing class assets are an explicit asset problem, not an invitation to substitute a procedural body.
+- Compose modular GLB buildings by repeating original-proportion pieces; do not stretch one wall, roof, or structure mesh non-uniformly into a whole house.
+- `Medieval Village MegaKit[Standard]` is available as a source pack in `3DAssets` and is the primary future medieval village/city kit. The active region remains a clean 1024x1024 plain, with only selected ground texture and low vegetation modules published under `src/assets/maps/medieval-village-megakit`; future map modules must be published selectively under `src/assets/maps` and wired through a full map/geodata/spawn concept.
+- Retro map assets should use scalar/uniform scale only. If a house, wall, gate, dock, stair, or fence must cover more area, repeat modules at their authored proportion instead of using `[x, y, z]` scale deformation.
 - Use dark, mysterious ambience without relying on noisy or ultra-detailed textures.
 - Favor lowpoly readability, strong shapes, and lighting-driven mood over realistic material density.
 
@@ -31,7 +46,7 @@ Keep only spatially meaningful feedback inside the scene:
 - selection rings
 - target markers
 - pending destination markers
-- authoritative path markers
+- path debug markers only when explicitly enabled for development
 - ground-target previews
 - area-of-effect previews
 - loot markers
@@ -100,7 +115,7 @@ The client may present creation choices, but the backend remains authoritative f
 - whether the chosen sex is valid for the selected template
 - whether the chosen name is allowed and unique
 
-The character-creation UI must not invent missing catalog choices. If the catalog omits a race, class, sex option, or future appearance template, the UI must leave that choice unavailable and block submission until the authoritative source provides it.
+The character-creation UI must not invent missing catalog choices. When the catalog provides valid options, the UI preselects the first enabled race and the first class, sex, hairstyle, and skin type option for that template. The current visible catalog is Human-only with `Fighter` and `Mage`; `sex` selects the only available body model for that sex, and `Body Type` must not be exposed until real body variants exist. If the catalog omits a race, class, sex option, or future appearance template, the UI must leave that choice unavailable and block submission until the authoritative source provides it.
 
 ## Client Layer Separation
 
@@ -111,8 +126,12 @@ Responsibilities:
 - render towns, field regions, enemies, NPCs, and drops
 - drive camera, movement presentation, and transient effects
 - convert terrain clicks into move targets and entity clicks into selected targets
+- size the visible terrain and invisible ground raycast/picking plane from the canonical region contract
 - start reversible local movement prediction immediately after terrain-click dispatch
 - present server-resolved paths and blocked movement feedback
+- avoid hardcoded legacy map clamps; terrain clicks may be clamped only to the current region bounds shared with backend geodata
+- load local GLB map assets through an explicit renderer manifest instead of ad-hoc external URLs
+- treat GLB props as presentation unless backend geodata explicitly declares them as blockers
 - make the target lock state unmistakable before hostile skill activation
 - visualize combat and interaction feedback
 - update the visible character model when equipped gear changes the silhouette or worn pieces
@@ -185,7 +204,7 @@ Responsibilities:
 3. The backend returns account status, verification requirements, and the authoritative character list.
 4. The player selects an existing character or opens the creation flow.
 5. The client requests the available race and base-class catalog from the backend.
-6. The player chooses race, base class, sex, hairstyle, hair color, face, and name.
+6. The player chooses race, base class, sex, hairstyle, skin type, and name.
 7. The backend validates the creation request and either rejects it with explicit reasons or persists the character.
 8. Only after successful character entry does the client transition into the online world scene.
 
@@ -224,7 +243,7 @@ Responsibilities:
 ### Design Rules
 
 - Use the 3D scene for movement destination, target choice, ground targeting, and spatial awareness.
-- Use the 3D scene for immediate movement prediction and authoritative path presentation, but keep terrain collision authority in the backend.
+- Use the 3D scene for immediate movement prediction and subtle destination feedback, but keep terrain collision authority in the backend. Technical path/geodata lines are debug-only and must stay hidden in normal gameplay.
 - Use the HUD for status, hotbar choice, inventory, quests, cast context, and confirmations.
 - Keep rejection messaging explicit in the HUD.
 - Keep state reconciliation graceful when latency or server authority corrects a local assumption.
@@ -232,7 +251,7 @@ Responsibilities:
 - Do not let the client invent item prices, total costs, or economy results locally.
 - Do not let the client invent learned skills, hotbar persistence, or cooldown completion locally in online mode.
 - Do not let the client invent movement paths, obstacle bypasses, or collision legality in online mode.
-- Do not let the client invent character appearance defaults in online mode; race, sex, base class, hairstyle, hair color, and face must come from the persisted character summary or server presence.
+- Do not let the client invent character appearance defaults in online mode; race, sex, base class, hairstyle, `hair_color`, and `skin_type` must come from the persisted character summary or server presence.
 
 ## Initial Game-Screen Layout
 
@@ -240,8 +259,9 @@ Responsibilities:
 
 - full-screen login and registration panels before world entry
 - character-selection panel after authentication
-- character-creation panel grouped by race, base class, sex, hairstyle, hair color, face, and name
-- character-creation preview renders only catalog-backed selected options; no temporary preview choice may be discarded when entering the world
+- character-creation panel grouped by race, base class, sex, hairstyle, skin type, and name
+- character-creation preview renders catalog-backed defaults immediately, then updates as the player changes race, class, sex, hairstyle, or skin type
+- character-creation submit is unlocked by a non-empty name once the catalog-backed default template is complete; name availability remains backend-owned
 - explicit backend error surfaces for invalid login, unavailable name, invalid race-class combination, and expired session
 
 ### Center
@@ -249,8 +269,10 @@ Responsibilities:
 - large 3D viewport for the current city or field region
 - left mouse button selects targets, picks/interacts where allowed, or sends terrain movement intent
 - right mouse button never selects targets and never opens the browser context menu while in the game world
-- right mouse drag rotates the camera horizontally around the player as the fixed orbit pivot
-- mouse wheel zooms the camera in and out within constrained limits
+- right mouse drag rotates the camera horizontally and vertically around the player as the fixed orbit pivot
+- camera look-at and follow target must be smoothed independently from the player mesh animation, so footstep bob, terrain correction, or authoritative reconciliation do not shake the camera.
+- low vertical camera orbit is protected by a ground guard: when the requested orbit would pass below terrain, move the camera closer to the player and keep it above the ground instead of clipping through the map.
+- mouse wheel zooms the camera in and out within constrained limits, with a closer minimum distance tuned for the reduced actor scale
 
 ### Top Left
 
@@ -305,7 +327,7 @@ Responsibilities:
 - Test HUD logic separately from the scene renderer when possible.
 - Test click-to-move, click-to-target, area previews, looting, and NPC interaction as contracts between scene, HUD, and backend.
 - Test that right-click does not select targets, does not move the player, and does not open browser context menu.
-- Test that right-drag rotates the camera around the player and wheel zoom stays bounded.
+- Test that right-drag rotates the camera around the player on both orbit axes, low pitch remains above the ground, and wheel zoom stays bounded.
 - Test that the local player begins movement immediately after terrain click and later reconciles to the server path.
 - Test that blocked or unreachable movement produces clear UI state and does not desync from the server route.
 - Test that authoritative updates can replace stale local assumptions without leaving broken UI state.

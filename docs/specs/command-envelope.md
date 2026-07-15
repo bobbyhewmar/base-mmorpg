@@ -85,6 +85,7 @@ The initial command set is:
 
 - `move_intent`
 - `select_target`
+- `clear_target`
 - `use_skill`
 - `pick_up_loot`
 - `equip_item`
@@ -142,13 +143,28 @@ The client may start reversible local movement prediction when this command is d
 }
 ```
 
+### Valid: `clear_target`
+
+`clear_target` is the authoritative Escape-key target reset command. It carries no client-owned target identity. The backend clears the current selected target plus target-driven queued actions such as skill approach, basic-attack approach, auto-attack, and loot approach when those states are active.
+
+```json
+{
+  "protocol_version": 1,
+  "command_id": "01JZCLEAR001",
+  "command_seq": 10,
+  "client_sent_at_ms": 123456760,
+  "type": "clear_target",
+  "payload": {}
+}
+```
+
 ### Valid: `use_skill`
 
 ```json
 {
   "protocol_version": 1,
   "command_id": "01JZSKILL0001",
-  "command_seq": 10,
+  "command_seq": 11,
   "client_sent_at_ms": 123456780,
   "type": "use_skill",
   "payload": {

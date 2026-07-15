@@ -31,6 +31,7 @@ The current repository implementation already ships:
 - active skill icons can be dragged from the skill book to hotbar slots and persisted online through `set_hotbar_state`
 - inventory items can be dragged to hotbar slots and persisted online through `set_hotbar_state`
 - `ALT+C` actions such as `basic_attack` and `pick_up_nearby` can be dragged to hotbar slots and persisted online through `set_hotbar_state`
+- `ESC` clears the selected target and target-driven queued actions through the authoritative `clear_target` command when chat input and NPC dialogs are not consuming the key
 - equipable item shortcuts call the same equip flow as the inventory when clicked
 - consumable item shortcuts execute through the authoritative `use_item` command and must not be faked locally
 - `ALT+C` action shortcut bindings are durable, while their gameplay execution still uses the action's own authoritative command path

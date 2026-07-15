@@ -79,7 +79,7 @@ The current implementation persists skill cooldown recovery state in `character_
 
 The current implementation persists the first pet or mount slice in `character_pets` keyed by `pet_instance_id`, with `character_id`, `pet_template_id`, summon state, mount state, and timestamps.
 
-The current implementation persists the first party slice in `parties`, `party_members`, and `party_invites`, keyed by `party_id`, `character_id`, and `invite_id`, with leader truth, membership, pending invite expiry, and timestamps.
+The current implementation persists the first canonical-minimum party slice in `parties`, `party_members`, and `party_invites`, keyed by `party_id`, `character_id`, and `invite_id`, with leader truth, membership, short-lived pending invite expiry, and timestamps.
 
 The current implementation persists the first chat slice in `chat_messages`, keyed by `chat_message_id`, with sender, account, channel, optional target, optional region, sanitized text, and command metadata when available.
 
@@ -346,6 +346,17 @@ The current online slice persists:
 - pending invite rows keyed by `invite_id`
 - invite expiry timestamps
 
+The current canonical minimum party semantics are:
+
+- `invite_party_member` resolves the invitee from the actor's current runtime player target
+- pending invites are ephemeral, use a 10-second TTL, and do not make the inviter a functional one-member party
+- the real party is born or grows on `accept_party_invite`
+- no more than one live pending invite may exist for the same invitee
+- no more than one live outbound invite may exist for the same inviter or party
+- functional party size is capped at 9 members
+- the party must not remain functional at one member; leave or kick that drops the roster to one dissolves it
+- leader leave transfers leadership deterministically to the oldest remaining member when at least two members remain
+
 The current online slice rehydrates that state into:
 
 - `world/enter.self_state.party`
@@ -354,7 +365,45 @@ The current online slice rehydrates that state into:
 - runtime deltas and `party_notice` messages for invite, accept, decline, leave, kick, and deterministic leader transfer
 - kill-time party reward eligibility for shared XP and party-owned loot pickup
 
+The browser may render an incoming invite as a dedicated countdown modal and may disable `Accept` visually when `expires_at_ms` reaches zero, but the invite is not removed until the backend updates `self_state.party_invites`.
+
 The runtime does not persist party HUD layout, member ordering by drag, or any frame-level roster repaint. Round-robin, master loot, dice distribution, clan, alliance, siege, and matchmaking remain outside this slice.
+
+### Clan State
+
+Clan truth is durable gameplay and social state, but it remains intentionally smaller than the future broader social stack.
+
+The current online slice persists:
+
+- `clan_id`
+- `name`
+- `leader_character_id`
+- clan membership rows keyed by `clan_id + character_id`
+- pending invite rows keyed by `invite_id`
+- invite expiry timestamps
+
+The current canonical minimum clan semantics are:
+
+- `create_clan` immediately creates the clan, persists the founder as the first member, and marks the founder as leader
+- `invite_clan_member` resolves the invitee from the actor's current runtime player target
+- pending clan invites are ephemeral, use a 10-second TTL, and do not create fake local membership
+- no more than one live pending invite may exist for the same invitee
+- no more than one live outbound invite may exist for the same clan or leader
+- `leave_clan` is valid only for non-leader members in this phase
+- `kick_clan_member` and `dissolve_clan` are leader-only
+- the clan remains valid at one member and does not auto-dissolve
+- there is no manual leader transfer or automatic leader transfer in the current phase
+
+The current online slice rehydrates that state into:
+
+- `world/enter.self_state.clan`
+- `world/enter.self_state.clan_invites`
+- attach-time runtime clan validation
+- runtime deltas and `clan_notice` messages for create, invite, accept, decline, leave, kick, and dissolve
+
+The browser may render an incoming clan invite as a dedicated countdown modal and may disable `Accept` visually when `expires_at_ms` reaches zero, but the invite is not removed until the backend updates `self_state.clan_invites`.
+
+The runtime does not persist clan administration layout, privileges, rich crest presentation, clan chat buffers, warehouse state, alliance membership, or any frame-level roster rearrangement. Alliance, siege, clan war expansion, clan chat, clan warehouse, clan skills, academy, subunits, rich crest UX, complex privileges, and manual leader transfer remain outside this slice.
 
 ### Chat State
 

@@ -96,7 +96,7 @@ Dynamic blockers such as moving players, doors, temporary walls, summons, or sie
 
 - raycast from screen to visible terrain
 - provisional destination marker
-- pending path preview
+- pending path preview as internal client state; visible path lines are debug-only
 - immediate predicted locomotion for the local player
 - animation interpolation between authoritative waypoints
 - smooth blend from predicted motion to authoritative route
@@ -118,9 +118,37 @@ Model geodata per region, not as one giant seamless world.
 The first shipped slice now uses:
 
 - a deterministic region-scoped grid
-- versioned region geodata ids such as `dawn_plaza_geo_v1`
-- static primitive blockers modeled as circles and rectangles
+- versioned region geodata ids such as `clean_plain_1024_geo_v1`
+- minimal static primitive blockers modeled as circles and rectangles, only when explicitly authored
 - server-owned pathfinding that returns authoritative waypoint lists through existing `delta` payloads
+
+The current active playable region still uses `stonecross_plaza` as a compatibility `region_id`, but its authored map content has been reset. It is now a clean prototype plain with no city, mobs, NPCs, buildings, props, roads, water, terrain overlays, or initial spawn content.
+
+`clean_plain_1024_geo_v1` uses the default compact-region playable area of 1024x1024 world units, with bounds `x=-512..512` and `z=-512..512`. The client renderer, invisible ground raycast plane, server geodata bounds, spawn/checkpoint rules, and tests must all use this same region contract. Do not introduce hardcoded client clamps copied from old maps.
+
+`clean_plain_1024_geo_v1` intentionally has no authoritative obstacles. The whole region is walkable until a new map concept is explicitly approved and implemented with matching renderer, picking plane, backend geodata, spawn/checkpoint, and tests. Legacy `dawn_plaza` runtime state may resolve to the same clean geodata while saves are migrated. New character creation may continue to checkpoint `stonecross_plaza` until the next canonical region id is defined.
+
+Previously published local map assets remain available under `src/assets/maps`, but they are content library assets, not active map content unless wired through the documented map slice. Adding, moving, scaling, or rotating a GLB prop does not create an authoritative blocker unless the server geodata is explicitly changed and tested in the same slice.
+
+### Region Definition Checklist
+
+A new playable map is not complete when only the scene visuals exist. It is complete only when these pieces are created or updated together:
+
+- canonical `region_id`
+- canonical `geodata_version`
+- playable bounds, defaulting to 1024x1024 world units for compact regions unless explicitly documented otherwise
+- visible terrain surface sized to the same bounds
+- invisible ground raycast/picking plane sized to the same bounds
+- server geodata bounds using the same coordinate range
+- spawn/checkpoint coordinates inside those bounds
+- exits, portals, NPCs, mobs, loot, and grind zones placed inside those bounds when the approved map concept requires them
+- frontend tests proving legal clicks near each intended edge remain legal
+- backend tests proving movement toward every intended city exit or region edge is accepted or rejected for explicit authored reasons only
+- renderer manifest entries for any local GLB assets used by the scene
+
+Do not copy hardcoded clamps from an older map into a new scene. The reset specifically removed active map content and preserved only the shared 1024x1024 movement contract.
+
+Target-driven actions such as skills, basic attack, and future interaction shortcuts must not path to the target center. They must resolve an authoritative destination that is walkable and still inside the action range, trying nearby candidate points around the target when a wall, building, prop, or target body blocks the direct approach point.
 
 Each region geodata definition should be able to express:
 
@@ -270,7 +298,7 @@ The client should:
 
 - start local predicted locomotion immediately after a terrain click and command dispatch
 - show a pending marker immediately after terrain click when useful
-- visually distinguish predicted route from accepted route
+- keep predicted and accepted route state distinct internally; visual route lines are debug-only and disabled in normal gameplay
 - replace or blend the prediction with the authoritative server route
 - show clear feedback when the destination is blocked or unreachable
 - keep actor interpolation visually smooth without inventing new authority

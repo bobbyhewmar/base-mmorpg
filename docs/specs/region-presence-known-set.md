@@ -181,9 +181,9 @@ Example:
 ```json
 {
   "kind": "region_context",
-  "region_id": "dawn_plaza",
+  "region_id": "stonecross_plaza",
   "region_revision": 21,
-  "geodata_version": "dawn_plaza_geo_v1",
+  "geodata_version": "clean_plain_1024_geo_v1",
   "self_position": {
     "x": -8,
     "z": 0

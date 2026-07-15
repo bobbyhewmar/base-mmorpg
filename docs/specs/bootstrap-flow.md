@@ -120,7 +120,7 @@ The client may render both screens from cached data after fetch, but the server 
 
 If the player chooses to create a character:
 
-1. client collects `race`, `base_class`, `sex`, `hair_style`, `hair_color`, `face`, and `name` from the authoritative catalog
+1. client collects `race`, `base_class`, `sex`, `hair_style`, `hair_color`, `skin_type`, and `name` from the authoritative catalog
 2. client sends `POST /v1/characters`
 3. backend validates all creation choices
 4. backend persists the character if accepted

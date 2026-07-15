@@ -42,6 +42,15 @@ The combat reference is Lineage 2 style target locking, not Mu Online style spot
 
 Do not model the combat loop around free AoE spam into farming spots.
 
+### Mob Personality And Aggro
+
+- Monster templates must declare a canonical personality: `passive` or `aggressive`.
+- Passive monsters never initiate combat only because the player walked near them.
+- Passive monsters enter `aggro` after receiving damage, then follow the same chase and attack loop as hostile monsters.
+- Aggressive monsters detect the player within their aggro radius, enter `aggro` immediately, pursue through server-authoritative movement, and attack only when inside their attack range.
+- Mob attacks must be backend-owned. The client may display `ai_state`, movement, and hit feedback, but it must not decide aggro, chase legality, attack cadence, or damage.
+- Ranged player skills should not cause impossible instant melee retaliation from outside mob attack range; the mob should chase until it can legally attack.
+
 ### Companion And Mount Combat
 
 - Tameable monsters should become persistent companion actors, not one-off visual flags on the player.

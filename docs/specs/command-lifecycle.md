@@ -37,6 +37,8 @@ The server receives a gameplay command envelope over the gameplay transport.
 
 At this point, the command is not yet accepted for processing.
 
+Party affordances such as `/invite` and `/leave` are normalized by the browser into gameplay command envelopes before this stage. `send_chat_message` is not the transport entry point for party mutations.
+
 ### 2. Pre-Validation
 
 The server performs transport and session checks:
@@ -79,9 +81,14 @@ Examples:
 - tame target is known, alive, tameable, and within authoritative tame range
 - summon or dismiss is legal for the current owned companion state
 - mount or dismount is legal for the current owned companion state
-- party invite target is known, online, and currently eligible
-- party accept or decline references a live invite assigned to the actor
+- party invite target is the actor's current runtime player target, is present in the authoritative `known-set`, is online, and is currently eligible
+- party invite target is not the actor itself and is not already in a party
+- the invitee does not already have a live pending invite and the inviter or party does not already have a live outbound invite
 - only the current party leader may invite or kick
+- party size does not exceed the canonical cap of 9 members
+- party accept or decline references a live invite assigned to the actor
+- inviter and invitee still satisfy the invite rules at accept time
+- inviter or invitee disconnect cancels the pending invite instead of allowing stale acceptance
 - chat channel is supported for the current slice
 - chat text is non-empty, within bounds, and not over the current rate limit
 - actor death state does not block the current social chat slice
@@ -121,7 +128,26 @@ For economy mutations such as vendor, exchange, warehouse, and player-trade flow
 
 For pet mutations such as `tame_mob`, `summon_pet`, `dismiss_pet`, `mount_pet`, and `dismount_pet`, the same authoritative commit boundary is responsible for persisting ownership or state transitions in `character_pets`. Mounted move speed is derived from that persisted truth rather than from client presentation state.
 
-For party mutations such as `invite_party_member`, `accept_party_invite`, `decline_party_invite`, `leave_party`, and `kick_party_member`, the same authoritative commit boundary is responsible for persisting leader, membership, or invite state in `parties`, `party_members`, and `party_invites`. Party roster or invite UI remains a projection of that backend truth.
+For party mutations such as `invite_party_member`, `accept_party_invite`, `decline_party_invite`, `leave_party`, and `kick_party_member`, the same authoritative commit boundary is responsible for persisting leader, membership, or invite state in `parties`, `party_members`, and `party_invites`. Pending invite state stays ephemeral, the functional party is born or grows only on accept, and party roster or invite UI remains a projection of that backend truth.
+
+For canonical-minimum party rules, the same authoritative boundary is also responsible for:
+
+- expiring invites after 10 seconds
+- canceling pending invites when inviter or invitee disconnects
+- dissolving the party when leave or kick reduces the roster to one member
+- transferring leadership deterministically to the oldest remaining member when the leader leaves and two or more members remain
+
+For clan mutations such as `create_clan`, `invite_clan_member`, `accept_clan_invite`, `decline_clan_invite`, `leave_clan`, `kick_clan_member`, and `dissolve_clan`, the same authoritative commit boundary is responsible for persisting leader, membership, or invite state in `clans`, `clan_members`, and `clan_invites`. Clan UI remains a projection of backend truth and does not invent membership or invite success locally.
+
+For canonical-minimum clan rules, the same authoritative boundary is also responsible for:
+
+- trimming, validating, and globally de-duplicating clan names
+- expiring invites after 10 seconds
+- canceling pending invites when inviter or invitee disconnects
+- enforcing current-target invite semantics plus leader-only invite, kick, and dissolve
+- preventing the leader from using `leave_clan` in this phase
+- keeping the clan valid at one member until explicit `dissolve_clan`
+- leaving manual leader transfer and automatic leader transfer out of scope
 
 For `send_chat_message`, the same authoritative commit boundary is responsible for persisting minimum chat history in `chat_messages`. Delivery scope remains runtime truth derived from current region, party membership, and online whisper target lookup. The current slice exposes only `region`, `party`, and `whisper`; `local` remains reserved for a later distinct scope. The client never authors the final recipient set.
 
@@ -140,7 +166,7 @@ The server emits authoritative outbound messages to the issuing client and to an
 
 For state mutation flows, that outbound is usually `delta`.
 
-For scoped social flows, the outbound may instead be a typed notice or message such as `trade_notice`, `party_notice`, or `chat_message`.
+For scoped social flows, the outbound may instead be a typed notice or message such as `trade_notice`, `party_notice`, `clan_notice`, or `chat_message`.
 
 ## Message Semantics
 
@@ -354,6 +380,7 @@ The initial namespaces are:
 | `party.target_already_in_party` | Referenced player already belongs to a party |
 | `party.target_invalid` | Referenced player is not a valid invite target for the command |
 | `party.invite_already_pending` | Referenced player already has a live pending invite |
+| `party.party_full` | The current party is already at the canonical 9-member cap |
 | `party.invite_not_found` | Referenced invite no longer exists |
 | `party.invite_not_recipient` | Referenced invite is not assigned to the acting character |
 | `party.invite_expired` | Referenced invite has expired |
@@ -362,6 +389,22 @@ The initial namespaces are:
 | `party.already_in_party` | Character already belongs to a party |
 | `party.member_not_found` | Referenced party member is not currently present in the roster |
 | `party.cannot_kick_self` | Party leaders cannot use kick against themselves |
+| `clan.name_invalid` | Clan name failed authoritative trim, bounds, or regex validation |
+| `clan.name_taken` | Clan name is already reserved by another clan |
+| `clan.target_not_known` | Referenced player is not currently in the authoritative known-set |
+| `clan.target_not_online` | Referenced player is not currently attachable for the current clan invite rules |
+| `clan.target_already_in_clan` | Referenced player already belongs to a clan |
+| `clan.target_invalid` | Referenced player is not a valid clan invite target for the command |
+| `clan.invite_already_pending` | Referenced player already has a live pending clan invite or the clan already has a live outbound invite |
+| `clan.invite_not_found` | Referenced clan invite no longer exists |
+| `clan.invite_not_recipient` | Referenced clan invite is not assigned to the acting character |
+| `clan.invite_expired` | Referenced clan invite has expired |
+| `clan.leader_required` | Only the current clan leader may perform this mutation |
+| `clan.not_in_clan` | Character is not currently in a clan |
+| `clan.already_in_clan` | Character already belongs to a clan |
+| `clan.member_not_found` | Referenced clan member is not currently present in the roster |
+| `clan.cannot_kick_self` | Clan leaders cannot use kick against themselves |
+| `clan.leader_cannot_leave` | Clan leader must use explicit dissolve in the current phase |
 | `system.persistence_failed` | The authoritative runtime could not persist the required durable state |
 
 ## Sequence Examples

@@ -3,6 +3,7 @@ dist/
 .git/
 .vs/
 .tooling/
+3DAssets/
 art/
 backend/
 docs/

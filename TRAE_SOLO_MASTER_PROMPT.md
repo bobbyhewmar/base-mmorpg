@@ -51,12 +51,41 @@ Direcao de produto:
 - simplicidade espacial e leitura de mundo parecida com Mu Online
 - mundo compacto, nao mundo aberto gigante
 - cidades centrais com territorios curtos ao redor
+- a regiao jogavel oficial atual ainda usa o `region_id` `stonecross_plaza` por compatibilidade, mas o conteudo de mapa foi resetado para uma area limpa de prototipo 1024x1024 sem cidade, mobs, NPCs, construcoes, props, ruas, agua, overlays de terreno ou spawns iniciais
+- regioes jogaveis novas devem nascer com area padrao 1024x1024 em coordenadas de mundo, normalmente bounds `x=-512..512` e `z=-512..512`, salvo decisao explicita documentada
+- nao criar cidade nova apenas como visual em cima de bounds antigos; toda expansao de mapa precisa atualizar renderer, ground raycast, spawn/checkpoint, geodata autoritativa e testes
+- geodata atual e `clean_plain_1024_geo_v1`: area jogavel 1024x1024, bounds `x=-512..512` e `z=-512..512`, sem obstaculos autoritativos; todo o mapa e caminhavel ate novo conceito ser definido
+- renderer, ground raycast/picking plane, server geodata bounds, spawn/checkpoint e testes precisam usar a mesma area canônica; e proibido clamp hardcoded de mapa antigo no client
+- assets runtime do client devem ficar em `src/assets` e ser resolvidos pelo Vite via imports/catalogos de modulo; nao colocar novos assets runtime em `public/assets`
+- assets de mapa ja publicados em `src/assets/maps` ficam preservados como biblioteca de conteudo; eles nao fazem parte do mapa ativo enquanto o novo conceito nao for aprovado
+- `Medieval Village MegaKit[Standard]` esta disponivel como fonte em `3DAssets/Medieval Village MegaKit[Standard]` e e o kit principal planejado para futuras vilas/cidades medievais; publicar para `src/assets/maps/...` apenas os modulos realmente usados por uma fatia completa que atualize layout visual, picking bounds, geodata, spawn/checkpoint, blockers e testes
+- nao reintroduzir Stonecross visual, mapa antigo, props antigos, blockers antigos ou spawns antigos como fallback; se `dawn_plaza` aparecer, deve ser apenas alias temporario para a mesma geodata limpa 1024x1024
+- escala de mapa e construcoes deve favorecer leitura Mu Online-like, sem repetir a proporcao monumental de Lineage 2 para cada predio
+- escala visual de players, outros players e NPCs e decisao do renderer; a escala atual de personagens foi reduzida novamente para 50% da referencia visual anterior para combinar melhor com estruturas/mapa compacto; mobs, companions, mounts, ranges, geodata, pathfinding e locomoção autoritativa nao mudam por ajuste visual de personagem sem pedido explicito e validacao separada
+- excecao atual ja decidida pelo usuario: a escala visual menor exigiu recalibrar camera e velocidade autoritativa; camera atual usa offset `(-7.5, 9, 7.5)`, zoom minimo `3.8`, zoom maximo `28`, guard rail de chao `2.4`; velocidades canonicas atuais sao `Fighter=3.225`, `Mage=3.075`, botas `pathrunner=0.15`, `whisperstep=0.13`, `ruinbound=0.225`, montaria `mireling_strider=4.05`
+- o client deve prever movimento usando `stats.move_speed` autoritativo quando disponivel e so recorrer ao template local antes do primeiro snapshot; backend e frontend nao podem divergir nesse valor para evitar snaps/teleportes e falsos bloqueios de velocidade
+- loot visual deve ser pequeno e proximo do chao; preserve hitbox invisivel maior para clique/coleta sem aumentar a representacao visivel do drop
+- estruturas modulares GLB devem preservar proporcao original do asset e ser repetidas como pecas; nao estique uma parede, telhado ou estrutura em escala nao-uniforme para formar uma casa inteira
+- assets retro e medievais de mapa devem usar apenas escala escalar/uniforme; se uma casa, muro, portao, doca, escada ou cerca precisar ocupar mais area, repita modulos em vez de deformar o GLB por eixo
+- novos mobs/NPCs/spawns devem entrar apenas por sistema de spawn backend-owned e persistido ou por um novo mapa aprovado; nao semear mobs/NPCs diretamente no estado inicial da regiao limpa
+- mobs possuem personalidade canonica: `passive` nao inicia combate por proximidade e so entra em `aggro` apos sofrer dano; `aggressive` detecta o personagem dentro do raio de aggro, persegue sem hesitar e ataca quando alcanca o range
+- movimento de mobs continua autoritativo no backend, mas a cena Three.js deve interpolar a posicao visual do procedural ate o snapshot mais recente para evitar micro-teleportes; nao mover autoridade para o client
+- mobs procedurais devem ter animacao simples de idle/walk no corpo, cabeca e pernas para perseguicao parecer caminhada, nao deslizamento
 - camera elevada de leitura clara, lembrando Mu Online na proporcao personagem/terreno
 - camera orbita sempre em torno do personagem como pivô visual
 - botao direito do mouse nunca seleciona target, nunca move e nunca abre menu de contexto do navegador dentro do mundo
-- arrastar com botao direito rotaciona a camera horizontalmente ao redor do personagem
+- arrastar com botao direito rotaciona a camera horizontalmente e verticalmente ao redor do personagem, sempre mantendo o personagem como pivo
+- camera vertical pode chegar perto do nivel do chao, mas nunca deve atravessar o terreno; ao colidir com a protecao do chao, a camera encurta a orbita e chega mais perto do personagem em vez de passar por baixo do mapa
+- o alvo de look-at/follow da camera deve ser suavizado e independente do bob/animação do mesh do personagem; correcao autoritativa, desnivel ou animacao de corrida nao podem fazer a camera tremer
 - scroll do mouse aproxima e afasta a camera dentro de limites controlados
 - combate click-to-target ao estilo Lineage 2, nao combate de spot como Mu Online
+- a aproximacao automatica de skill/ataque basico deve navegar ate um ponto caminhavel dentro do range da acao, nunca ate o centro do alvo
+- starter gear e class-specific: a criacao atual expõe apenas `Human` com `Fighter` e `Mage`; `Fighter` usa pack fisico e `Mage` usa pack mistico; outras classes entram apenas quando o catalogo autoritativo e os tipos runtime forem expandidos
+- visuais de player e outros players devem usar `Universal Base Characters` como corpo canonico padrao em `src/assets/characters/universal-base`; as classes usam `gltf_base_character`, variantes `Male`/`Female`, cabelos rigged por sexo, `hair_color` persistido como `#RRGGBB`, tres `skin_type` por sexo e clips da Universal Animation Library; assets legados de personagem nao sao a fonte ativa de personagem
+- `hair_style` continua persistido/catalogado e deve mapear somente cabelos sex-compatible do catalogo de assets; `hair_color` deve tingir apenas materiais/meshes de cabelo e nunca pele/corpo/equipamento; nao adicionar `Body Type` enquanto existir apenas um corpo real por sexo
+- `Modular Character Outfits - Fantasy` deve permanecer disponivel como biblioteca de equipamento visual futuro; outfit nao e corpo base de classe, outfit representa item equipado quando a camada autoritativa de visual de equipamento for implementada
+- nao renderize humanoide procedural como fallback enquanto o asset canonico carrega; deixe o personagem invisivel/transparente ate o asset configurado estar pronto, e trate asset ausente como erro de conteudo explicito
+- criacao de personagem inicia com o primeiro template canonico do catalogo autoritativo ja selecionado: `Human`, `Fighter`/`Mage`, `Male`/`Female`, `hair_style`, `hair_color` default do catalogo e `skin_type`; `sex` escolhe o unico corpo real disponivel para aquele sexo, e o jogador pode digitar apenas o nome e criar, enquanto nome reservado/duplicado continua sendo rejeitado pelo backend
 - personagens 3D e ambiente 3D em Three.js
 - HUD em HTML/CSS, separada da cena 3D
 - backend autoritativo em Go
@@ -126,7 +155,7 @@ Proibido:
 - retry escondido em comando nao-idempotente
 - degradar seguranca para preservar conveniencia
 - client inventar opcoes canonicas de catalogo, classe, raca, skill, item, regiao ou regra quando a fonte autoritativa nao retornar dados
-- client inventar ou substituir aparencia canonica de personagem quando `race`, `sex`, `base_class`, `hair_style`, `hair_color` ou `face` nao vierem da criacao persistida ou da presenca autoritativa
+- client inventar ou substituir aparencia canonica de personagem quando `race`, `sex`, `base_class`, `hair_style`, `hair_color` ou `skin_type` nao vierem da criacao persistida ou da presenca autoritativa
 - substituir dado/asset canonico ausente por outro dado "parecido" para manter a tela funcionando
 
 Quando algo falha, rejeitar explicitamente com reason code estavel e UI clara.
@@ -226,7 +255,7 @@ O frontend ja possui:
 - listagem de personagens
 - catalogo autoritativo de criacao
 - criacao de personagem
-- fluxo de criacao com `race`, `base_class`, `sex`, `hair_style`, `hair_color`, `face` e `name` como escolhas canonicas persistidas
+- fluxo de criacao com `race`, `base_class`, `sex`, `hair_style`, `hair_color`, `skin_type` e `name` como escolhas canonicas persistidas
 - preview de criacao e lobby/mundo 3D lendo a aparencia escolhida, sem descartar selecoes ao entrar no jogo
 - `world/enter`
 - attach WebSocket
@@ -245,7 +274,7 @@ O frontend ja possui:
 - topo das janelas do personagem reservado para botoes de navegacao `32x32px`, nao para duplicar skills
 - skill book `ALT+K` com janela classica, abas `Active`/`Passive`, grid de icones `32x32px`, tooltips e drag persistente de skills ativas para hotbar via `set_hotbar_state`
 - itens do inventario podem ser arrastados para a shortcut/action bar como binding persistente via `set_hotbar_state`; equipaveis chamam o mesmo fluxo de equip ao clicar
-- actions do `ALT+C`, como `basic_attack` e `pick_up_nearby`, podem ser arrastadas para a shortcut/action bar como binding persistente via `set_hotbar_state`
+- actions do `ALT+C`, como `basic_attack`, `pick_up_nearby`, `party_invite` e `party_leave`, podem ser arrastadas para a shortcut/action bar como binding persistente via `set_hotbar_state`
 - `pick_up_nearby` e clique direto em drop enviam um unico `pick_up_loot`; nao existe retry local no client, o backend resolve aproximacao, range, persistencia e desaparecimento do loot
 - drag de skill ou item exibe o icone preso ao cursor ate soltar ou cancelar
 - consumiveis usam comando autoritativo `use_item` no inventario e na shortcut/action bar
@@ -290,7 +319,7 @@ O backend ja possui:
 - `position_correction`
 - runtime autoritativo basico
 - catalogo de criacao retorna `appearance_options` por raca
-- personagens persistem `hair_style`, `hair_color` e `face` em memoria/Postgres
+- personagens persistem `hair_style`, `hair_color` e `skin_type` em memoria/Postgres
 - presenca de jogador em `region_context`, `entity_appear` e deltas carrega raca, classe, sexo e aparencia para renderizacao remota
 - expected `command_seq` em memoria
 - target por known-set
@@ -452,15 +481,18 @@ Direcao:
 Ultima validacao manual conhecida:
 
 ```bash
-npm test
-npm run build
-go test ./...
+docker compose up -d --build
+docker compose exec -T frontend npm run typecheck
+docker compose exec -T frontend npm test -- --run
+docker compose exec -T frontend npm run build
+docker compose exec -T backend go test ./...
+docker compose exec -T backend go build ./cmd/server
 docker compose config --quiet
 ```
 
 Resultado conhecido:
 
-- frontend: 42 testes passando
+- frontend: suite passando via container
 - build frontend: passando
 - backend: passando
 - compose config: valido
@@ -470,9 +502,12 @@ Antes de qualquer fatia nova:
 
 ```bash
 git status --short
-npm test
-npm run build
-go test ./...
+docker compose up -d --build
+docker compose exec -T frontend npm run typecheck
+docker compose exec -T frontend npm test -- --run
+docker compose exec -T frontend npm run build
+docker compose exec -T backend go test ./...
+docker compose exec -T backend go build ./cmd/server
 docker compose config --quiet
 ```
 
@@ -598,7 +633,7 @@ Direcao:
 - stats de classe devem seguir conceitualmente os baselines extraidos de Lineage 2
 - tratar class templates como referencia canonica conceitual
 - transformar em schema e regras proprias
-- suportar Fighter/Mage inicial por raca
+- suportar `Fighter` e `Mage` como as duas classes criaveis iniciais para `Human`; novas classes, transfers e subclasses entram apenas quando o catalogo autoritativo e os tipos runtime forem expandidos
 - expandir para classes, transfers e subclass depois
 - progresso pode ser infinito ou ate 65565, conforme decisao do usuario
 
@@ -796,8 +831,7 @@ Three.js:
 - loot
 - selection rings
 - destination markers
-- pending path markers
-- authoritative path markers
+- path/geodata debug markers somente quando habilitados explicitamente para desenvolvimento
 - blocked movement feedback
 - area previews
 - floating combat feedback
@@ -1200,7 +1234,7 @@ Estado atual:
 - reject/correction estavel para destino bloqueado ou inalcancavel
 - reason codes `movement.*`
 - delta/correction com rota autoritativa
-- client mostrando prediction, pending path, authoritative path e blend suave
+- client mantendo prediction, pending path, authoritative path e blend suave como estado interno; linhas visuais de path/geodata sao debug-only e ficam desabilitadas no gameplay normal
 - testes deterministas sem rede/db para pathfinding
 - E2E/integracao validando contornar obstaculo e falhar quando nao ha rota
 
@@ -1548,11 +1582,15 @@ Tarefas:
 Done:
 
 - primeiro slice autoritativo de `party` concluido
-- `parties`, `party_members` e `party_invites` persistem leader, membership e convite pendente com expiracao simples
+- o slice base de `party` agora segue o modelo canonico minimo: invite usa o target player atual, TTL de 10s, cap de 9 membros, invitee aceita ou recusa um convite efemero e a party so nasce ou cresce no aceite
+- `parties`, `party_members` e `party_invites` persistem leader, membership e convite pendente; o invite continua efemero, no maximo um outbound ativo por inviter ou party e no maximo um invite pendente por invitee
 - `invite_party_member`, `accept_party_invite`, `decline_party_invite`, `leave_party` e `kick_party_member` sao comandos autoritativos com dedup replay-safe
-- `world/enter.self_state.party` e `world/enter.self_state.party_invites` reidratam roster e convites pendentes
-- membros recebem `party_notice` e delta de roster sem confiar em sucesso local
-- HUD agora projeta painel compacto de party com invites, roster, leader kick e leave
+- `world/enter.self_state.party` e `world/enter.self_state.party_invites` reidratam roster e convites pendentes de forma coerente com a nova semantica de aceite
+- membros recebem `party_notice` e delta de roster sem confiar em sucesso local; `party_notice` continua lifecycle feedback, nao verdade de estado
+- HUD agora projeta painel compacto de party fechado por padrao via `ALT+P`, com drag, close, roster e leave; o invite recebido usa uma janela dedicada pequena, nao-dragavel, centralizada acima da hotbar, com `Accept`, `Cancel` e countdown visual derivado de `expires_at_ms`
+- `ALT+C` expoe `party_invite` e `party_leave`, enquanto `/invite` e `/leave` existem apenas como affordances parseadas no cliente para gameplay commands autoritativos, sem misturar party logic com `send_chat_message`
+- disconnect de inviter ou invitee cancela o convite pendente; self-invite, target ja em party, duplicate invite e party cheia rejeitam com `party.*`
+- party nao existe funcionalmente com 1 membro: leave ou kick que derrubam para 1 dissolvem; se o leader sair com 2+ remanescentes, a lideranca passa deterministicamente ao membro restante mais antigo
 - `send_chat_message` agora cobre `region`, `party` e `whisper` com validacao, trim, limite de tamanho, rate limit simples, dedup replay-safe e fan-out autoritativo
 - `chat_message` entrega apenas para sessoes elegiveis por regiao, party online ou whisper target online/localizavel por nome, sem fallback local de sucesso
 - `chat_messages` persiste historico minimo server-side para auditabilidade futura com actor, account, canal, alvo quando houver, regiao quando aplicavel, texto saneado e metadata de comando
@@ -1561,7 +1599,11 @@ Done:
 - `local` nao tem semantica distinta nesta fase e fica explicitamente reservado para depois; a superficie funcional atual exposta e testada e `region`, `party` e `whisper`
 - `shared XP` e `loot sharing` agora existem no menor slice autoritativo sobre `party`: elegibilidade minima por party online/attached, mesma regiao e vivo; o backend divide XP de forma deterministica e marca loot de party com ownership minimo para pickup autoritativo
 - pickup de loot de party continua first valid pickup wins entre elegiveis, persiste em `character_items` e rejeita ator fora da elegibilidade com reason code estavel
-- round-robin, master loot, dice UI, redistribution, penalty sofisticada por range/level, clan/alliance reward sharing, siege, party finder, matchmaking, offline mail, moderacao avancada e clan/alliance chat real seguem fora de escopo
+- a foundation minima de `clan` agora existe em modo autoritativo: `create_clan` cria o clan imediatamente com founder como leader e primeiro member; `invite_clan_member`, `accept_clan_invite`, `decline_clan_invite`, `leave_clan`, `kick_clan_member` e `dissolve_clan` seguem o command lifecycle replay-safe sem fallback local
+- `clans`, `clan_members` e `clan_invites` persistem nome unico, leader, membership e convite efemero com TTL de 10s; disconnect de inviter ou invitee cancela o convite e `world/enter.self_state.clan` mais `self_state.clan_invites` reidratam a verdade compacta do slice
+- `ALT+N` agora projeta o clan base com `No Clan` mais `Create Clan`, roster compacto quando joined, acoes leader-only de `Invite`/`Kick`/`Dissolve`, `Leave` para member comum e modal dedicado de clan invite nao-dragavel acima da hotbar com countdown por `expires_at_ms`
+- leader de clan nao pode usar `leave_clan` nesta fase; o clan continua valido com 1 member, `dissolve_clan` e explicito e leader-only, e manual transfer ou auto-transfer de leader continuam fora de escopo
+- round-robin, master loot, dice UI, redistribution, penalty sofisticada por range/level, clan/alliance reward sharing, alliance, siege, clan war amplo, party finder, matchmaking, offline mail, moderacao avancada, clan chat real, clan warehouse, clan skills, academy, subunits, crest rico, privilegios complexos e transfer manual de leader seguem fora de escopo
 
 ### Fase M - PvP/PK
 
@@ -1644,7 +1686,7 @@ Sempre escolher a maior prioridade que:
 
 Prioridade atual recomendada:
 
-1. social core restante: shared XP/loot rules e clan base
+1. smoke e hardening operacional do novo clan foundation em browser real, garantindo lifecycle estavel de create/invite/accept/decline/leave/kick/dissolve sem reabrir boundaries de authority
 2. PvP/PK
 3. instancias, siege, olympiad e producao
 4. automacao anti-abuse e operacao aprofundada sobre os audit trails ja existentes
@@ -1707,16 +1749,18 @@ Regras:
 Minimo:
 
 ```bash
-npm test
-npm run build
-go test ./...
+docker compose exec -T frontend npm run typecheck
+docker compose exec -T frontend npm test -- --run
+docker compose exec -T frontend npm run build
+docker compose exec -T backend go test ./...
+docker compose exec -T backend go build ./cmd/server
 docker compose config --quiet
 ```
 
 Quando tocar Docker/Postgres:
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
 Se nao puder rodar Compose por ambiente:
@@ -1971,8 +2015,7 @@ Cena 3D:
 - loot
 - target rings
 - movement markers
-- pending path markers
-- authoritative path markers
+- path/geodata debug markers somente quando habilitados explicitamente para desenvolvimento
 - blocked movement feedback
 - AoE previews
 - floating feedback
@@ -2007,7 +2050,7 @@ Regras visuais atuais da HUD:
 - o topo da janela do personagem e navegacao entre paineis, nao uma fileira de skills duplicadas
 - skills ativas e itens do inventario podem ser arrastados para a shortcut/action bar como affordance local, com o icone seguindo o cursor durante o drag
 - atalhos existentes na shortcut/action bar podem ser removidos arrastando para fora da barra ou usando `ALT + clique esquerdo` no slot ocupado
-- equipaveis na barra executam equip; consumiveis executam `use_item`; actions do `ALT+C` executam comando autoritativo, com `basic_attack` movendo ate o target quando necessario e `pick_up_nearby` coletando o drop proximo sem target obrigatorio
+- equipaveis na barra executam equip; consumiveis executam `use_item`; actions do `ALT+C` executam comando autoritativo, com `basic_attack` movendo ate o target quando necessario, `pick_up_nearby` coletando o drop proximo sem target obrigatorio e `party_invite` ou `party_leave` reutilizando o mesmo fluxo autoritativo de party
 - rebind de hotbar online so vira verdade duravel depois de comando backend autoritativo
 - nao reintroduzir cards arredondados, grids `64x64px`, task tracker default ou controles decorativos sem clique
 
@@ -2124,10 +2167,17 @@ Voce esta trabalhando dentro deste repositorio. Leia primeiro TRAE_SOLO_MASTER_P
 
 Antes de alterar qualquer arquivo, rode git status --short e inspecione o estado real do codigo com rg. Nao assuma que uma fase esta pendente so porque o texto antigo dizia isso; compare docs, testes e implementacao real.
 
-Prioridade 1: seguir para Fase L - social core.
-- Preserve toda autoridade de sessao, presence, party e reward no backend.
+Estado atual que voce deve tratar como entregue, salvo evidencia contraria no codigo:
+- Fase L ja possui party canonica minima, social chat `region`/`party`/`whisper`, shared XP minimo e party-owned loot minimo em slices autoritativos.
+- A regiao ativa atual usa `stonecross_plaza` apenas como id compativel, mas o mapa oficial foi resetado para uma area limpa 1024x1024 com `clean_plain_1024_geo_v1`, bounds `x=-512..512` e `z=-512..512`.
+- Renderer, ground raycast/picking plane, server geodata bounds, spawn/checkpoint, exits e testes precisam compartilhar esse mesmo contrato de mapa.
+- Nao reintroduza clamp hardcoded do mapa antigo, visual Stonecross, props/spawns antigos, blockers antigos, nem bounds antigos de `dawn_plaza`.
+
+Prioridade 1: harden o social core entregue e avancar para clan/alliance base.
+- Preserve toda autoridade de sessao, presence, party, chat, shared XP e party loot no backend.
 - Reuse o runtime, o known-set e a HUD classica sem fallback local que esconda falha de autoridade.
-- Nao aceite membership, reward split, target legality ou presence truth vindo do client.
+- Nao aceite membership, reward split, target legality, presence truth, chat delivery ou loot ownership vindo do client.
+- Se tocar mapa, geodata, movement ou picking, atualize renderer/picking/backend/tests juntos.
 
 Prioridade 2: em seguida, avance para PvP/PK mantendo as mesmas fronteiras de autoridade.
 - Reuse runtime autoritativo, persistencia curta e HUD classica.
@@ -2139,10 +2189,9 @@ Prioridade 3: depois disso, aprofunde operacao anti-abuse e correlacao sobre os 
 Para cada fatia:
 1. implemente uma mudanca vertical pequena e completa;
 2. atualize docs/specs/skills se mudar contrato, arquitetura, UI, dados ou fluxo;
-3. rode obrigatoriamente via Docker Compose quando aplicavel: docker compose up --build -d frontend, docker compose exec -T frontend npm run typecheck, docker compose exec -T frontend npm test, docker compose exec -T frontend npm run build, docker compose config --quiet;
-4. rode backend/go tests quando tocar backend: go test ./... no contexto correto ou via container se o projeto exigir;
-5. corrija falhas antes de seguir;
-6. pare para pedir input apenas se houver decisao criativa nao documentada, credencial externa, risco legal/IP, conflito entre docs ou dependencia externa indisponivel.
+3. rode obrigatoriamente via Docker Compose quando aplicavel: docker compose up -d --build, docker compose exec -T frontend npm run typecheck, docker compose exec -T frontend npm test -- --run, docker compose exec -T frontend npm run build, docker compose exec -T backend go test ./..., docker compose exec -T backend go build ./cmd/server, docker compose config --quiet;
+4. corrija falhas antes de seguir;
+5. pare para pedir input apenas se houver decisao criativa nao documentada, credencial externa, risco legal/IP, conflito entre docs ou dependencia externa indisponivel.
 
 Nao reintroduza UI generica: HUD classica, janelas quadradas, barras azuis, slots 32x32, icon-only grids e tooltips sao canonicos.
 ```

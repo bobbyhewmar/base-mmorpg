@@ -21,7 +21,7 @@ The repository already contains these online capabilities:
 - registration and login
 - pending-verification and recovery UI hooks
 - character list retrieval
-- authoritative character creation by race, base class, sex, hairstyle, hair color, face, and name
+- authoritative character creation by race, base class, sex, hairstyle, hair color through canonical `hair_color`, skin type through `skin_type`, and name
 - `POST /v1/world/enter`
 - durable gameplay-session records
 - WebSocket attach and `region_context`
@@ -59,6 +59,10 @@ The repository already contains these online capabilities:
 - additional equipment slots beyond only weapon and chest, with authoritative equip or unequip through the online path
 - authoritative inventory stack split and merge through command deltas instead of client-owned mutation
 - deterministic item-instance attributes flowing through persistence, deltas, online read-model projection, and HUD presentation
+- class-specific starter gear is now separated between physical `Fighter` packs and mystic `Mage` packs, including backend stats, equip legality, vendor values, and client templates
+- player and other-player class body visuals now use Universal Base Characters `gltf_base_character` runtime assets under `src/assets/characters/universal-base`, with Universal Animation Library clips and no procedural character fallback while the canonical asset loads
+- Modular Character Outfits - Fantasy assets are kept as future equipment visuals and must not be used as base class bodies
+- `Medieval Village MegaKit[Standard]` is available in `3DAssets` as the preferred future medieval map kit; the active clean prototype region uses only selected visual ground/low-vegetation runtime modules under `src/assets/maps/medieval-village-megakit`, and future map slices should publish additional modules to `src/assets/maps` only module-by-module when they update the full map/geodata contract
 - authoritative vendor purchase through `buy_item`, with backend-derived pricing and merchant-range validation
 - authoritative fixed merchant exchange through `exchange_item`, with backend-derived material requirements and reward validation
 - authoritative vendor sale through `sell_item`, with backend-derived valuation and inventory-only legality
@@ -68,24 +72,25 @@ The repository already contains these online capabilities:
 - authoritative NPC interaction services for quest acceptance, quest turn-in, merchant access, and warehouse access
 - authoritative `use_item` for consumables from inventory and hotbar shortcuts
 - authoritative pets, taming, summon or dismiss, and mount or dismount in a first vertical slice with persistent ownership and backend-owned mounted move speed
-- authoritative party invites, membership, leave or kick, and compact roster projection in a first social slice
+- authoritative canonical-minimum party invites, membership, leave or kick, and compact roster projection in a first social slice
 - authoritative social chat through `send_chat_message`, with `region`, `party`, and `whisper` fan-out plus minimum persisted history
+- minimum authoritative party reward sharing, including same-party online/attached/alive XP split and party-owned loot pickup eligibility
 
 ### Implemented But Still Incomplete For Public Readiness
 
 Remaining work:
 
 - richer economy variants beyond the current merchant, warehouse, and trade vertical slices
-- shared XP or loot rules plus broader online social systems on top of the stable movement and economy base
+- broader social systems on top of the stable party, chat, shared XP, and party-owned loot foundation
 - pet combat, pet inventory, pet equipment, breeding, and broader companion AI beyond the first authoritative slice
 
 ## Agora
 
 The current execution priority should follow the master prompt and the real repository state:
 
-1. broader online social and progression content on top of the new companion slice
-2. shared XP or loot rules and broader social progression on top of the stable party plus chat foundation
-3. PvP, PK, and related legality or penalty rules only after social presence remains stable
+1. smoke and harden the new clan foundation on top of the hardened social core without reopening the canonical minimum party authority boundaries
+2. PvP, PK, and related legality or penalty rules only after clan presence remains stable
+3. instances, siege, olympiad, and broader competitive systems only after PvP/PK and clan base remain stable
 4. deeper anti-abuse automation and live investigation ergonomics on top of the current audit surfaces
 
 ### Fase A - Consolidacao Imediata
@@ -213,7 +218,13 @@ Focus:
 Status:
 
 - concluida para o slice online atual
-- `dawn_plaza` ships with server-owned `geodata_version`, static blockers, deterministic pathfinding, bounded cancellation, immediate local prediction, prediction leash, and smooth browser reconciliation from pending to authoritative route
+- `stonecross_plaza` currently ships as a compatibility region id backed by `clean_plain_1024_geo_v1`: a clean 1024x1024 playable plain with deterministic pathfinding, bounded cancellation, immediate local prediction, prediction leash, and smooth browser reconciliation from pending to authoritative route
+- authored Stonecross city content has been removed from the active map: no initial city, NPC services, mobs, buildings, props, terrain overlays, roads, water, grind zones, or spawn packs should be assumed
+- `clean_plain_1024_geo_v1` has no authoritative obstacles; the entire 1024x1024 region is walkable until the next approved map concept introduces blockers deliberately
+- local retro GLB map assets remain preserved as a content library, but are not active map placements
+- renderer, ground raycast/picking plane, spawn/checkpoint, server geodata bounds, and tests must stay synchronized to the same map bounds; no old-map client clamp is allowed
+- there are no authored blockers in the active clean region
+- `dawn_plaza` may remain only as an id alias to the same clean 1024x1024 geodata for older persisted characters; it must not carry old bounds, blockers, or spawns
 
 Delivered implementation shape:
 
@@ -280,28 +291,39 @@ Focus:
 Status:
 
 - concluida para o primeiro slice de `party`
-- `parties`, `party_members`, and `party_invites` now persist the canonical party state with invite expiry
+- the base party slice now follows the canonical minimum model: invite uses the current player target, invite TTL is 10 seconds, the party cap is 9, and the party is born or grows only on accept
+- `parties`, `party_members`, and `party_invites` now persist the canonical party state with short-lived invite expiry; pending invite state stays ephemeral and cannot become durable fake success on the client
 - `invite_party_member`, `accept_party_invite`, `decline_party_invite`, `leave_party`, and `kick_party_member` now run through the authoritative command lifecycle and durable dedup
-- attach-time runtime load plus `world/enter.self_state.party` and `party_invites` now rehydrate roster truth and pending invites
-- the HUD now renders a compact party frame for invites, roster, leave, and leader kick actions
+- attach-time runtime load plus `world/enter.self_state.party` and `party_invites` now rehydrate roster truth and pending invites consistently with accept-time party birth
+- the current player target is the only invite source in this slice; `/invite` and `/leave` are client-side affordances that normalize into authoritative gameplay commands instead of routing through `send_chat_message`
+- the HUD now renders a compact party frame for roster, leave, and leader kick actions, while incoming invites use a dedicated classic modal centered above the hotbar with `Accept`, `Cancel`, and a countdown bar derived from authoritative `expires_at_ms`
+- `ALT+C` now exposes authoritative `party_invite` and `party_leave` actions in addition to the existing social and companion shortcuts
 - `send_chat_message` now validates `region`, `party`, and `whisper` on the backend, trims or bounds text, rate-limits burst spam, and rejects unknown channels with stable `chat.*` reason codes
 - `chat_message` now fans out only to same-region sessions, online party members, or the named whisper target plus sender, without trusting client-side scope or delivery success
 - `chat_messages` now persist minimum history in PostgreSQL or memory with actor, account, target, region, sanitized text, and command metadata for future auditability
 - the bottom-left classic chat panel now renders safe escaped text plus a compact authoritative composer instead of fake local chat success
 - dead actors remain allowed to use this first social chat slice; social chat is not blocked by combat death state in the current phase
 - `local` remains reserved for a later distinct scope and is not exposed as a separate functional channel from `region` in the current slice
+- only the current leader may invite or kick; self-invite, target already in party, duplicate invite, and full party reject with stable `party.*` reason codes
+- disconnect of inviter or invitee cancels the pending invite; late accept after expiry or disconnect resolves as invite no longer valid
+- the party does not functionally remain at one member: leave or kick that drops the roster to one dissolves the party, while leader leave with two or more remaining members transfers leadership deterministically to the oldest remaining member
 - party reward sharing now exists in the minimum authoritative form: same-party, online/attached, same-region, alive members split kill XP deterministically, and party-owned loot allows pickup only for the eligible kill-time party subset
 - party reward pickup keeps the existing persistent `character_items` path and the same first-valid-pickup-wins contention rule inside the eligible subset
-- round-robin, master loot, dice or distribution UI, clan or alliance reward sharing, siege, party finder, matchmaking, offline mail, and advanced moderation remain intentionally out of scope for this slice
+- the first authoritative `clan` foundation is now online with `clans`, `clan_members`, and `clan_invites`, compact `self_state.clan` plus `clan_invites` hydration, and authoritative `create_clan`, `invite_clan_member`, `accept_clan_invite`, `decline_clan_invite`, `leave_clan`, `kick_clan_member`, and `dissolve_clan`
+- clan creation now immediately persists the founder as leader plus first member; the clan remains valid at one member, the leader cannot use `leave_clan` in this phase, and dissolve stays explicit and leader-only with no auto-transfer or manual transfer
+- clan invites now follow the same hardened minimum social semantics: current target only, 10-second TTL, one pending invite per invitee, one active outbound invite per clan or leader, and cancellation on inviter or invitee disconnect
+- `world/enter.self_state.clan` and `self_state.clan_invites` now rehydrate compact clan truth without fake local success; runtime deltas and `clan_notice` remain lifecycle feedback rather than state authority
+- `ALT+N` now renders the minimum clan panel with `No Clan` plus `Create Clan` affordance when empty, compact roster when joined, leader-only `Invite`, `Kick`, and `Dissolve`, member-only `Leave`, and a dedicated non-draggable clan invite modal above the hotbar with countdown derived from authoritative `expires_at_ms`
+- alliance, siege, clan war expansion, clan chat, clan warehouse, clan skills, academy, subunits, rich crest UX, privileges, `/invite Nome`, command channel, round-robin, master loot, dice or distribution UI, clan or alliance reward sharing, party finder, matchmaking, offline mail, manual leader transfer, and advanced moderation remain intentionally out of scope for this slice
 
 ## Later
 
 After the online foundation becomes secure, replay-safe, and observable, the roadmap can continue into:
 
 - broader vendor and warehouse variants
-- observe and harden the first shared XP and party-loot slice before adding broader social reward rules
+- smoke and harden the new clan foundation in real multi-actor browser validation
+- only after clan presence is stable, advance into PvP and PK legality
 - PvP and PK
-- clan
 - deeper anti-abuse automation, correlation, and alerting on top of the current audit queries
 - instances and competitive endgame systems
 

@@ -8,7 +8,7 @@ This document freezes:
 
 - the mandatory login or registration flow before gameplay
 - the authoritative boundaries for account and character-entry logic
-- the initial character-creation model by race, base class, sex, hairstyle, hair color, face, and name
+- the initial character-creation model by race, base class, sex, hairstyle, skin type, and name
 - the security posture between client and backend during pre-gameplay flows
 - the rule that the client may request creation choices but never decides their legality
 
@@ -46,7 +46,7 @@ The client must not:
 - decide which races are enabled
 - decide which base classes are legal for a race
 - decide whether a sex choice is valid for the current creation template
-- decide whether a hairstyle, hair color, or face choice is valid for the current creation template
+- decide whether a hairstyle or skin type choice is valid for the current creation template
 - replace missing persisted appearance with local prototype defaults
 - decide whether a character name is valid or unique
 - create a gameplay session by itself
@@ -61,7 +61,7 @@ The backend is authoritative for:
 - account verification and recovery rules
 - rate limits and abuse controls for auth flows
 - character-list ownership
-- race, base-class, sex, hairstyle, hair color, face, and name legality
+- race, base-class, sex, hairstyle, skin type, and name legality
 - character-name normalization, reservation, and uniqueness
 - world-entry permission
 - gameplay-session issuance
@@ -91,15 +91,11 @@ The browser client must expose these pre-gameplay screens:
 
 ### Race
 
-The initial online slice should expose the server-owned playable race catalog derived from the current project reference set.
+The current online slice exposes a deliberately narrow server-owned playable race catalog while the visual identity is stabilized.
 
 The initial race set is:
 
 - `Human`
-- `Elf`
-- `Dark Elf`
-- `Orc`
-- `Dwarf`
 
 The backend owns whether each race is enabled.
 
@@ -122,11 +118,13 @@ The backend owns whether a requested sex is valid for the chosen race and base-c
 
 ### Appearance
 
-The player may choose canonical appearance options:
+The player may choose canonical visible appearance options:
 
 - `hair_style`
 - `hair_color`
-- `face`
+- `skin_type`
+
+The HTTP field for skin type is `skin_type`. The HTTP field for hair color is `hair_color`, validated as canonical `#RRGGBB`. There is no active `face` or `body_type` creation field. `sex` selects the only available body model for that sex until real body variants exist.
 
 The backend catalog owns the legal option identifiers for the selected race/template. These options are persisted character state, returned by the character list, propagated through gameplay presence, and rendered by the lobby/world character visuals.
 
@@ -156,10 +154,21 @@ The backend should provide an authoritative creation catalog that expresses at l
 - enabled races
 - enabled base classes for each race
 - supported sex options
-- supported `hair_style`, `hair_color`, and `face` options for each race/template
+- supported `hair_style`, `hair_color_default`, and skin type options for each race/template
 - optional presentation metadata for UI rendering
 
 The client may cache this catalog for rendering, but the cache is not authority.
+
+The creation UI should preselect the first enabled catalog-backed option for every required selector:
+
+- race
+- base class
+- sex
+- `hair_style`
+- `hair_color`
+- `skin_type`
+
+This lets a player type only the character name and submit immediately. The preselection is a UI convenience from server-owned data, not a client-side legality decision.
 
 ## Entry and Creation Flow
 
@@ -264,7 +273,7 @@ Stable rejection categories for this flow should cover at least:
 - The client never enters the world directly from a cold start.
 - The backend is authoritative for account identity.
 - The backend is authoritative for character ownership and entry permission.
-- Race, base class, sex, hairstyle, hair color, face, and name legality are backend-only concerns.
+- Race, base class, sex, hairstyle, skin type, and name legality are backend-only concerns.
 - Character creation is a request from the client, not an authoritative client action.
 - The same account may only enter the world through an accepted backend path.
 
@@ -272,7 +281,7 @@ Stable rejection categories for this flow should cover at least:
 
 - A cold client lands on login or registration, not directly in the game world.
 - Successful login returns the authoritative character list for the account.
-- Character creation is split by race, base class, sex, hairstyle, hair color, face, and name.
+- Character creation is split by race, base class, sex, hairstyle, skin type, and name.
 - The backend validates all character-creation choices before persistence.
 - The backend rejects duplicate or invalid names explicitly.
 - World entry requires authenticated account context and valid character ownership.
