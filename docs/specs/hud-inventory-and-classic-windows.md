@@ -53,6 +53,29 @@ Classic HUD windows must not use:
 - task tracker panels in the default combat HUD
 - duplicated skill shortcut rows above skill categories
 
+## Planned Bottom-Right Quick Access Mini Menu
+
+The gameplay HUD must add a bottom-right quick access mini menu matching the classic client reference.
+
+Required visual rules:
+
+- fixed in the bottom-right corner, close to the screen edge but not overlapping the bottom-center hotbar
+- one narrow vertical blue drag rail on the left side of the mini menu
+- four compact `32x32px` icon buttons in a single horizontal strip
+- square corners, dark body, thin borders, and the same blue/inset highlight language used by the hotbar and classic windows
+- tooltip above the hovered button using the exact shortcut label style, such as `Character Status (Alt+T)`, `Inventory (Alt+V)`, `Map (Alt+M)`, and `System (Alt+X)`
+
+Required buttons for the first slice:
+
+- `Character Status`: opens the existing `ALT+T` status window
+- `Inventory`: opens/toggles the existing `ALT+V` inventory window
+- `Map`: opens a classic map window placeholder through `ALT+M`
+- `System`: opens a classic system menu through `ALT+X`
+
+The system menu must be a classic square window above the mini menu and include icon rows for future features such as Community, Macro, Help, Petition, Options, Restart, and Exit Game. Only implemented actions may mutate state. Unimplemented rows may be disabled or informational, but they must not fake success.
+
+`Exit Game` must open a classic confirmation modal with warning icon, message `Do you wish to exit the game?`, and `OK` plus `Cancel` buttons. `Cancel` closes only the modal. `OK` may initially return to the login/pre-game flow if no fuller logout flow exists, but it must be explicit and documented.
+
 ## Inventory Rules
 
 ### Access

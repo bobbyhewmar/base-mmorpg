@@ -2,6 +2,18 @@
 
 Use this document as the baseline for the project's visual and spatial direction after the pivot to a compact MMORPG.
 
+## Default Source Study Reference
+
+Use `D:\Jogos\Lineage II\Servidores\Lucera\Souce\main` as the default direct study source before implementing any feature that has a clear Lineage 2 equivalent.
+
+The source is a concept and behavior reference, not a codebase to port. Extract responsibilities, lifecycle, validations, state transitions, edge cases, data ownership, and feature boundaries. Then translate those findings into this project's own canonical architecture, contracts, documentation, tests, and implementation.
+
+Never copy source code, packet shapes, schemas, proprietary names, assets, local source paths, or branch-specific quirks into runtime behavior. If a studied system is useful, document the concept first and implement it in our own backend-authoritative model.
+
+### PvP/PK Concept Study
+
+The PvP/PK study retained only the separation between targeting and attack legality, live relation and zone validation, an absolute hostile-exposure deadline refreshed by successful hostile action, death-time PvP-versus-PK classification, durable non-negative consequences, death cleanup before respawn, and server-side peace/safe-area checks at the damage boundary. The hardening pass also treated audit as part of the same authoritative mutation rather than a client or packet concern. Event, duel, siege, olympiad, war, summon attribution, rewards, drops, and advanced karma recovery remain separate future policies. The project-owned contract is recorded in `docs/specs/pvp-pk.md`; no reference code, identifiers, packet layouts, schemas, or assets were copied.
+
 ## What This Direction Locks In
 
 - The project should feel like a classic fantasy MMORPG with dense, compact spaces.

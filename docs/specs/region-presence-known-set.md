@@ -55,7 +55,7 @@ For player-character entities, the first shipped presence payload uses:
 
 - `entity_type: player`
 - a project-owned `template_id` for the generic remote-player visual
-- runtime `state` fields for `name`, `level`, `hp`, `dead`, and `facing`
+- runtime `state` fields for identity, `level`, `cp`, `hp`, `dead`, `facing`, temporary PvP flag projection, durable PvP/PK counters, and karma
 
 Presence exists to answer:
 
@@ -120,6 +120,7 @@ The following commands require the referenced entity to be in the session `known
 
 - `select_target`
 - `use_skill` when the payload references `target_id`
+- `basic_attack`
 - `interact_npc`
 - `pick_up_loot`
 
@@ -146,6 +147,12 @@ If the entity is not in `known-set`, the command must be rejected with a stable 
 - cooldown is not active
 - cost can be paid
 - command-specific combat legality passes
+
+For a player target, known-set membership does not authorize damage. The PvP path also requires live attachment in the same region, an open region policy, distinct living characters, non-matching party and clan membership, authoritative range, and the command-specific skill/resource rules in `docs/specs/pvp-pk.md`.
+
+### Basic Attack
+
+`basic_attack` requires a live known target. Mob targets keep the existing PvE approach/auto-attack behavior. Player targets use the separate immediate PvP eligibility path and do not auto-approach or auto-repeat in the first slice.
 
 ### NPC Interaction
 

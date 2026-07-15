@@ -14,6 +14,7 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Authoritative skill use
 - [x] Mob death and respawn
 - [x] Player death and simple respawn
+- [x] First authoritative single-target PvP/PK slice
 - [x] Authoritative loot and pickup
 - [x] Persistent inventory and equipment
 - [x] Equipment-derived stats and authoritative player HP
@@ -103,6 +104,8 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Inventory close control works as a real title-bar button.
 - [x] Character-window family opens through `ALT+T`, `ALT+K`, `ALT+C`, `ALT+N`, and `ALT+U`.
 - [x] Character-window top row switches panels instead of duplicating skill icons.
+- [ ] Bottom-right quick access mini menu matches the classic reference with `32x32px` Status, Inventory, Map, and System buttons plus `ALT+T`, `ALT+V`, `ALT+M`, and `ALT+X` shortcuts.
+- [ ] System menu opens as a classic square window and `Exit Game` shows an explicit `OK` or `Cancel` confirmation modal.
 - [x] Skill book opens through `ALT+K`.
 - [x] Skill book separates `Active` and `Passive` skills with compact icon grids.
 - [x] Active skills can be dragged to hotbar slots for immediate local UI rebinding with the icon following the cursor during drag.
@@ -149,10 +152,31 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] `create_clan`, `invite_clan_member`, `accept_clan_invite`, `decline_clan_invite`, `leave_clan`, `kick_clan_member`, and `dissolve_clan` execute only through the authoritative gameplay command lifecycle.
 - [x] Clan creation immediately binds the founder as leader and first member, the clan remains valid with one member, and `dissolve_clan` is explicit plus leader-only.
 - [x] Clan invites use the actor's current player target, expire after 10 seconds, reject self-invite or target-already-in-clan, and cancel when inviter or invitee disconnects.
+- [x] Player selection used by social commands runs through authoritative `select_target`; selecting a player does not enable PvP/PK, and `invite_clan_member` rejects any client-authored recipient payload.
+- [x] Clan invite acceptance adds membership and consumes the invite atomically, with storage-level uniqueness for one live outbound invite per clan and one live inbound invite per invitee.
+- [x] Successful clan mutations correlate their actor-facing delta with `command_id + command_seq`; ack or an uncorrelated notice cannot produce projected clan success.
+- [x] Identical replay is deterministic across all seven clan commands, conflicting replay rejects without mutation, and invalid target, expiry, and disconnect cases retain stable authoritative outcomes.
 - [x] `world/enter` and attach-time runtime hydration restore authoritative `clan` and `clan_invites` snapshots without client-authored success.
+- [x] Docker Compose browser smoke covers two characters through create, invite, accept, reconnect hydration, leave, decline, reaccept, kick, and dissolve.
 - [x] `ALT+N` projects a compact clan panel with `Create Clan`, joined roster, leader-only `Invite` or `Kick` or `Dissolve`, member-only `Leave`, and a dedicated non-draggable clan invite modal above the hotbar.
 - [x] Alliance, siege, clan war expansion, clan chat, clan warehouse, clan skills, academy or subunits, rich crest UX, complex privileges, and manual leader transfer remain intentionally out of scope for this slice.
 - [x] `/invite Nome`, command channel, round-robin, master loot, dice or distribution UI, clan or alliance reward sharing, party finder, matchmaking, offline mail, manual leader transfer, and advanced moderation remain intentionally out of scope for this slice.
+
+### PvP/PK Reality
+
+- [x] `select_target` may select a player but never authorizes damage by itself.
+- [x] `basic_attack` and learned single-target `use_skill` route player targets through a backend-owned PvP path while mob targets keep the existing PvE path.
+- [x] PvP eligibility revalidates attached same-region known-set membership, fail-closed region policy, server-authored safe areas, life state, party, clan, range, cooldown, learned skill, and MP.
+- [x] Player damage consumes CP before HP and player death, cooldown clear, and simple respawn remain backend-owned.
+- [x] Successful hostile damage starts or refreshes an authoritative 30-second PvP deadline persisted as an absolute timestamp; reconnect/logical restart restore a still-active flag, and server-time expiry clears it durably before snapshot/delta projection.
+- [x] Death-time classification increments durable `pvp_kills` for an exposed or karma-positive victim, or durable `pk_count` plus 100 karma for an unflagged karma-neutral victim.
+- [x] Attacker and victim combat resources, exposure deadlines, PvP/PK consequences, and one detailed combat audit event commit atomically before success is published; lethal commits clear victim cooldown persistence.
+- [x] Identical replay does not reapply damage, death, PK, karma, MP, or cooldown; conflicting replay rejects explicitly.
+- [x] Backend and read-model tests cover player selection without damage, basic attack, skill, invalid/unknown/self target, target out of region, same party, same clan, restricted region, safe zone, out of range, dead target, disconnect, death cleanup, respawn, durable flag hydration/expiry, PK/PvP classification, audit, and replay.
+- [x] Docker Compose browser smoke covers two attached users outside the spawn sanctuary through authoritative player selection, basic attack, active-flag reconnect hydration, single-target skill, flag projection, and victim resource projection.
+- [x] `GET /internal/pvp/events` reuses the disabled-by-default internal audit token, supports pagination/time and actor/victim/action/result filters, and exposes no mutation surface.
+- [x] The HUD projects only backend-provided PvP flag, PvP kills, PK count, karma, CP, HP, and dead state.
+- [x] AoE/chain PvP, player auto-approach/repeat, pets/summons, assists, clan/alliance wars, siege, olympiad, events, rankings, rewards, richer named-zone/content volumes, karma decay, and complex penalties remain explicitly deferred.
 
 ## Notes
 

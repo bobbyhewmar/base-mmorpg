@@ -28,6 +28,16 @@ The combat reference is Lineage 2 style target locking, not Mu Online style spot
 - The current target should remain visible in the HUD until changed, lost, or invalidated by distance or death.
 - Non-combat targets such as NPCs, loot, or interactables may use the same target-selection language where helpful.
 - Optional `tab` cycling may exist as a convenience, but it only changes the current target. It does not replace explicit target-based combat.
+- A known player may be selected authoritatively for the HUD or social commands, but selection alone never makes player damage legal. Player combat runs the additional eligibility contract in `docs/specs/pvp-pk.md`.
+
+### First Player Combat Slice
+
+- `basic_attack` and single-target `use_skill` distinguish player targets from mob targets on the backend, preserving the existing PvE flow.
+- Player damage consumes authoritative CP before HP and does not use mob AI, aggro, loot, XP, or mob respawn rules.
+- Player attacks validate live attachment, same region, region PvP policy, party and clan relation, life state, range, cooldown, learned skill, and MP.
+- Successful hostile damage starts or refreshes a temporary backend-owned PvP flag.
+- Player death classifies one durable PvP kill or PK consequence before the existing simple respawn.
+- Player AoE, auto-approach, auto-repeat, pet attribution, war, siege, olympiad, rewards, and complex penalties remain deferred.
 
 ### Skill Activation
 

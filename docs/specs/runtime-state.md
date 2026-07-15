@@ -39,9 +39,11 @@ The following data lives in authoritative runtime memory:
 - current target state
 - active cast state
 - active cooldown map
+- active projection of the durable PvP exposure deadline
 - current owned pet roster
 - current active companion known-set entity and mounted ownership link
 - current party roster snapshot and pending invite projection
+- current clan roster snapshot and pending invite projection
 - current eligible party reward subset resolved at mob death
 - current region-local entity presence
 - region-local revision counters used for outbound deltas
@@ -60,8 +62,13 @@ The following data is durable and authoritative in PostgreSQL:
 - characters
 - level
 - XP
+- durable CP
 - durable HP
 - durable MP
+- durable PvP kill count
+- durable PK count
+- durable non-negative karma
+- durable PvP exposure deadline as an absolute timestamp
 - durable position checkpoints
 - durable region checkpoints
 - versioned region geodata or static terrain content when persisted by the content pipeline
@@ -69,7 +76,9 @@ The following data is durable and authoritative in PostgreSQL:
 - durable hotbar loadout snapshots
 - durable pet ownership and summon or mount state
 - durable party leader, membership, and pending invites
+- durable clan name, leader, membership, and pending invites
 - minimum durable chat history and chat-command audit metadata
+- durable player-combat audit events with command correlation
 - inventory state
 - equipment slot occupancy
 - durable session records
@@ -77,9 +86,13 @@ The following data is durable and authoritative in PostgreSQL:
 
 The current implementation persists skill cooldown recovery state in `character_skill_cooldowns` keyed by `character_id + skill_id`.
 
+The hardened PvP/PK slice persists `pvp_kills`, `pk_count`, `karma`, and `pvp_flag_until` on `characters`. The flag deadline is absolute: attach/world-enter restore it only when it is still in the future, while server-time expiry clears the durable value before publishing the expiry transition. A player-combat hit commits attacker and victim combat resource state, both flag deadlines, classification counters, and a `pvp_combat_events` row in one storage transaction; lethal commits also clear the victim's durable cooldown rows before the success delta is published.
+
 The current implementation persists the first pet or mount slice in `character_pets` keyed by `pet_instance_id`, with `character_id`, `pet_template_id`, summon state, mount state, and timestamps.
 
 The current implementation persists the first canonical-minimum party slice in `parties`, `party_members`, and `party_invites`, keyed by `party_id`, `character_id`, and `invite_id`, with leader truth, membership, short-lived pending invite expiry, and timestamps.
+
+The current implementation persists the canonical-minimum clan slice in `clans`, `clan_members`, and `clan_invites`, with unique normalized names, leader truth, membership, short-lived pending invite expiry, and storage-level uniqueness for live inbound and outbound invites.
 
 The current implementation persists the first chat slice in `chat_messages`, keyed by `chat_message_id`, with sender, account, channel, optional target, optional region, sanitized text, and command metadata when available.
 
@@ -98,15 +111,20 @@ The current implementation persists the first chat slice in `chat_messages`, key
 - the current `known-set`
 - the live target reference
 - the live cast in progress
+- whether the durable PvP exposure deadline is active at the current server time
 - the live movement path, accepted destination, geodata version, and latest accepted coordinate
 
 ### PostgreSQL Is the Authority For
 
 - recoverable character progression
+- recoverable PvP kill count, PK count, and karma
+- recoverable PvP exposure deadline
 - recoverable inventory and equipment state
 - recoverable pet ownership plus summon or mount state
 - recoverable party roster plus pending invites
+- recoverable clan roster plus pending invites
 - recoverable minimum chat history for audit and investigation flows
+- recoverable PvP/PK combat audit history for investigation flows
 - recoverable cooldown end timestamps
 - recoverable session records
 - replay-safe command records keyed by `session_id + command_seq`
@@ -386,9 +404,12 @@ The current canonical minimum clan semantics are:
 
 - `create_clan` immediately creates the clan, persists the founder as the first member, and marks the founder as leader
 - `invite_clan_member` resolves the invitee from the actor's current runtime player target
+- player targeting itself is authoritative runtime state produced by `select_target`; the browser does not set a social player target locally, and player selection does not enable PvP/PK
+- `invite_clan_member` has an empty payload, so the client cannot override the runtime target with `target_character_id`
 - pending clan invites are ephemeral, use a 10-second TTL, and do not create fake local membership
 - no more than one live pending invite may exist for the same invitee
 - no more than one live outbound invite may exist for the same clan or leader
+- `accept_clan_invite` atomically adds membership and consumes the invite after recipient, clan, expiry, and membership validation
 - `leave_clan` is valid only for non-leader members in this phase
 - `kick_clan_member` and `dissolve_clan` are leader-only
 - the clan remains valid at one member and does not auto-dissolve
@@ -400,6 +421,8 @@ The current online slice rehydrates that state into:
 - `world/enter.self_state.clan_invites`
 - attach-time runtime clan validation
 - runtime deltas and `clan_notice` messages for create, invite, accept, decline, leave, kick, and dissolve
+
+Successful clan command deltas sent to the actor carry the originating command id and sequence. `ack` and `clan_notice` remain lifecycle feedback; only authoritative snapshot or delta data changes the browser's clan or invite projection. Clan membership survives disconnect and is rehydrated on reconnect, while pending invites are canceled when either participant disconnects.
 
 The browser may render an incoming clan invite as a dedicated countdown modal and may disable `Accept` visually when `expires_at_ms` reaches zero, but the invite is not removed until the backend updates `self_state.clan_invites`.
 

@@ -68,6 +68,10 @@ The server loads the authoritative runtime context and validates gameplay legali
 Examples:
 
 - target exists in `known-set`
+- `select_target` may select a known `player` for social interaction and HUD projection, but that selection alone never authorizes player damage or enables PvP/PK
+- `basic_attack` or `use_skill` against a known player enters the server-owned PvP eligibility path; the browser cannot turn selection, ack, animation, or cooldown presentation into damage
+- player combat revalidates live attachment, same-region membership, safe-area/region policy, party/clan relation, life state, range, skill, MP, and cooldown before any mutation
+- a successful player hit atomically checkpoints both characters' combat resources, the absolute exposure deadlines, durable PvP/PK consequences, and one combat audit event before emitting the correlated actor delta
 - target is in range
 - movement destination can be resolved through server-owned terrain/geodata
 - movement route does not cross static blockers
@@ -89,6 +93,8 @@ Examples:
 - party accept or decline references a live invite assigned to the actor
 - inviter and invitee still satisfy the invite rules at accept time
 - inviter or invitee disconnect cancels the pending invite instead of allowing stale acceptance
+- clan invite target is the actor's current authoritative runtime player target; `invite_clan_member` accepts only an empty payload and rejects a client-authored `target_character_id` as `protocol.invalid_envelope`
+- clan accept or decline references a live invite assigned to the actor, and accept revalidates membership plus expiry at commit time
 - chat channel is supported for the current slice
 - chat text is non-empty, within bounds, and not over the current rate limit
 - actor death state does not block the current social chat slice
@@ -139,6 +145,8 @@ For canonical-minimum party rules, the same authoritative boundary is also respo
 
 For clan mutations such as `create_clan`, `invite_clan_member`, `accept_clan_invite`, `decline_clan_invite`, `leave_clan`, `kick_clan_member`, and `dissolve_clan`, the same authoritative commit boundary is responsible for persisting leader, membership, or invite state in `clans`, `clan_members`, and `clan_invites`. Clan UI remains a projection of backend truth and does not invent membership or invite success locally.
 
+`accept_clan_invite` adds membership and consumes the invite in one repository transaction or one memory-store critical section. A failed validation or persistence step must leave both membership and invite state unchanged. Storage also enforces at most one live outbound invite per clan and one live inbound invite per invitee, in addition to runtime validation.
+
 For canonical-minimum clan rules, the same authoritative boundary is also responsible for:
 
 - trimming, validating, and globally de-duplicating clan names
@@ -167,6 +175,8 @@ The server emits authoritative outbound messages to the issuing client and to an
 For state mutation flows, that outbound is usually `delta`.
 
 For scoped social flows, the outbound may instead be a typed notice or message such as `trade_notice`, `party_notice`, `clan_notice`, or `chat_message`.
+
+Every successful clan mutation sends the issuing client a `delta` carrying `applies_to_command_id` and `applies_to_command_seq`. An `ack` or uncorrelated `clan_notice` may provide lifecycle feedback, but cannot mark the command applied or mutate projected clan truth.
 
 ## Message Semantics
 
@@ -322,6 +332,7 @@ The initial namespaces are:
 - `mount.*`
 - `chat.*`
 - `party.*`
+- `pvp.*`
 - `system.*`
 
 ### Initial Reason Codes
@@ -341,6 +352,15 @@ The initial namespaces are:
 | `combat.out_of_range` | Target is not within valid range |
 | `combat.cooldown_active` | Skill is still on cooldown |
 | `combat.insufficient_mp` | MP is insufficient for the action |
+| `pvp.self_target` | Actor attempted to attack their own character |
+| `pvp.target_unavailable` | Known player is no longer attached |
+| `pvp.target_out_of_region` | Attached target is no longer in the actor's authoritative region |
+| `pvp.region_restricted` | Current region does not enable open PvP |
+| `pvp.safe_zone` | Actor or target is inside a server-authored safe area |
+| `pvp.flag_expired` | Server-owned exposure deadline expired and was cleared; emitted as delta annotation, not command rejection |
+| `pvp.same_party` | Actor and target share the same authoritative party |
+| `pvp.same_clan` | Actor and target share the same authoritative clan |
+| `pvp.skill_not_supported` | Skill is outside the current single-target PvP slice |
 | `inventory.item_not_found` | Item instance cannot be resolved for the actor |
 | `inventory.item_not_equippable` | Item cannot occupy the requested slot |
 | `inventory.item_not_usable` | Item cannot be consumed or has no effect in the current authoritative state |

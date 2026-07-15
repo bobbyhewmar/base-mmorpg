@@ -101,6 +101,12 @@ O projeto nao e mais um board game digital. A pasta ainda se chama `L2 BOARD GAM
 
 As fontes de Lineage 2 ou outras bases estudadas servem para extrair conceitos, fluxos, responsabilidades e prioridades.
 
+Referencia padrao de estudo para features Lineage-like:
+
+- `D:\Jogos\Lineage II\Servidores\Lucera\Souce\main`
+
+Antes de implementar uma feature que exista ou tenha equivalente claro em Lineage 2, o executor deve analisar essa source Lucera como referencia direta de comportamento, ciclo de vida, responsabilidades, dados envolvidos, validacoes, restricoes e casos de borda. Depois da analise, deve transformar o conceito em um design proprio deste projeto, alinhado a Go backend autoritativo, Postgres como verdade duravel, Three.js/HTML client, command lifecycle replay-safe, testes e observabilidade.
+
 Nunca portar literalmente:
 
 - packet shape legado
@@ -270,6 +276,7 @@ O frontend ja possui:
 - chat/system log no canto inferior esquerdo
 - shortcut/action bar classica bottom-center com slots `32x32px`, uma barra azul de drag na esquerda, botao `16x16px` de expandir na direita e linhas crescendo de baixo para cima
 - inventario `ALT+V` fechado por padrao, com janela classica, grid de icones `32x32px`, tooltip de item, footer de moeda/peso e botao de fechar funcional
+- evolucao planejada de HUD: mini menu fixo no canto inferior direito, identico ao estilo classico, com uma barra azul vertical de drag na esquerda, quatro botoes `32x32px` para Status, Inventory, Map e System, tooltips `Character Status (Alt+T)`, `Inventory (Alt+V)`, `Map (Alt+M)` e `System (Alt+X)`, janela System classica e confirmacao `Do you wish to exit the game?` com `OK` e `Cancel`
 - familia de janelas do personagem com `ALT+T` Status, `ALT+K` Skills, `ALT+C` Actions, `ALT+N` Clan e `ALT+U` Quests
 - topo das janelas do personagem reservado para botoes de navegacao `32x32px`, nao para duplicar skills
 - skill book `ALT+K` com janela classica, abas `Active`/`Passive`, grid de icones `32x32px`, tooltips e drag persistente de skills ativas para hotbar via `set_hotbar_state`
@@ -428,7 +435,8 @@ Prompts de extracao:
 Regra:
 
 - prompts de extracao devem sempre dizer para extrair conceito e transformar em documentacao propria
-- nao mencionar source root local
+- usar `D:\Jogos\Lineage II\Servidores\Lucera\Souce\main` como source root padrao de estudo quando o executor tiver acesso local a essa pasta
+- nunca transformar esse source root em dependencia runtime, caminho hardcoded da aplicacao, import, copia de codigo, schema legado ou contrato de dados do nosso jogo
 - nao rotular nada como custom/retail; tratar como definicao da fonte estudada
 
 ### Skills existentes
@@ -1601,6 +1609,10 @@ Done:
 - pickup de loot de party continua first valid pickup wins entre elegiveis, persiste em `character_items` e rejeita ator fora da elegibilidade com reason code estavel
 - a foundation minima de `clan` agora existe em modo autoritativo: `create_clan` cria o clan imediatamente com founder como leader e primeiro member; `invite_clan_member`, `accept_clan_invite`, `decline_clan_invite`, `leave_clan`, `kick_clan_member` e `dissolve_clan` seguem o command lifecycle replay-safe sem fallback local
 - `clans`, `clan_members` e `clan_invites` persistem nome unico, leader, membership e convite efemero com TTL de 10s; disconnect de inviter ou invitee cancela o convite e `world/enter.self_state.clan` mais `self_state.clan_invites` reidratam a verdade compacta do slice
+- targeting de player usado pelo social core agora passa por `select_target` autoritativo e delta correlacionado; isso nao habilita PvP/PK, e `invite_clan_member` aceita somente payload vazio sem recipient escolhido pelo client
+- aceite de clan adiciona membership e consome o invite atomicamente; storage limita um outbound vivo por clan e um inbound vivo por invitee
+- os sete comandos de clan tem cobertura de replay identico deterministico e replay conflitante sem mutacao, alem de invalid target, expiracao, disconnect, reconnect/hydration, kick e dissolve
+- smoke real com dois personagens via Docker Compose cobre create, invite, accept, reconnect, leave, decline, novo accept, kick e dissolve sem sucesso local falso
 - `ALT+N` agora projeta o clan base com `No Clan` mais `Create Clan`, roster compacto quando joined, acoes leader-only de `Invite`/`Kick`/`Dissolve`, `Leave` para member comum e modal dedicado de clan invite nao-dragavel acima da hotbar com countdown por `expires_at_ms`
 - leader de clan nao pode usar `leave_clan` nesta fase; o clan continua valido com 1 member, `dissolve_clan` e explicito e leader-only, e manual transfer ou auto-transfer de leader continuam fora de escopo
 - round-robin, master loot, dice UI, redistribution, penalty sofisticada por range/level, clan/alliance reward sharing, alliance, siege, clan war amplo, party finder, matchmaking, offline mail, moderacao avancada, clan chat real, clan warehouse, clan skills, academy, subunits, crest rico, privilegios complexos e transfer manual de leader seguem fora de escopo
@@ -1613,20 +1625,24 @@ Objetivo:
 
 Tarefas:
 
-1. safe/combat zones
-2. target player legality
-3. PvP flag
-4. PK flag
-5. karma/penalty
-6. death penalties
-7. anti-grief protections
-8. audit logs
+1. [concluido no hardening] policy fail-closed por regiao mais santuario logico minimo de spawn em `stonecross_plaza`/`dawn_plaza`, avaliado apenas pelo backend sem alterar mapa/geodata/picking/bounds/spawn/assets; volumes ricos de content continuam futuros
+2. [concluido no slice minimo] target player legality separada de `select_target`, com known-set, attach, regiao, vida, party, clan, range, skill, MP e cooldown backend-owned
+3. [concluido no hardening] PvP flag de 30s persistida como deadline absoluto, refresh por hit hostil, reconnect/restart logico enquanto valida e expiracao server-owned com limpeza duravel
+4. [concluido no slice minimo] classificacao de kill PvP versus PK no instante da morte
+5. [parcial] `pvp_kills`, `pk_count` e karma fixo persistentes; decay, recovery e penalidades economicas seguem futuras
+6. [concluido no hardening minimo] morte e respawn simples backend-owned com limpeza de target ofensivo, ataques queued/auto, loot approach, movement, flag e cooldown; perdas de XP/item e outras penalties seguem futuras
+7. [pendente] anti-feed, assist/attribution, protecao por level e automacao anti-grief
+8. [concluido no hardening minimo] cada hit/kill persiste `pvp_combat_events` atomicamente com actor/victim/action/skill/dano CP+HP/result/flag/counters/karma delta e metadata de comando; query interna read-only reutiliza token de audit
 
 Done:
 
 - PvP nao quebra PvE
-- PK tem consequencia
-- zonas protegem cidade
+- `select_target` de player nao causa dano nem habilita sucesso local
+- `basic_attack` e skill single-target contra player passam por lifecycle/dedup duravel e nao reaplicam side effects no replay
+- dano consome CP antes de HP; morte, classificacao, cooldown clear e respawn sao backend-owned
+- PK tem consequencia minima duravel por `pk_count + karma`; kill de alvo exposto ou karma-positive conta como PvP
+- policy de regiao desconhecida falha fechada e santuario logico de spawn bloqueia actor ou target com `pvp.safe_zone`; isso nao altera renderer, mapa, picking, geodata, bounds, spawn ou checkpoint
+- siege, olympiad, clan/alliance war, eventos, ranking, reward e penalidade economica complexa continuam fora
 
 ### Fase N - Instancias, siege e olympiad
 
@@ -1686,10 +1702,9 @@ Sempre escolher a maior prioridade que:
 
 Prioridade atual recomendada:
 
-1. smoke e hardening operacional do novo clan foundation em browser real, garantindo lifecycle estavel de create/invite/accept/decline/leave/kick/dissolve sem reabrir boundaries de authority
-2. PvP/PK
-3. instancias, siege, olympiad e producao
-4. automacao anti-abuse e operacao aprofundada sobre os audit trails ja existentes
+1. assist/attribution, anti-feed, karma recovery e alerting sobre o PvP/PK hardened, sem ampliar para guerras/eventos
+2. volumes ricos de safe/combat zone orientados por content apenas quando o contrato de mapa/geodata exigir; o santuario logico minimo atual permanece backend-only
+3. instancias, siege, olympiad e producao somente depois da base PvP/PK permanecer estavel
 
 Nao pular para siege/olympiad antes de:
 
@@ -2163,27 +2178,25 @@ Sistemas avancados como castle siege e olympiad podem ser considerados expansao 
 Use este prompt no outro chat executor:
 
 ```text
-Voce esta trabalhando dentro deste repositorio. Leia primeiro TRAE_SOLO_MASTER_PROMPT.md e trate-o como contrato operacional. Leia tambem docs/backlog/online-slice-now-next-later.md, docs/specs/server-terrain-geodata-pathfinding.md, docs/specs/hud-skills-and-hotbars.md, docs/specs/hud-inventory-and-classic-windows.md, docs/interface-architecture.md e skills/threejs-client-engineer/references/client-implementation-guidelines.md.
+Voce esta trabalhando dentro deste repositorio. Leia primeiro TRAE_SOLO_MASTER_PROMPT.md e trate-o como contrato operacional. Leia tambem docs/backlog/online-slice-now-next-later.md, docs/specs/pvp-pk.md, docs/specs/server-terrain-geodata-pathfinding.md, docs/specs/hud-skills-and-hotbars.md, docs/specs/hud-inventory-and-classic-windows.md, docs/interface-architecture.md e skills/threejs-client-engineer/references/client-implementation-guidelines.md.
 
 Antes de alterar qualquer arquivo, rode git status --short e inspecione o estado real do codigo com rg. Nao assuma que uma fase esta pendente so porque o texto antigo dizia isso; compare docs, testes e implementacao real.
 
 Estado atual que voce deve tratar como entregue, salvo evidencia contraria no codigo:
-- Fase L ja possui party canonica minima, social chat `region`/`party`/`whisper`, shared XP minimo e party-owned loot minimo em slices autoritativos.
+- Fase L ja possui party canonica minima, social chat `region`/`party`/`whisper`, shared XP minimo, party-owned loot minimo e clan foundation hardened em slices autoritativos.
+- Fase M ja possui o primeiro slice PvP/PK autoritativo hardened para ataque e skill single-target, CP antes de HP, deadline de flag persistido, safe-area minima backend-only, classificacao PvP versus PK, counters/karma duraveis, audit investigavel, morte/respawn backend-owned e replay duravel.
 - A regiao ativa atual usa `stonecross_plaza` apenas como id compativel, mas o mapa oficial foi resetado para uma area limpa 1024x1024 com `clean_plain_1024_geo_v1`, bounds `x=-512..512` e `z=-512..512`.
 - Renderer, ground raycast/picking plane, server geodata bounds, spawn/checkpoint, exits e testes precisam compartilhar esse mesmo contrato de mapa.
 - Nao reintroduza clamp hardcoded do mapa antigo, visual Stonecross, props/spawns antigos, blockers antigos, nem bounds antigos de `dawn_plaza`.
 
-Prioridade 1: harden o social core entregue e avancar para clan/alliance base.
-- Preserve toda autoridade de sessao, presence, party, chat, shared XP e party loot no backend.
-- Reuse o runtime, o known-set e a HUD classica sem fallback local que esconda falha de autoridade.
-- Nao aceite membership, reward split, target legality, presence truth, chat delivery ou loot ownership vindo do client.
-- Se tocar mapa, geodata, movement ou picking, atualize renderer/picking/backend/tests juntos.
-
-Prioridade 2: em seguida, avance para PvP/PK mantendo as mesmas fronteiras de autoridade.
+Prioridade 1: attribution/assist, anti-feed, karma recovery e alerting sobre o primeiro slice PvP/PK hardened, sem ampliar para guerras, siege, olympiad ou eventos.
 - Reuse runtime autoritativo, persistencia curta e HUD classica.
+- Preserve toda autoridade de sessao, presence, party, chat, clan, shared XP, party loot, elegibilidade PvP, dano, morte e consequencias no backend.
+- Nao aceite membership, reward split, target legality, presence truth, chat delivery ou loot ownership vindo do client.
+- O santuario PvP minimo atual e policy backend-only. Se uma proxima fatia exigir volumes de content ou tocar mapa, geodata, movement ou picking, atualize renderer/picking/backend/tests juntos; caso contrario, nao mexa no mapa.
 - Nao crie microservicos ou filas sem necessidade medida.
 
-Prioridade 3: depois disso, aprofunde operacao anti-abuse e correlacao sobre os audit trails existentes.
+Prioridade 2: depois disso, aprofunde karma recovery e penalidades simples somente com contrato explicito e testes de reconnect/replay.
 - Preserve known-set, command_seq, dedup, observabilidade e persistencia auditavel.
 
 Para cada fatia:

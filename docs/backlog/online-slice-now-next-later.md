@@ -88,10 +88,9 @@ Remaining work:
 
 The current execution priority should follow the master prompt and the real repository state:
 
-1. smoke and harden the new clan foundation on top of the hardened social core without reopening the canonical minimum party authority boundaries
-2. PvP, PK, and related legality or penalty rules only after clan presence remains stable
+1. harden the shipped first PvP/PK slice under concurrent multi-actor load; its durable exposure, minimum safe-area policy, death cleanup, and investigation audit are now complete
+2. deepen anti-feed, assist/attribution, karma recovery, alerting, and richer named-zone/content policy without pulling in broad war/event systems
 3. instances, siege, olympiad, and broader competitive systems only after PvP/PK and clan base remain stable
-4. deeper anti-abuse automation and live investigation ergonomics on top of the current audit surfaces
 
 ### Fase A - Consolidacao Imediata
 
@@ -167,12 +166,14 @@ Focus:
 - authoritative HUD skill book and hotbar projection
 - classic HUD skill-book and hotbar visuals with `32x32px` slots
 - authoritative `skill`, `item`, and `action` drag-to-hotbar persistence through `set_hotbar_state`
+- planned classic bottom-right quick access mini menu for Status, Inventory, Map, and System with `32x32px` icon buttons and classic confirmation modal behavior
 
 Status:
 
 - concluida para o slice online atual
 - `use_item` autoritativo agora cobre consumiveis no inventario e na hotbar
 - actions futuras alem de `basic_attack`/`pick_up_nearby` continuam como expansao separada
+- bottom-right quick access mini menu remains planned and not yet implemented
 
 ### Fase I - Inventario e economia ampliados
 
@@ -312,18 +313,30 @@ Status:
 - the first authoritative `clan` foundation is now online with `clans`, `clan_members`, and `clan_invites`, compact `self_state.clan` plus `clan_invites` hydration, and authoritative `create_clan`, `invite_clan_member`, `accept_clan_invite`, `decline_clan_invite`, `leave_clan`, `kick_clan_member`, and `dissolve_clan`
 - clan creation now immediately persists the founder as leader plus first member; the clan remains valid at one member, the leader cannot use `leave_clan` in this phase, and dissolve stays explicit and leader-only with no auto-transfer or manual transfer
 - clan invites now follow the same hardened minimum social semantics: current target only, 10-second TTL, one pending invite per invitee, one active outbound invite per clan or leader, and cancellation on inviter or invitee disconnect
+- player targeting for social actions is now backend-owned through `select_target`; `invite_clan_member` has a strict empty payload and cannot accept a client-authored recipient
+- clan accept now adds membership and consumes the invite atomically, while storage enforces one live outbound invite per clan and one live inbound invite per invitee
+- all seven clan commands now have deterministic identical replay coverage, conflicting replay rejection, actor-delta command correlation, and regression coverage for invalid target, expiry, disconnect, reconnect hydration, kick, and dissolve
+- a real two-character Docker Compose browser smoke now covers create, invite, accept, reconnect hydration, leave, decline, reaccept, kick, and dissolve without local success fallback
 - `world/enter.self_state.clan` and `self_state.clan_invites` now rehydrate compact clan truth without fake local success; runtime deltas and `clan_notice` remain lifecycle feedback rather than state authority
 - `ALT+N` now renders the minimum clan panel with `No Clan` plus `Create Clan` affordance when empty, compact roster when joined, leader-only `Invite`, `Kick`, and `Dissolve`, member-only `Leave`, and a dedicated non-draggable clan invite modal above the hotbar with countdown derived from authoritative `expires_at_ms`
 - alliance, siege, clan war expansion, clan chat, clan warehouse, clan skills, academy, subunits, rich crest UX, privileges, `/invite Nome`, command channel, round-robin, master loot, dice or distribution UI, clan or alliance reward sharing, party finder, matchmaking, offline mail, manual leader transfer, and advanced moderation remain intentionally out of scope for this slice
+- the first authoritative PvP/PK slice now reuses `basic_attack` and single-target `use_skill` for known players while preserving the existing mob/PvE path
+- player selection remains target state only; player damage additionally validates live attachment, same region, fail-closed region PvP policy, alive state, party, clan, range, learned skill, cooldown, and MP
+- player damage consumes CP before HP, applies death and simple respawn on the backend, and publishes no XP, loot, currency, or client-local success
+- successful hostile hits start or refresh a durable absolute 30-second PvP deadline; reconnect/logical restart preserve it while valid and authoritative expiry clears it without client fallback
+- `stonecross_plaza` and compatibility region `dawn_plaza` now have a server-only spawn sanctuary policy (`x=-12..-4`, `z=-4..4`); unknown regions fail closed, without changing map, renderer, picking, geodata, bounds, spawn, checkpoints, or assets
+- attacker and victim combat resources, exposure deadlines, PvP/PK counters, and detailed `pvp_combat_events` audit commit atomically before success; identical replay cannot reapply side effects or duplicate audit and conflicting replay remains explicit
+- player death clears offensive target, queued/automatic combat, queued loot approach, active movement, flag, and cooldown state; respawn restores a clean authoritative state
+- token-gated `GET /internal/pvp/events` provides read-only actor/victim/action/result/time investigation filters
+- frontend read-model and classic HUD project only authoritative flag, counters, karma, resources, and death; a two-session Docker smoke covers basic attack, reconnect with active flag, and single-target skill outside the sanctuary
+- AoE/chain PvP, auto-approach/repeat against players, pet/summon attribution, assists, anti-feed, richer named-zone/content volumes, karma recovery, economic penalties, wars, siege, olympiad, events, ranking, and rewards remain later slices
 
 ## Later
 
 After the online foundation becomes secure, replay-safe, and observable, the roadmap can continue into:
 
 - broader vendor and warehouse variants
-- smoke and harden the new clan foundation in real multi-actor browser validation
-- only after clan presence is stable, advance into PvP and PK legality
-- PvP and PK
+- PvP/PK expansion beyond the hardened single-target slice: assists/attribution, anti-feed, karma recovery, economic/death penalties, alerting, and richer named-zone/content policy
 - deeper anti-abuse automation, correlation, and alerting on top of the current audit queries
 - instances and competitive endgame systems
 
