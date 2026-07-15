@@ -89,11 +89,19 @@ export const getVendorSellValue = (
   switch (templateId) {
     case 'ironwood_spear':
       return { currencyTemplateId: 'duskgold', amount: 4 };
+    case 'novice_oak_staff':
+      return { currencyTemplateId: 'duskgold', amount: 4 };
     case 'wardkeeper_mantle':
+      return { currencyTemplateId: 'duskgold', amount: 3 };
+    case 'moonthread_robe':
       return { currencyTemplateId: 'duskgold', amount: 3 };
     case 'watcher_gloves':
       return { currencyTemplateId: 'duskgold', amount: 2 };
+    case 'runesewn_gloves':
+      return { currencyTemplateId: 'duskgold', amount: 2 };
     case 'pathrunner_boots':
+      return { currencyTemplateId: 'duskgold', amount: 2 };
+    case 'whisperstep_boots':
       return { currencyTemplateId: 'duskgold', amount: 2 };
     case 'ruinbound_greaves':
       return { currencyTemplateId: 'duskgold', amount: 4 };
@@ -164,6 +172,15 @@ const passiveSkillBonuses = (state: GameState): DerivedStats => {
       case 'arcane_focus':
         bonuses.maxMp += 12;
         bonuses.attack += 2;
+        break;
+      case 'keen_senses':
+        bonuses.attack += 2;
+        bonuses.moveSpeed += 0.2;
+        break;
+      case 'grave_resolve':
+        bonuses.maxCp += 6;
+        bonuses.maxMp += 8;
+        bonuses.defense += 1;
         break;
       default:
         break;
@@ -636,10 +653,32 @@ const applySelectTarget = (state: GameState, targetId: string | null): void => {
       state.player.queuedBasicAttackTargetId = null;
     }
     pushLog(state, `${gameTemplates.mobTemplates[mob.templateId].name} is now your target.`, 'neutral');
-  } else {
+    return;
+  }
+
+  const otherPlayer = targetId ? state.otherPlayers[targetId] : null;
+  if (otherPlayer) {
+    state.targetId = otherPlayer.id;
     state.player.queuedSkill = null;
     state.player.queuedBasicAttackTargetId = null;
+    pushLog(state, `${otherPlayer.name} is now your target.`, 'neutral');
+    return;
   }
+
+  state.player.queuedSkill = null;
+  state.player.queuedBasicAttackTargetId = null;
+};
+
+const applyClearTarget = (state: GameState): void => {
+  state.targetId = null;
+  state.player.cast = null;
+  state.player.queuedSkill = null;
+  state.player.queuedBasicAttackTargetId = null;
+  state.player.queuedLootId = null;
+  state.player.moveTarget = null;
+  state.pendingPath = [];
+  state.authoritativePath = [];
+  state.destinationMarker = null;
 };
 
 const beginSkillCast = (state: GameState, skill: SkillTemplate, target: MobState): boolean => {
@@ -1344,22 +1383,12 @@ export const getWarehouseItems = (state: GameState): ItemInstance[] =>
       return leftTemplate.name.localeCompare(rightTemplate.name);
     });
 
-export const getRegionIdForPoint = (point: Vec2): RegionId => {
-  if (point.x < 18) {
-    return 'dawn_plaza';
-  }
-  if (point.x < 32) {
-    return 'gate_road';
-  }
-  if (point.x < 70) {
-    return 'gloam_field';
-  }
-  return 'ruin_hollow';
-};
+export const getRegionIdForPoint = (_point: Vec2): RegionId => 'stonecross_plaza';
 
 export const regionLabels: Record<RegionId, string> = {
-  dawn_plaza: 'Dawn Plaza',
-  gate_road: 'Gate Road',
+	stonecross_plaza: 'Clean Prototype',
+	dawn_plaza: 'Clean Prototype',
+	gate_road: 'Gate Road',
   gloam_field: 'Gloam Field',
   ruin_hollow: 'Ruin Hollow',
 };
@@ -1500,6 +1529,9 @@ export class GameStore {
         break;
       case 'selectTarget':
         applySelectTarget(this.state, command.targetId);
+        break;
+      case 'clearTarget':
+        applyClearTarget(this.state);
         break;
       case 'useSkill':
         applyUseSkill(this.state, command.skillId);
@@ -1644,7 +1676,7 @@ export class GameStore {
       }
 
       const playerDistance = distance(mob.position, state.player.position);
-      if (playerDistance <= template.aggroRadius || mob.aiState === 'aggro') {
+      if (mob.personality === 'aggressive' && playerDistance <= template.aggroRadius) {
         mob.aiState = 'aggro';
       }
 

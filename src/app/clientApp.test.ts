@@ -147,6 +147,49 @@ const installFakeDom = (): FakeElement => {
 };
 
 describe('ClientApp', () => {
+  it('renders character creation with default catalog-backed choices and only gates submit on name input', () => {
+    const app = Object.assign(Object.create(ClientApp.prototype), {
+      state: {
+        ...initialPreGameContext(),
+        phase: 'character_create',
+        catalog: {
+          races: [
+            {
+              race: 'Human',
+              enabled: true,
+              base_classes: ['Fighter', 'Mage'],
+              sex_options: ['Male', 'Female'],
+              appearance_options: {
+                hair_styles: [0, 1, 2],
+                hair_color_default: '#6b4e37',
+                skin_types: [0, 1, 2],
+              },
+            },
+          ],
+        },
+      },
+      createNameDraft: '',
+    }) as any;
+
+    const lockedHtml = app.renderCharacterCreationScreen('');
+    expect(lockedHtml).toContain('name="race" value="Human"');
+    expect(lockedHtml).toContain('name="base_class" value="Fighter"');
+    expect(lockedHtml).toContain('name="sex" value="Male"');
+    expect(lockedHtml).toContain('name="hair_style" value="0"');
+    expect(lockedHtml).toContain('name="hair_color" value="#6b4e37"');
+    expect(lockedHtml).toContain('name="skin_type" value="0"');
+    expect(lockedHtml).toContain('Hair Color');
+    expect(lockedHtml).toContain('type="color"');
+    expect(lockedHtml).toContain('Skin Type');
+    const lockedSubmit = lockedHtml.match(/<button class="game-menu-button" type="submit"[^>]*>Create Character<\/button>/)?.[0];
+    expect(lockedSubmit).toContain('disabled');
+
+    app.createNameDraft = 'A';
+    const readyHtml = app.renderCharacterCreationScreen('');
+    const readySubmit = readyHtml.match(/<button class="game-menu-button" type="submit"[^>]*>Create Character<\/button>/)?.[0];
+    expect(readySubmit).not.toContain('disabled');
+  });
+
   it('resets online flow from the runtime status bar button', () => {
     const body = installFakeDom();
     const host = new FakeElement('div');
@@ -185,5 +228,72 @@ describe('ClientApp', () => {
       runtimeMounted: false,
       onlineState: null,
     });
+  });
+
+  it('routes /invite and /leave through authoritative party commands instead of chat transport', () => {
+    const sentCommands: Array<{ type: string }> = [];
+    const app = Object.assign(Object.create(ClientApp.prototype), {
+      onlineReadModel: {
+        createPartySlashCommand: (text: string) => {
+          if (text === '/invite') {
+            return { type: 'invite_party_member' };
+          }
+          if (text === '/leave') {
+            return { type: 'leave_party' };
+          }
+          return undefined;
+        },
+        createSendChatMessage: () => ({ type: 'send_chat_message' }),
+      },
+      sessionClient: {
+        sendCommand: (command: { type: string }) => {
+          sentCommands.push(command);
+        },
+      },
+      renderStatus: () => {},
+      refreshOnlineRuntime: () => {},
+    }) as any;
+
+    expect(app.sendChatMessage('region', '/invite')).toBe(true);
+    expect(app.sendChatMessage('region', '/leave')).toBe(true);
+    expect(app.sendChatMessage('region', 'hello world')).toBe(true);
+
+    expect(sentCommands.map((command) => command.type)).toEqual([
+      'invite_party_member',
+      'leave_party',
+      'send_chat_message',
+    ]);
+  });
+
+  it('treats player target selection as a local projection in online mode while keeping mob targets authoritative', () => {
+    const app = Object.assign(Object.create(ClientApp.prototype), {
+      onlineReadModel: {
+        snapshot: {
+          otherPlayers: {
+            char_other: {
+              id: 'char_other',
+              name: 'Selene',
+            },
+          },
+        },
+        selectProjectedPlayerTarget: (targetId: string) => {
+          expect(targetId).toBe('char_other');
+        },
+        createSelectTarget: (targetId: string) => ({ type: 'select_target', payload: { target_id: targetId } }),
+      },
+      sessionClient: {
+        sendCommand: (command: { type: string; payload: { target_id: string } }) => {
+          sentCommands.push(command);
+        },
+      },
+      renderStatus: () => {},
+      refreshOnlineRuntime: () => {},
+    }) as any;
+    const sentCommands: Array<{ type: string; payload: { target_id: string } }> = [];
+
+    app.sendSelectTarget('char_other');
+    app.sendSelectTarget('mob_1');
+
+    expect(sentCommands).toEqual([{ type: 'select_target', payload: { target_id: 'mob_1' } }]);
   });
 });

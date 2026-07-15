@@ -33,16 +33,19 @@ export const HOTBAR_MAX_OPEN_BARS = 3;
 const isHotbarActionId = (value: unknown): value is HotbarActionId =>
   value === 'basic_attack' ||
   value === 'pick_up_nearby' ||
+  value === 'party_invite' ||
+  value === 'party_leave' ||
   value === 'tame_target' ||
   value === 'summon_pet' ||
   value === 'dismiss_pet' ||
   value === 'mount_pet' ||
-  value === 'dismount_pet';
+  value === 'dismount_pet' ||
+  value === 'toggle_walk_run';
 
 const classContent: Record<BaseClass, ClassContent> = {
   Fighter: {
     archetypeId: 'dusk_vanguard',
-    defaultHotbarSkills: ['crescent_strike', 'grave_bloom'],
+    defaultHotbarSkills: ['crescent_strike'],
     learnedSkills: [
       { skillId: 'crescent_strike', category: 'active', unlockLevel: 1 },
       { skillId: 'iron_will', category: 'passive', unlockLevel: 1 },
@@ -51,7 +54,7 @@ const classContent: Record<BaseClass, ClassContent> = {
   },
   Mage: {
     archetypeId: 'ashen_oracle',
-    defaultHotbarSkills: ['ember_shot', 'astral_burst'],
+    defaultHotbarSkills: ['ember_shot'],
     learnedSkills: [
       { skillId: 'ember_shot', category: 'active', unlockLevel: 1 },
       { skillId: 'arcane_focus', category: 'passive', unlockLevel: 1 },
@@ -215,9 +218,10 @@ const createItemInstance = (
   instanceAttributes,
 });
 
-const createMob = (id: string, templateId: string, x: number, z: number, maxHp: number): MobState => ({
+export const createMob = (id: string, templateId: string, x: number, z: number, maxHp: number): MobState => ({
   id,
   templateId,
+  personality: gameTemplates.mobTemplates[templateId].personality,
   position: { x, z },
   spawnPoint: { x, z },
   hp: maxHp,
@@ -226,7 +230,7 @@ const createMob = (id: string, templateId: string, x: number, z: number, maxHp: 
   respawnAtMs: null,
 });
 
-const createNpc = (id: string, name: string, title: string, x: number, z: number): NpcState => ({
+export const createNpc = (id: string, name: string, title: string, x: number, z: number): NpcState => ({
   id,
   name,
   title,
@@ -253,7 +257,7 @@ export const gameTemplates: GameTemplates = {
       baseMp: 58,
       baseAttack: 17,
       baseDefense: 9,
-      baseMoveSpeed: 8.6,
+      baseMoveSpeed: 3.225,
       cpGrowth: 12,
       hpGrowth: 18,
       mpGrowth: 7,
@@ -269,10 +273,42 @@ export const gameTemplates: GameTemplates = {
       baseMp: 92,
       baseAttack: 13,
       baseDefense: 6,
-      baseMoveSpeed: 8.2,
+      baseMoveSpeed: 3.075,
       cpGrowth: 9,
       hpGrowth: 18,
       mpGrowth: 7,
+      attackGrowth: 4,
+      defenseGrowth: 2,
+    },
+    wild_stalker: {
+      id: 'wild_stalker',
+      name: 'Wild Stalker',
+      title: 'Roadside Tracker',
+      baseCp: 68,
+      baseHp: 108,
+      baseMp: 68,
+      baseAttack: 16,
+      baseDefense: 7,
+      baseMoveSpeed: 3.3,
+      cpGrowth: 10,
+      hpGrowth: 16,
+      mpGrowth: 10,
+      attackGrowth: 4,
+      defenseGrowth: 2,
+    },
+    void_reaver: {
+      id: 'void_reaver',
+      name: 'Void Reaver',
+      title: 'Gravetide Adept',
+      baseCp: 72,
+      baseHp: 112,
+      baseMp: 78,
+      baseAttack: 15,
+      baseDefense: 8,
+      baseMoveSpeed: 3.15,
+      cpGrowth: 11,
+      hpGrowth: 17,
+      mpGrowth: 13,
       attackGrowth: 4,
       defenseGrowth: 2,
     },
@@ -413,6 +449,22 @@ export const gameTemplates: GameTemplates = {
         tint: '#cbb98d',
       },
     },
+    novice_oak_staff: {
+      id: 'novice_oak_staff',
+      name: 'Novice Oak Staff',
+      description: 'A plain focus staff carved for first-circle mystics.',
+      kind: 'weapon',
+      stackable: false,
+      equipSlot: 'weapon',
+      statBonuses: {
+        maxMp: 14,
+        attack: 8,
+      },
+      appearance: {
+        weaponModel: 'staff',
+        tint: '#8cc3df',
+      },
+    },
     wardkeeper_mantle: {
       id: 'wardkeeper_mantle',
       name: 'Wardkeeper Mantle',
@@ -427,6 +479,22 @@ export const gameTemplates: GameTemplates = {
       appearance: {
         chestModel: 'mantle',
         tint: '#5f8ccf',
+      },
+    },
+    moonthread_robe: {
+      id: 'moonthread_robe',
+      name: 'Moonthread Robe',
+      description: 'A light robe sewn with pale thread to steady novice casting.',
+      kind: 'armor',
+      stackable: false,
+      equipSlot: 'chest',
+      statBonuses: {
+        maxMp: 22,
+        defense: 4,
+      },
+      appearance: {
+        chestModel: 'robe',
+        tint: '#596b9d',
       },
     },
     watcher_gloves: {
@@ -444,6 +512,21 @@ export const gameTemplates: GameTemplates = {
         tint: '#8d7a61',
       },
     },
+    runesewn_gloves: {
+      id: 'runesewn_gloves',
+      name: 'Runesewn Gloves',
+      description: 'Soft gloves stitched with tiny focus marks for novice channeling.',
+      kind: 'armor',
+      stackable: false,
+      equipSlot: 'gloves',
+      statBonuses: {
+        maxMp: 8,
+        attack: 3,
+      },
+      appearance: {
+        tint: '#6578af',
+      },
+    },
     pathrunner_boots: {
       id: 'pathrunner_boots',
       name: 'Pathrunner Boots',
@@ -453,10 +536,25 @@ export const gameTemplates: GameTemplates = {
       equipSlot: 'boots',
       statBonuses: {
         defense: 1,
-        moveSpeed: 0.4,
+        moveSpeed: 0.15,
       },
       appearance: {
         tint: '#6f8d63',
+      },
+    },
+    whisperstep_boots: {
+      id: 'whisperstep_boots',
+      name: 'Whisperstep Boots',
+      description: 'Quiet mystic boots made for keeping spell distance without heavy plates.',
+      kind: 'armor',
+      stackable: false,
+      equipSlot: 'boots',
+      statBonuses: {
+        defense: 1,
+        moveSpeed: 0.13,
+      },
+      appearance: {
+        tint: '#556f91',
       },
     },
     ruin_shard: {
@@ -475,7 +573,7 @@ export const gameTemplates: GameTemplates = {
       equipSlot: 'boots',
       statBonuses: {
         defense: 2,
-        moveSpeed: 0.6,
+        moveSpeed: 0.225,
       },
       appearance: {
         tint: '#6a8191',
@@ -486,11 +584,13 @@ export const gameTemplates: GameTemplates = {
     mireling: {
       id: 'mireling',
       name: 'Mireling',
+      level: 3,
+      personality: 'passive',
       tint: '#8e6f8f',
       maxHp: 54,
       attack: 8,
       defense: 3,
-      moveSpeed: 5.4,
+      moveSpeed: 4.05,
       aggroRadius: 8.5,
       attackRange: 2.1,
       attackIntervalMs: 1400,
@@ -500,17 +600,83 @@ export const gameTemplates: GameTemplates = {
     ruin_stalker: {
       id: 'ruin_stalker',
       name: 'Ruin Stalker',
+      level: 12,
+      personality: 'aggressive',
       tint: '#c45a4c',
       maxHp: 84,
       attack: 12,
       defense: 5,
-      moveSpeed: 6.2,
+      moveSpeed: 4.65,
       aggroRadius: 10.5,
       attackRange: 2.4,
       attackIntervalMs: 1250,
       xpReward: 34,
       currencyDrop: 6,
       guaranteedEquipmentTemplateId: 'ironwood_spear',
+    },
+    gloom_wisp: {
+      id: 'gloom_wisp',
+      name: 'Gloom Wisp',
+      level: 8,
+      personality: 'aggressive',
+      tint: '#6b89b8',
+      maxHp: 68,
+      attack: 10,
+      defense: 4,
+      moveSpeed: 4.35,
+      aggroRadius: 9.5,
+      attackRange: 2.2,
+      attackIntervalMs: 1320,
+      xpReward: 28,
+      currencyDrop: 5,
+    },
+    stonebound_raider: {
+      id: 'stonebound_raider',
+      name: 'Stonebound Raider',
+      level: 20,
+      personality: 'aggressive',
+      tint: '#a77b56',
+      maxHp: 96,
+      attack: 15,
+      defense: 7,
+      moveSpeed: 4.43,
+      aggroRadius: 11,
+      attackRange: 2.4,
+      attackIntervalMs: 1200,
+      xpReward: 48,
+      currencyDrop: 8,
+    },
+    ashen_howler: {
+      id: 'ashen_howler',
+      name: 'Ashen Howler',
+      level: 33,
+      personality: 'aggressive',
+      tint: '#6c6f77',
+      maxHp: 132,
+      attack: 21,
+      defense: 10,
+      moveSpeed: 4.95,
+      aggroRadius: 12,
+      attackRange: 2.5,
+      attackIntervalMs: 1120,
+      xpReward: 76,
+      currencyDrop: 12,
+    },
+    gravewarden: {
+      id: 'gravewarden',
+      name: 'Gravewarden',
+      level: 39,
+      personality: 'aggressive',
+      tint: '#43524d',
+      maxHp: 176,
+      attack: 28,
+      defense: 14,
+      moveSpeed: 3.9,
+      aggroRadius: 13,
+      attackRange: 2.8,
+      attackIntervalMs: 1050,
+      xpReward: 112,
+      currencyDrop: 18,
     },
   },
   vendorOffers: {
@@ -521,6 +687,22 @@ export const gameTemplates: GameTemplates = {
       quantity: 1,
       priceCurrencyTemplateId: 'duskgold',
       priceAmount: 8,
+    },
+    merchant_staff_offer: {
+      id: 'merchant_staff_offer',
+      npcId: 'npc_merchant',
+      templateId: 'novice_oak_staff',
+      quantity: 1,
+      priceCurrencyTemplateId: 'duskgold',
+      priceAmount: 8,
+    },
+    merchant_robe_offer: {
+      id: 'merchant_robe_offer',
+      npcId: 'npc_merchant',
+      templateId: 'moonthread_robe',
+      quantity: 1,
+      priceCurrencyTemplateId: 'duskgold',
+      priceAmount: 10,
     },
     merchant_ruin_shard_bundle: {
       id: 'merchant_ruin_shard_bundle',
@@ -544,6 +726,14 @@ export const gameTemplates: GameTemplates = {
       id: 'merchant_ruinbound_greaves_exchange',
       npcId: 'npc_merchant',
       templateId: 'ruinbound_greaves',
+      quantity: 1,
+      costTemplateId: 'ruin_shard',
+      costAmount: 6,
+    },
+    merchant_whisperstep_boots_exchange: {
+      id: 'merchant_whisperstep_boots_exchange',
+      npcId: 'npc_merchant',
+      templateId: 'whisperstep_boots',
       quantity: 1,
       costTemplateId: 'ruin_shard',
       costAmount: 6,
@@ -578,8 +768,8 @@ export const createInitialState = (): GameState => {
       baseClass,
       sex: 'Male',
       hairStyle: 0,
-      hairColor: 0,
-      face: 0,
+      hairColor: '#6b4e37',
+      skinType: 0,
       archetypeId: getArchetypeIdForBaseClass(baseClass),
       level,
       xp: 0,
@@ -606,31 +796,19 @@ export const createInitialState = (): GameState => {
     },
     otherPlayers: {},
     companions: {},
-    mobs: {
-      mob_1: createMob('mob_1', 'mireling', 34, 10, gameTemplates.mobTemplates.mireling.maxHp),
-      mob_2: createMob('mob_2', 'mireling', 42, -7, gameTemplates.mobTemplates.mireling.maxHp),
-      mob_3: createMob('mob_3', 'mireling', 49, 13, gameTemplates.mobTemplates.mireling.maxHp),
-      mob_4: createMob('mob_4', 'mireling', 56, -12, gameTemplates.mobTemplates.mireling.maxHp),
-      mob_5: createMob('mob_5', 'ruin_stalker', 77, -4, gameTemplates.mobTemplates.ruin_stalker.maxHp),
-      mob_6: createMob('mob_6', 'ruin_stalker', 87, 9, gameTemplates.mobTemplates.ruin_stalker.maxHp),
-    },
+    mobs: {},
     loot: {},
     items,
-    npcs: {
-      npc_wardkeeper: createNpc('npc_wardkeeper', 'Selka', 'Wardkeeper of the Plaza', -2, 10),
-      npc_merchant: createNpc('npc_merchant', 'Ilya', 'Provisioner of the Plaza', -10, 8),
-      npc_warehouse_keeper: createNpc('npc_warehouse_keeper', 'Rhea', 'Vaultkeeper of the Plaza', -13, 4),
-    },
+    npcs: {},
     quest: createQuest(),
     dialog: null,
     party: null,
     partyInvites: [],
+    clan: null,
+    clanInvites: [],
     incomingTradeOffer: null,
     outgoingTradeOffer: null,
-    logs: [
-      { id: 'log_1', text: 'You arrive in Dawn Plaza. Cross the gate road to find prey.', tone: 'neutral' },
-      { id: 'log_2', text: 'Click terrain to move. Use the hotbar for learned skills and press ALT+K for the skill book.', tone: 'neutral' },
-    ],
+    logs: [{ id: 'log_1', text: 'You arrive in a clean 1024x1024 prototype region.', tone: 'neutral' }],
     floatingTexts: [],
     equipmentAwardsGranted: [],
     lastAutoSaveAtMs: 0,

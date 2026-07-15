@@ -2,20 +2,25 @@ import {
   getLearnedSkillsForCharacter,
   normalizeHotbarState,
 } from '../game/data/templates';
+import { isCanonicalBaseClass } from '../game/data/characterClasses';
 import type {
   BaseClass,
+  ClanState,
   DerivedStats,
   GameState,
   HotbarActionId,
   ItemInstance,
   OwnedPetState,
   PartyState,
+  PendingClanInviteState,
   PendingPartyInviteState,
   PlayerHotbarSlot,
   PlayerHotbarState,
   PlayerKnownSkill,
 } from '../game/domain/types';
 import type {
+  ClanInviteSnapshot,
+  ClanSnapshot,
   CharacterItemRecord,
   CharacterItemSnapshot,
   HotbarSlotSnapshot,
@@ -38,13 +43,16 @@ export type OnlineNpcInteraction = {
 const isHotbarActionId = (value: unknown): value is HotbarActionId =>
   value === 'basic_attack' ||
   value === 'pick_up_nearby' ||
+  value === 'party_invite' ||
+  value === 'party_leave' ||
   value === 'tame_target' ||
   value === 'summon_pet' ||
   value === 'dismiss_pet' ||
   value === 'mount_pet' ||
-  value === 'dismount_pet';
+  value === 'dismount_pet' ||
+  value === 'toggle_walk_run';
 
-const isBaseClass = (value: unknown): value is BaseClass => value === 'Fighter' || value === 'Mage';
+const isBaseClass = isCanonicalBaseClass;
 
 export const toItemInstanceAttributes = (
   item: CharacterItemRecord,
@@ -426,6 +434,100 @@ export const parsePartyInvites = (value: unknown): PendingPartyInviteState[] => 
 export const clonePartyInvites = (
   invites: PendingPartyInviteState[],
 ): PendingPartyInviteState[] => invites.map((invite) => ({ ...invite }));
+
+export const parseClanSnapshot = (value: unknown): ClanState | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const candidate = value as ClanSnapshot;
+  if (
+    typeof candidate.clan_id !== 'string' ||
+    typeof candidate.name !== 'string' ||
+    typeof candidate.leader_character_id !== 'string' ||
+    !Array.isArray(candidate.members)
+  ) {
+    return null;
+  }
+
+  const members = candidate.members
+    .map((member) => {
+      if (
+        !member ||
+        typeof member.character_id !== 'string' ||
+        typeof member.name !== 'string' ||
+        typeof member.level !== 'number' ||
+        !isBaseClass(member.base_class) ||
+        typeof member.online !== 'boolean' ||
+        typeof member.is_leader !== 'boolean'
+      ) {
+        return null;
+      }
+      return {
+        characterId: member.character_id,
+        name: member.name,
+        level: member.level,
+        baseClass: member.base_class,
+        online: member.online,
+        isLeader: member.is_leader,
+      } satisfies NonNullable<ClanState['members']>[number];
+    })
+    .filter(
+      (member): member is NonNullable<ClanState['members']>[number] => member !== null,
+    );
+
+  return {
+    clanId: candidate.clan_id,
+    name: candidate.name,
+    leaderCharacterId: candidate.leader_character_id,
+    members,
+  };
+};
+
+export const cloneClanState = (clan: ClanState | null): ClanState | null =>
+  clan
+    ? {
+        clanId: clan.clanId,
+        name: clan.name,
+        leaderCharacterId: clan.leaderCharacterId,
+        members: clan.members.map((member) => ({ ...member })),
+      }
+    : null;
+
+export const parseClanInvites = (value: unknown): PendingClanInviteState[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+      const candidate = entry as ClanInviteSnapshot;
+      if (
+        typeof candidate.invite_id !== 'string' ||
+        typeof candidate.clan_id !== 'string' ||
+        typeof candidate.clan_name !== 'string' ||
+        typeof candidate.inviter_character_id !== 'string' ||
+        typeof candidate.inviter_name !== 'string' ||
+        typeof candidate.expires_at_ms !== 'number'
+      ) {
+        return null;
+      }
+      return {
+        inviteId: candidate.invite_id,
+        clanId: candidate.clan_id,
+        clanName: candidate.clan_name,
+        inviterCharacterId: candidate.inviter_character_id,
+        inviterName: candidate.inviter_name,
+        expiresAtMs: candidate.expires_at_ms,
+      } satisfies PendingClanInviteState;
+    })
+    .filter((invite): invite is PendingClanInviteState => invite !== null);
+};
+
+export const cloneClanInvites = (
+  invites: PendingClanInviteState[],
+): PendingClanInviteState[] => invites.map((invite) => ({ ...invite }));
 
 export const parseAuthoritativePath = (
   value: unknown,

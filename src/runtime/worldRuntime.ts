@@ -5,6 +5,7 @@ import {
   getLearnedSkillsForCharacter,
   normalizeHotbarState,
 } from '../game/data/templates';
+import { isCanonicalBaseClass } from '../game/data/characterClasses';
 import { GameStore } from '../game/domain/game';
 import type {
   AppearanceOptionIndex,
@@ -35,6 +36,7 @@ declare global {
 }
 
 type RuntimeMode = 'local' | 'online_authoritative';
+type MovementVisualMode = 'run' | 'walk';
 
 const HOTBAR_KEY_BINDINGS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '='];
 const CHARACTER_PANEL_KEY_BINDINGS: Record<string, CharacterPanelId> = {
@@ -50,6 +52,7 @@ type WorldRuntimeOptions = {
   initialState: GameState;
   onMoveIntent?: (point: { x: number; z: number }) => void;
   onSelectTarget?: (targetId: string) => void;
+  onClearTarget?: () => void;
   onInteractNpc?: (npcId: string, actionId?: 'accept_task' | 'turn_in_task') => void;
   onCloseDialog?: () => void;
   onUseSkill?: (skillId: string) => void;
@@ -65,11 +68,18 @@ type WorldRuntimeOptions = {
   onOfferTradeItem?: (targetCharacterId: string, itemId: string, quantity: number) => void;
   onAcceptTradeOffer?: (offerId: string) => void;
   onDeclineTradeOffer?: (offerId: string) => void;
-  onInvitePartyMember?: (targetCharacterId: string) => void;
+  onInvitePartyMember?: (targetCharacterId?: string) => void;
   onAcceptPartyInvite?: (inviteId: string) => void;
   onDeclinePartyInvite?: (inviteId: string) => void;
   onLeaveParty?: () => void;
   onKickPartyMember?: (targetCharacterId: string) => void;
+  onCreateClan?: (name: string) => void;
+  onInviteClanMember?: () => void;
+  onAcceptClanInvite?: (inviteId: string) => void;
+  onDeclineClanInvite?: (inviteId: string) => void;
+  onLeaveClan?: () => void;
+  onKickClanMember?: (targetCharacterId: string) => void;
+  onDissolveClan?: () => void;
   onSellVendorItem?: (itemId: string, quantity: number) => void;
   onDepositWarehouseItem?: (itemId: string, quantity: number) => void;
   onWithdrawWarehouseItem?: (itemId: string, quantity: number) => void;
@@ -101,7 +111,7 @@ const CHARACTER_RACES: readonly CharacterRace[] = ['Human', 'Elf', 'Dark Elf', '
 const CHARACTER_SEXES: readonly CharacterSex[] = ['Male', 'Female'];
 
 const requireBaseClass = (value: unknown, field: string): BaseClass => {
-  if (value === 'Fighter' || value === 'Mage') {
+  if (isCanonicalBaseClass(value)) {
     return value;
   }
   throw new Error(`Missing canonical ${field}.`);
@@ -128,6 +138,13 @@ const requireAppearanceIndex = (value: unknown, field: string): AppearanceOption
   throw new Error(`Missing canonical ${field}.`);
 };
 
+const requireHairColor = (value: unknown, field: string): string => {
+  if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) {
+    return value.toLowerCase();
+  }
+  throw new Error(`Missing canonical ${field}.`);
+};
+
 const createOtherPlayerState = (
   entity: RegionContextMessage['known_entities'][number],
 ): OtherPlayerState => {
@@ -137,8 +154,8 @@ const createOtherPlayerState = (
     race: requireRace(entity.state.race, 'other player race'),
     sex: requireSex(entity.state.sex, 'other player sex'),
     hairStyle: requireAppearanceIndex(entity.state.hair_style, 'other player hair_style'),
-    hairColor: requireAppearanceIndex(entity.state.hair_color, 'other player hair_color'),
-    face: requireAppearanceIndex(entity.state.face, 'other player face'),
+    hairColor: requireHairColor(entity.state.hair_color, 'other player hair_color'),
+    skinType: requireAppearanceIndex(entity.state.skin_type, 'other player skin_type'),
     id: entity.entity_id,
     name: typeof entity.state.name === 'string' ? entity.state.name : entity.entity_id,
     archetypeId: getArchetypeIdForBaseClass(baseClass),
@@ -166,8 +183,8 @@ const createOnlineBootstrapState = (
   state.player.baseClass = baseClass;
   state.player.sex = character.sex;
   state.player.hairStyle = requireAppearanceIndex(character.hair_style, 'character hair_style');
-  state.player.hairColor = requireAppearanceIndex(character.hair_color, 'character hair_color');
-  state.player.face = requireAppearanceIndex(character.face, 'character face');
+  state.player.hairColor = requireHairColor(character.hair_color, 'character hair_color');
+  state.player.skinType = requireAppearanceIndex(character.skin_type, 'character skin_type');
   state.player.archetypeId = getArchetypeIdForBaseClass(baseClass);
   state.player.level = character.level;
   state.player.learnedSkills = getLearnedSkillsForCharacter(baseClass, state.player.level);
@@ -220,10 +237,11 @@ const createOnlineBootstrapState = (
       state.mobs[entity.entity_id] = {
         id: entity.entity_id,
         templateId: entity.template_id,
+        personality: entity.state.personality === 'aggressive' ? 'aggressive' : 'passive',
         position: { ...entity.position },
         spawnPoint: { ...entity.position },
         hp,
-        aiState: entity.state.alive === false ? 'dead' : 'idle',
+        aiState: entity.state.alive === false ? 'dead' : entity.state.ai_state === 'aggro' ? 'aggro' : 'idle',
         attackCooldownMs: 0,
         respawnAtMs: null,
       } satisfies MobState;
@@ -253,6 +271,8 @@ export class WorldRuntime {
   private readonly scene: Scene3D;
   private readonly hud: Hud;
   private readonly mode: RuntimeMode;
+  private readonly onSelectTarget?: (targetId: string) => void;
+  private readonly onClearTarget?: () => void;
   private readonly onInteractNpc?: (npcId: string, actionId?: 'accept_task' | 'turn_in_task') => void;
   private readonly onCloseDialog?: () => void;
   private readonly onUseSkill?: (skillId: string) => void;
@@ -262,12 +282,15 @@ export class WorldRuntime {
   private readonly stateProvider?: () => GameState;
   private frameHandle = 0;
   private lastFrame = performance.now();
+  private movementVisualMode: MovementVisualMode = 'run';
   private readonly handleKeyDownBound = this.handleKeyDown.bind(this);
   private readonly handleBeforeUnloadBound = this.handleBeforeUnload.bind(this);
   private readonly handleContextMenuBound = this.handleContextMenu.bind(this);
 
   constructor(container: HTMLElement, options: WorldRuntimeOptions) {
     this.mode = options.mode;
+    this.onSelectTarget = options.onSelectTarget;
+    this.onClearTarget = options.onClearTarget;
     this.onInteractNpc = options.onInteractNpc;
     this.onCloseDialog = options.onCloseDialog;
     this.onUseSkill = options.onUseSkill;
@@ -287,6 +310,7 @@ export class WorldRuntime {
       onInteractNpc: options.onInteractNpc,
       onPickUpLoot: options.onPickUpLoot,
     });
+    this.scene.setMovementVisualMode(this.movementVisualMode);
     this.hud = new Hud(
       this.shell,
       this.store,
@@ -328,6 +352,13 @@ export class WorldRuntime {
         onDeclinePartyInvite: options.onDeclinePartyInvite,
         onLeaveParty: options.onLeaveParty,
         onKickPartyMember: options.onKickPartyMember,
+        onCreateClan: options.onCreateClan,
+        onInviteClanMember: options.onInviteClanMember,
+        onAcceptClanInvite: options.onAcceptClanInvite,
+        onDeclineClanInvite: options.onDeclineClanInvite,
+        onLeaveClan: options.onLeaveClan,
+        onKickClanMember: options.onKickClanMember,
+        onDissolveClan: options.onDissolveClan,
         onSellVendorItem: options.onSellVendorItem,
         onDepositWarehouseItem: options.onDepositWarehouseItem,
         onWithdrawWarehouseItem: options.onWithdrawWarehouseItem,
@@ -379,6 +410,7 @@ export class WorldRuntime {
     handlers: {
       onMoveIntent: (point: { x: number; z: number }) => void;
       onSelectTarget: (targetId: string) => void;
+      onClearTarget: () => void;
       onInteractNpc: (npcId: string, actionId?: 'accept_task' | 'turn_in_task') => void;
       onCloseDialog: () => void;
       onUseSkill: (skillId: string) => void;
@@ -394,11 +426,18 @@ export class WorldRuntime {
       onOfferTradeItem: (targetCharacterId: string, itemId: string, quantity: number) => void;
       onAcceptTradeOffer: (offerId: string) => void;
       onDeclineTradeOffer: (offerId: string) => void;
-      onInvitePartyMember: (targetCharacterId: string) => void;
+      onInvitePartyMember: (targetCharacterId?: string) => void;
       onAcceptPartyInvite: (inviteId: string) => void;
       onDeclinePartyInvite: (inviteId: string) => void;
       onLeaveParty: () => void;
       onKickPartyMember: (targetCharacterId: string) => void;
+      onCreateClan: (name: string) => void;
+      onInviteClanMember: () => void;
+      onAcceptClanInvite: (inviteId: string) => void;
+      onDeclineClanInvite: (inviteId: string) => void;
+      onLeaveClan: () => void;
+      onKickClanMember: (targetCharacterId: string) => void;
+      onDissolveClan: () => void;
       onSellVendorItem: (itemId: string, quantity: number) => void;
       onDepositWarehouseItem: (itemId: string, quantity: number) => void;
       onWithdrawWarehouseItem: (itemId: string, quantity: number) => void;
@@ -416,6 +455,7 @@ export class WorldRuntime {
       initialState,
       onMoveIntent: handlers.onMoveIntent,
       onSelectTarget: handlers.onSelectTarget,
+      onClearTarget: handlers.onClearTarget,
       onInteractNpc: handlers.onInteractNpc,
       onCloseDialog: handlers.onCloseDialog,
       onUseSkill: handlers.onUseSkill,
@@ -436,6 +476,13 @@ export class WorldRuntime {
       onDeclinePartyInvite: handlers.onDeclinePartyInvite,
       onLeaveParty: handlers.onLeaveParty,
       onKickPartyMember: handlers.onKickPartyMember,
+      onCreateClan: handlers.onCreateClan,
+      onInviteClanMember: handlers.onInviteClanMember,
+      onAcceptClanInvite: handlers.onAcceptClanInvite,
+      onDeclineClanInvite: handlers.onDeclineClanInvite,
+      onLeaveClan: handlers.onLeaveClan,
+      onKickClanMember: handlers.onKickClanMember,
+      onDissolveClan: handlers.onDissolveClan,
       onSellVendorItem: handlers.onSellVendorItem,
       onDepositWarehouseItem: handlers.onDepositWarehouseItem,
       onWithdrawWarehouseItem: handlers.onWithdrawWarehouseItem,
@@ -495,6 +542,20 @@ export class WorldRuntime {
     }
 
     if (this.hud.isChatInputFocused()) {
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (this.store.getState().dialog) {
+        if (this.mode === 'local') {
+          this.store.dispatch({ type: 'closeDialog' });
+        } else {
+          this.onCloseDialog?.();
+        }
+        return;
+      }
+      this.clearTargetState();
       return;
     }
 
@@ -562,16 +623,6 @@ export class WorldRuntime {
       return;
     }
 
-    if (event.key === 'Escape' && this.store.getState().dialog) {
-      event.preventDefault();
-      if (this.mode === 'local') {
-        this.store.dispatch({ type: 'closeDialog' });
-      } else {
-        this.onCloseDialog?.();
-      }
-      return;
-    }
-
     if (this.mode !== 'local') {
       return;
     }
@@ -596,6 +647,10 @@ export class WorldRuntime {
   }
 
   private activateHotbarAction(actionId: HotbarActionId): void {
+    if (actionId === 'toggle_walk_run') {
+      this.toggleMovementVisualMode();
+      return;
+    }
     if (this.mode === 'local') {
       if (actionId === 'basic_attack') {
         this.store.dispatch({ type: 'basicAttack' });
@@ -608,6 +663,20 @@ export class WorldRuntime {
     }
 
     this.onUseHotbarAction?.(actionId);
+  }
+
+  private toggleMovementVisualMode(): void {
+    this.movementVisualMode = this.movementVisualMode === 'run' ? 'walk' : 'run';
+    this.scene.setMovementVisualMode(this.movementVisualMode);
+    const state = this.store.getState();
+    state.logs.unshift({
+      id: `log_movement_mode_${Date.now()}`,
+      text: `Movement mode: ${this.movementVisualMode === 'run' ? 'Run' : 'Walk'}.`,
+      tone: 'neutral',
+      channel: 'system',
+    });
+    state.logs = state.logs.slice(0, 30);
+    this.hud.update(state);
   }
 
   private cycleTarget(): void {
@@ -629,7 +698,19 @@ export class WorldRuntime {
 
     const currentIndex = living.findIndex((mob) => mob.id === state.targetId);
     const next = living[(currentIndex + 1 + living.length) % living.length];
+    if (this.onSelectTarget) {
+      this.onSelectTarget(next.id);
+      return;
+    }
     this.store.dispatch({ type: 'selectTarget', targetId: next.id });
+  }
+
+  private clearTargetState(): void {
+    if (this.mode === 'local') {
+      this.store.dispatch({ type: 'clearTarget' });
+      return;
+    }
+    this.onClearTarget?.();
   }
 
   destroy(): void {
@@ -648,6 +729,7 @@ export class WorldRuntime {
     if (this.mode === 'local') {
       window.removeEventListener('beforeunload', this.handleBeforeUnloadBound);
     }
+    this.hud.destroy();
     this.scene.destroy();
   }
 }

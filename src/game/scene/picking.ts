@@ -1,5 +1,5 @@
 export type ClickTarget = {
-  kind: 'mob' | 'loot' | 'npc';
+  kind: 'mob' | 'loot' | 'npc' | 'player';
   id: string;
 };
 
@@ -8,9 +8,13 @@ export type ClickHit = {
   distance: number;
 };
 
+type ClickSelectionOptions = {
+  isTargetActive?: (target: ClickTarget) => boolean;
+};
+
 const LOOT_OVERLAP_DISTANCE_EPSILON = 2;
 
-export const selectClickTarget = (hits: ClickHit[]): ClickTarget | null => {
+export const selectClickTarget = (hits: ClickHit[], options: ClickSelectionOptions = {}): ClickTarget | null => {
   if (hits.length === 0) {
     return null;
   }
@@ -18,6 +22,9 @@ export const selectClickTarget = (hits: ClickHit[]): ClickTarget | null => {
   const uniqueHits: ClickHit[] = [];
   const seenTargets = new Set<string>();
   for (const hit of hits) {
+    if (options.isTargetActive && !options.isTargetActive(hit.target)) {
+      continue;
+    }
     const key = `${hit.target.kind}:${hit.target.id}`;
     if (seenTargets.has(key)) {
       continue;

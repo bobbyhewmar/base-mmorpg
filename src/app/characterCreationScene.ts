@@ -7,8 +7,8 @@ export interface CharacterCreationPreviewState {
   baseClass: BaseClass | null;
   sex: CharacterSex | null;
   hairStyle: number | null;
-  hairColor: number | null;
-  face: number | null;
+  hairColor: string | null;
+  skinType: number | null;
   baseClassOptions: BaseClass[];
   sexOptions: CharacterSex[];
 }
@@ -18,6 +18,9 @@ type CreationVisual = {
   baseY: number;
   baseRotationY: number;
 };
+
+const FOCUSED_CHARACTER_SCALE = 1.16;
+const ROSTER_CHARACTER_SCALE = 1.05;
 
 const createMaterial = (color: string, roughness = 0.86): THREE.MeshStandardMaterial =>
   new THREE.MeshStandardMaterial({ color, roughness });
@@ -153,8 +156,8 @@ const previewCharacter = (
   baseClass: BaseClass,
   sex: CharacterSex,
   hairStyle: number,
-  hairColor: number,
-  face: number,
+  hairColor: string,
+  skinType: number,
   index: number,
 ): CharacterSummary => ({
   character_id: `creation_${race}_${baseClass}_${sex}_${index}`,
@@ -164,7 +167,7 @@ const previewCharacter = (
   sex,
   hair_style: hairStyle,
   hair_color: hairColor,
-  face,
+  skin_type: skinType,
   level: 1,
   last_region_id: 'character_creation',
   is_enterable: true,
@@ -213,8 +216,9 @@ export class CharacterCreationScene {
 
   private configureScene(): void {
     this.renderer.setClearAlpha(this.preview.race ? 1 : 0);
-    this.camera.position.set(0, 3.05, this.preview.baseClass && this.preview.sex ? 6.9 : 9.2);
-    this.camera.lookAt(this.preview.baseClass && this.preview.sex ? 0.7 : 0, 1.52, 0);
+    const focused = Boolean(this.preview.baseClass && this.preview.sex);
+    this.camera.position.set(0, focused ? 2.7 : 3.05, focused ? 8.4 : 9.2);
+    this.camera.lookAt(focused ? 0.52 : 0, focused ? 1.55 : 1.52, 0);
     this.addLighting();
     this.addEnvironment();
     this.addCharacters();
@@ -345,11 +349,11 @@ export class CharacterCreationScene {
     const race = this.preview.race;
     const hairStyle = this.preview.hairStyle;
     const hairColor = this.preview.hairColor;
-    const face = this.preview.face;
+    const skinType = this.preview.skinType;
     if (!race) {
       return;
     }
-    if (hairStyle === null || hairColor === null || face === null) {
+    if (hairStyle === null || !hairColor || skinType === null) {
       return;
     }
     const focused = this.preview.baseClass && this.preview.sex;
@@ -373,13 +377,13 @@ export class CharacterCreationScene {
           variant.sex,
           hairStyle,
           hairColor,
-          face,
+          skinType,
           index,
         ),
         { showName: false },
       );
       group.position.copy(positions[index] ?? positions[positions.length - 1]);
-      group.scale.multiplyScalar(focused ? 1.55 : 1.05);
+      group.scale.multiplyScalar(focused ? FOCUSED_CHARACTER_SCALE : ROSTER_CHARACTER_SCALE);
       group.rotation.y = focused ? -0.18 : index < 2 ? -0.12 : 0.12;
       group.traverse((object) => {
         const mesh = object as THREE.Mesh;
@@ -396,13 +400,8 @@ export class CharacterCreationScene {
   private resolveRosterVariants(): Array<{ baseClass: BaseClass; sex: CharacterSex }> {
     const baseClasses = this.preview.baseClassOptions;
     const sexOptions = this.preview.sexOptions;
-    const variants: Array<{ baseClass: BaseClass; sex: CharacterSex }> = [];
-    for (const baseClass of baseClasses) {
-      for (const sex of sexOptions) {
-        variants.push({ baseClass, sex });
-      }
-    }
-    return variants.slice(0, 4);
+    const defaultSex = this.preview.sex ?? sexOptions[0] ?? 'Male';
+    return baseClasses.slice(0, 4).map((baseClass) => ({ baseClass, sex: defaultSex }));
   }
 
   private readonly handleResize = (): void => {

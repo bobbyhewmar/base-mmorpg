@@ -5,7 +5,7 @@ export type Vec2 = {
   z: number;
 };
 
-export type RegionId = 'dawn_plaza' | 'gate_road' | 'gloam_field' | 'ruin_hollow';
+export type RegionId = 'stonecross_plaza' | 'dawn_plaza' | 'gate_road' | 'gloam_field' | 'ruin_hollow';
 
 export type BaseClass = 'Fighter' | 'Mage';
 
@@ -56,8 +56,8 @@ export interface ItemTemplate {
   equipSlot?: EquipSlot;
   statBonuses?: Partial<DerivedStats>;
   appearance?: {
-    weaponModel?: 'none' | 'spear';
-    chestModel?: 'none' | 'mantle';
+    weaponModel?: 'none' | 'spear' | 'staff';
+    chestModel?: 'none' | 'mantle' | 'robe';
     tint?: string;
   };
 }
@@ -128,11 +128,14 @@ export type HotbarEntryType = 'skill' | 'item' | 'action';
 export type HotbarActionId =
   | 'basic_attack'
   | 'pick_up_nearby'
+  | 'party_invite'
+  | 'party_leave'
   | 'tame_target'
   | 'summon_pet'
   | 'dismiss_pet'
   | 'mount_pet'
-  | 'dismount_pet';
+  | 'dismount_pet'
+  | 'toggle_walk_run';
 
 export interface OwnedPetState {
   petInstanceId: string;
@@ -180,8 +183,8 @@ export interface PlayerState {
   baseClass: BaseClass;
   sex: CharacterSex;
   hairStyle: AppearanceOptionIndex;
-  hairColor: AppearanceOptionIndex;
-  face: AppearanceOptionIndex;
+  hairColor: string;
+  skinType: AppearanceOptionIndex;
   archetypeId: string;
   level: number;
   xp: number;
@@ -211,6 +214,8 @@ export interface PlayerState {
 export interface MobTemplate {
   id: string;
   name: string;
+  level: number;
+  personality: MobPersonality;
   tint: string;
   maxHp: number;
   attack: number;
@@ -224,9 +229,12 @@ export interface MobTemplate {
   guaranteedEquipmentTemplateId?: string;
 }
 
+export type MobPersonality = 'aggressive' | 'passive';
+
 export interface MobState {
   id: EntityId;
   templateId: string;
+  personality: MobPersonality;
   position: Vec2;
   spawnPoint: Vec2;
   hp: number;
@@ -256,8 +264,8 @@ export interface OtherPlayerState {
   baseClass: BaseClass;
   sex: CharacterSex;
   hairStyle: AppearanceOptionIndex;
-  hairColor: AppearanceOptionIndex;
-  face: AppearanceOptionIndex;
+  hairColor: string;
+  skinType: AppearanceOptionIndex;
   archetypeId: string;
   level: number;
   hp: number;
@@ -296,6 +304,31 @@ export interface PartyState {
 export interface PendingPartyInviteState {
   inviteId: string;
   partyId: string;
+  inviterCharacterId: string;
+  inviterName: string;
+  expiresAtMs: number;
+}
+
+export interface ClanMemberState {
+  characterId: string;
+  name: string;
+  level: number;
+  baseClass: BaseClass;
+  online: boolean;
+  isLeader: boolean;
+}
+
+export interface ClanState {
+  clanId: string;
+  name: string;
+  leaderCharacterId: string;
+  members: ClanMemberState[];
+}
+
+export interface PendingClanInviteState {
+  inviteId: string;
+  clanId: string;
+  clanName: string;
   inviterCharacterId: string;
   inviterName: string;
   expiresAtMs: number;
@@ -381,6 +414,8 @@ export interface GameState {
   dialog: NpcDialogState | null;
   party: PartyState | null;
   partyInvites: PendingPartyInviteState[];
+  clan: ClanState | null;
+  clanInvites: PendingClanInviteState[];
   incomingTradeOffer: PendingTradeOfferState | null;
   outgoingTradeOffer: PendingTradeOfferState | null;
   logs: LogEntry[];
@@ -392,6 +427,7 @@ export interface GameState {
 export type GameCommand =
   | { type: 'moveToPoint'; point: Vec2 }
   | { type: 'selectTarget'; targetId: EntityId | null }
+  | { type: 'clearTarget' }
   | { type: 'useSkill'; skillId: string }
   | { type: 'basicAttack' }
   | { type: 'pickUpLoot'; lootId: EntityId }

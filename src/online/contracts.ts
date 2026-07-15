@@ -8,8 +8,8 @@ export type CharacterSex = 'Male' | 'Female';
 
 export interface CharacterAppearanceOptions {
   hair_styles: number[];
-  hair_colors: number[];
-  faces: number[];
+  hair_color_default: string;
+  skin_types: number[];
 }
 
 export interface ApiErrorResponse {
@@ -48,8 +48,8 @@ export interface CharacterSummary {
   base_class: BaseClass;
   sex: CharacterSex;
   hair_style: number;
-  hair_color: number;
-  face: number;
+  hair_color: string;
+  skin_type: number;
   level: number;
   last_region_id: string;
   is_enterable: boolean;
@@ -76,8 +76,8 @@ export interface CreateCharacterRequest {
   base_class: BaseClass;
   sex: CharacterSex;
   hair_style: number;
-  hair_color: number;
-  face: number;
+  hair_color: string;
+  skin_type: number;
   name: string;
 }
 
@@ -193,7 +193,15 @@ export interface TradeOfferDecisionPayload {
 }
 
 export interface PartyInvitePayload {
-  target_character_id: string;
+  target_character_id?: string;
+}
+
+export interface CreateClanPayload {
+  name: string;
+}
+
+export interface ClanInvitePayload {
+  target_character_id?: string;
 }
 
 export interface PartyInviteDecisionPayload {
@@ -233,6 +241,15 @@ export interface SelectTargetCommand {
   client_sent_at_ms: number;
   type: 'select_target';
   payload: SelectTargetPayload;
+}
+
+export interface ClearTargetCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'clear_target';
+  payload: EmptyCommandPayload;
 }
 
 export interface UseSkillCommand {
@@ -478,6 +495,69 @@ export interface KickPartyMemberCommand {
   payload: PartyInvitePayload;
 }
 
+export interface CreateClanCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'create_clan';
+  payload: CreateClanPayload;
+}
+
+export interface InviteClanMemberCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'invite_clan_member';
+  payload: ClanInvitePayload;
+}
+
+export interface AcceptClanInviteCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'accept_clan_invite';
+  payload: PartyInviteDecisionPayload;
+}
+
+export interface DeclineClanInviteCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'decline_clan_invite';
+  payload: PartyInviteDecisionPayload;
+}
+
+export interface LeaveClanCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'leave_clan';
+  payload: EmptyCommandPayload;
+}
+
+export interface KickClanMemberCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'kick_clan_member';
+  payload: ClanInvitePayload;
+}
+
+export interface DissolveClanCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'dissolve_clan';
+  payload: EmptyCommandPayload;
+}
+
 export interface SendChatMessageCommand {
   protocol_version: 1;
   command_id: string;
@@ -499,6 +579,7 @@ export interface SetHotbarStateCommand {
 export type GameplayCommandEnvelope =
   | MoveIntentCommand
   | SelectTargetCommand
+  | ClearTargetCommand
   | UseSkillCommand
   | BasicAttackCommand
   | PickUpLootCommand
@@ -526,6 +607,13 @@ export type GameplayCommandEnvelope =
   | DeclinePartyInviteCommand
   | LeavePartyCommand
   | KickPartyMemberCommand
+  | CreateClanCommand
+  | InviteClanMemberCommand
+  | AcceptClanInviteCommand
+  | DeclineClanInviteCommand
+  | LeaveClanCommand
+  | KickClanMemberCommand
+  | DissolveClanCommand
   | SendChatMessageCommand
   | SetHotbarStateCommand;
 
@@ -600,11 +688,14 @@ export interface HotbarSlotSnapshot {
   action_id?:
     | 'basic_attack'
     | 'pick_up_nearby'
+    | 'party_invite'
+    | 'party_leave'
     | 'tame_target'
     | 'summon_pet'
     | 'dismiss_pet'
     | 'mount_pet'
-    | 'dismount_pet';
+    | 'dismount_pet'
+    | 'toggle_walk_run';
 }
 
 export interface HotbarSnapshot {
@@ -668,6 +759,31 @@ export interface PartyInviteSnapshot {
   expires_at_ms: number;
 }
 
+export interface ClanMemberSnapshot {
+  character_id: string;
+  name: string;
+  level: number;
+  base_class: BaseClass;
+  online: boolean;
+  is_leader: boolean;
+}
+
+export interface ClanSnapshot {
+  clan_id: string;
+  name: string;
+  leader_character_id: string;
+  members: ClanMemberSnapshot[];
+}
+
+export interface ClanInviteSnapshot {
+  invite_id: string;
+  clan_id: string;
+  clan_name: string;
+  inviter_character_id: string;
+  inviter_name: string;
+  expires_at_ms: number;
+}
+
 export interface SelfStateSnapshot {
   level?: number;
   xp?: number;
@@ -683,6 +799,8 @@ export interface SelfStateSnapshot {
   quest?: QuestSnapshot;
   party?: PartySnapshot | null;
   party_invites?: PartyInviteSnapshot[];
+  clan?: ClanSnapshot | null;
+  clan_invites?: ClanInviteSnapshot[];
   npc_interaction?: NpcInteractionSnapshot | null;
 }
 
@@ -773,6 +891,30 @@ export interface PartyNoticeMessage extends ServerMessageBase {
   message: string;
 }
 
+export interface ClanNoticeMessage extends ServerMessageBase {
+  kind: 'clan_notice';
+  command_id?: string;
+  command_seq?: number;
+  status:
+    | 'created'
+    | 'invite_sent'
+    | 'invite_received'
+    | 'invite_accepted'
+    | 'invite_declined'
+    | 'invite_expired'
+    | 'member_joined'
+    | 'member_left'
+    | 'member_kicked'
+    | 'clan_dissolved';
+  clan_id?: string;
+  invite_id?: string;
+  actor_character_id?: string;
+  actor_name?: string;
+  target_character_id?: string;
+  target_name?: string;
+  message: string;
+}
+
 export interface ChatMessageServerMessage extends ServerMessageBase {
   kind: 'chat_message';
   command_id?: string;
@@ -796,6 +938,7 @@ export type GameplayServerMessage =
   | PositionCorrectionMessage
   | TradeNoticeMessage
   | PartyNoticeMessage
+  | ClanNoticeMessage
   | ChatMessageServerMessage;
 
 export const isApiErrorResponse = (value: unknown): value is ApiErrorResponse => {

@@ -8,12 +8,16 @@ export interface CharacterCreationOptions {
   selectedSex: CharacterSex | null;
   sexOptions: CharacterSex[];
   selectedHairStyle: number | null;
-  selectedHairColor: number | null;
-  selectedFace: number | null;
+  selectedHairColor: string | null;
+  selectedSkinType: number | null;
   hairStyleOptions: number[];
-  hairColorOptions: number[];
-  faceOptions: number[];
+  skinTypeOptions: number[];
 }
+
+export const normalizeCanonicalHairColor = (value: string | null | undefined): string | null => {
+  const normalized = value?.trim().toLowerCase() ?? '';
+  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : null;
+};
 
 const raceSortOrder: CharacterRace[] = ['Human', 'Elf', 'Dark Elf', 'Orc', 'Dwarf'];
 
@@ -26,25 +30,35 @@ export const resolveCharacterCreationOptions = (
   selectedBaseClass: BaseClass | null = null,
   selectedSex: CharacterSex | null = null,
   selectedHairStyle: number | null = null,
-  selectedHairColor: number | null = null,
-  selectedFace: number | null = null,
+  selectedSkinType: number | null = null,
+  selectedHairColor: string | null = null,
 ): CharacterCreationOptions => {
   const raceOptions = [...(catalog?.races ?? [])].filter((race) => race.enabled).sort(compareRace);
-  const activeRace = selectedRace && raceOptions.find((race) => race.race === selectedRace) ? selectedRace : null;
+  const activeRace =
+    selectedRace && raceOptions.find((race) => race.race === selectedRace)
+      ? selectedRace
+      : raceOptions[0]?.race ?? null;
   const selectedRaceEntry = activeRace ? raceOptions.find((race) => race.race === activeRace) ?? null : null;
   const baseClassOptions = [...(selectedRaceEntry?.base_classes ?? [])];
   const sexOptions = [...(selectedRaceEntry?.sex_options ?? [])];
   const hairStyleOptions = [...(selectedRaceEntry?.appearance_options?.hair_styles ?? [])];
-  const hairColorOptions = [...(selectedRaceEntry?.appearance_options?.hair_colors ?? [])];
-  const faceOptions = [...(selectedRaceEntry?.appearance_options?.faces ?? [])];
+  const skinTypeOptions = [...(selectedRaceEntry?.appearance_options?.skin_types ?? [])];
   const activeBaseClass =
-    selectedBaseClass && baseClassOptions.includes(selectedBaseClass) ? selectedBaseClass : null;
-  const activeSex = selectedSex && sexOptions.includes(selectedSex) ? selectedSex : null;
+    selectedBaseClass && baseClassOptions.includes(selectedBaseClass)
+      ? selectedBaseClass
+      : baseClassOptions[0] ?? null;
+  const activeSex = selectedSex && sexOptions.includes(selectedSex) ? selectedSex : sexOptions[0] ?? null;
   const activeHairStyle =
-    typeof selectedHairStyle === 'number' && hairStyleOptions.includes(selectedHairStyle) ? selectedHairStyle : null;
+    typeof selectedHairStyle === 'number' && hairStyleOptions.includes(selectedHairStyle)
+      ? selectedHairStyle
+      : hairStyleOptions[0] ?? null;
   const activeHairColor =
-    typeof selectedHairColor === 'number' && hairColorOptions.includes(selectedHairColor) ? selectedHairColor : null;
-  const activeFace = typeof selectedFace === 'number' && faceOptions.includes(selectedFace) ? selectedFace : null;
+    normalizeCanonicalHairColor(selectedHairColor) ??
+    normalizeCanonicalHairColor(selectedRaceEntry?.appearance_options?.hair_color_default);
+  const activeSkinType =
+    typeof selectedSkinType === 'number' && skinTypeOptions.includes(selectedSkinType)
+      ? selectedSkinType
+      : skinTypeOptions[0] ?? null;
 
   return {
     selectedRace: activeRace,
@@ -55,9 +69,8 @@ export const resolveCharacterCreationOptions = (
     sexOptions,
     selectedHairStyle: activeHairStyle,
     selectedHairColor: activeHairColor,
-    selectedFace: activeFace,
+    selectedSkinType: activeSkinType,
     hairStyleOptions,
-    hairColorOptions,
-    faceOptions,
+    skinTypeOptions,
   };
 };

@@ -1,8 +1,10 @@
 import type { BaseClass, CharacterRace, CharacterSex, CharacterSummary, CreateCharacterRequest } from '../online/contracts';
+import { getBaseClassCreationLabel, getBaseClassDefinition } from '../game/data/characterClasses';
+import { gameTemplates, getArchetypeIdForBaseClass } from '../game/data/templates';
 import { ApiClientError, GameplaySessionClient, OnlineApiClient } from '../online/client';
 import { preGameReducer, initialPreGameContext, type PreGameContext } from './preGameMachine';
 import { WorldRuntime } from '../runtime/worldRuntime';
-import { resolveCharacterCreationOptions } from './characterCreationOptions';
+import { normalizeCanonicalHairColor, resolveCharacterCreationOptions } from './characterCreationOptions';
 import { resolveLoginFailureEvent, resolveRegisterSuccessEvent } from './authFlow';
 import { OnlineReadModel } from '../online/readModel';
 import type { EquipSlot, GameState, HotbarActionId, PlayerHotbarState } from '../game/domain/types';
@@ -27,6 +29,7 @@ declare global {
       getWorldState: () => GameState | null;
       sendMoveIntent: (point: { x: number; z: number }) => void;
       sendSelectTarget: (targetId: string) => void;
+      sendClearTarget: () => void;
       sendInteractNpc: (npcId: string, actionId?: 'accept_task' | 'turn_in_task') => void;
       sendUseSkill: (skillId: string) => void;
       sendPickUpLoot: (lootId: string) => void;
@@ -40,11 +43,18 @@ declare global {
       sendOfferTradeItem: (targetCharacterId: string, itemId: string, quantity: number) => void;
       sendAcceptTradeOffer: (offerId: string) => void;
       sendDeclineTradeOffer: (offerId: string) => void;
-      sendInvitePartyMember: (targetCharacterId: string) => void;
+      sendInvitePartyMember: (targetCharacterId?: string) => void;
       sendAcceptPartyInvite: (inviteId: string) => void;
       sendDeclinePartyInvite: (inviteId: string) => void;
       sendLeaveParty: () => void;
       sendKickPartyMember: (targetCharacterId: string) => void;
+      sendCreateClan: (name: string) => void;
+      sendInviteClanMember: () => void;
+      sendAcceptClanInvite: (inviteId: string) => void;
+      sendDeclineClanInvite: (inviteId: string) => void;
+      sendLeaveClan: () => void;
+      sendKickClanMember: (targetCharacterId: string) => void;
+      sendDissolveClan: () => void;
       sendChatMessage: (
         channel: 'region' | 'party' | 'whisper',
         text: string,
@@ -81,7 +91,7 @@ type GameButtonConfig = {
   disabled?: boolean;
 };
 
-type CreationCycleOption = 'race' | 'base_class' | 'sex' | 'hair_style' | 'hair_color' | 'face';
+type CreationCycleOption = 'race' | 'base_class' | 'sex' | 'hair_style' | 'skin_type';
 
 type CreationFieldConfig = {
   label: string;
@@ -203,25 +213,23 @@ export class ClientApp {
         const baseClass = String(values.base_class ?? '');
         const sex = String(values.sex ?? '');
         const hairStyleValue = String(values.hair_style ?? '');
-        const hairColorValue = String(values.hair_color ?? '');
-        const faceValue = String(values.face ?? '');
+        const hairColor = normalizeCanonicalHairColor(String(values.hair_color ?? ''));
+        const skinTypeValue = String(values.skin_type ?? '');
         const hairStyle = Number(hairStyleValue);
-        const hairColor = Number(hairColorValue);
-        const face = Number(faceValue);
+        const skinType = Number(skinTypeValue);
         if (
           !race ||
           !baseClass ||
           !sex ||
           hairStyleValue === '' ||
-          hairColorValue === '' ||
-          faceValue === '' ||
+          !hairColor ||
+          skinTypeValue === '' ||
           !Number.isInteger(hairStyle) ||
-          !Number.isInteger(hairColor) ||
-          !Number.isInteger(face)
+          !Number.isInteger(skinType)
         ) {
           this.transition({
             type: 'operation_failed',
-            message: 'Select race, class, gender, hairstyle, hair color, and face before creating a character.',
+            message: 'Select race, class, gender, hairstyle, hair color, and skin type before creating a character.',
           });
           return;
         }
@@ -231,7 +239,7 @@ export class ClientApp {
           sex: sex as CreateCharacterRequest['sex'],
           hair_style: hairStyle,
           hair_color: hairColor,
-          face,
+          skin_type: skinType,
           name: String(values.name ?? ''),
         };
         const response = await this.api.createCharacter(this.state.accessToken, request);
@@ -266,7 +274,49 @@ export class ClientApp {
     }
     if (target.name === 'name' && target.closest('form[data-action="create-character"]')) {
       this.createNameDraft = target.value;
+      const form = target.closest<HTMLFormElement>('form[data-action="create-character"]');
+      if (form) {
+        this.syncCharacterCreateSubmitState(form);
+      }
+      return;
     }
+    if (target.name === 'hair_color' && target.closest('form[data-action="create-character"]')) {
+      const hairColor = normalizeCanonicalHairColor(target.value);
+      if (hairColor) {
+        this.transition({ type: 'set_create_hair_color', hairColor });
+      }
+    }
+  }
+
+  private syncCharacterCreateSubmitState(form: HTMLFormElement): void {
+    const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (!submitButton) {
+      return;
+    }
+    const options = resolveCharacterCreationOptions(
+      this.state.catalog,
+      this.state.createRace,
+      this.state.createBaseClass,
+      this.state.createSex,
+      this.state.createHairStyle,
+      this.state.createSkinType,
+      this.state.createHairColor,
+    );
+    const canCreate = Boolean(
+      this.createNameDraft.trim() &&
+        options.selectedRace &&
+        options.selectedBaseClass &&
+        options.selectedSex &&
+        options.selectedHairStyle !== null &&
+        options.selectedHairColor !== null &&
+        options.selectedSkinType !== null,
+    );
+    submitButton.disabled = !canCreate;
+    if (canCreate) {
+      submitButton.removeAttribute('aria-disabled');
+      return;
+    }
+    submitButton.setAttribute('aria-disabled', 'true');
   }
 
   private async handleClick(event: MouseEvent): Promise<void> {
@@ -344,8 +394,8 @@ export class ClientApp {
       this.state.createBaseClass,
       this.state.createSex,
       this.state.createHairStyle,
+      this.state.createSkinType,
       this.state.createHairColor,
-      this.state.createFace,
     );
 
     if (option === 'race') {
@@ -375,15 +425,11 @@ export class ClientApp {
     const optionValues =
       option === 'hair_style'
         ? options.hairStyleOptions
-        : option === 'hair_color'
-          ? options.hairColorOptions
-          : options.faceOptions;
+        : options.skinTypeOptions;
     const current =
       option === 'hair_style'
         ? options.selectedHairStyle
-        : option === 'hair_color'
-          ? options.selectedHairColor
-          : options.selectedFace;
+        : options.selectedSkinType;
     const value = this.cycleValue(optionValues, current, step);
     if (value === null) {
       return;
@@ -487,6 +533,9 @@ export class ClientApp {
       onSelectTarget: (targetId) => {
         this.sendSelectTarget(targetId);
       },
+      onClearTarget: () => {
+        this.sendClearTarget();
+      },
       onInteractNpc: (npcId, actionId) => {
         this.sendInteractNpc(npcId, actionId);
       },
@@ -532,8 +581,8 @@ export class ClientApp {
       onDeclineTradeOffer: (offerId) => {
         this.sendDeclineTradeOffer(offerId);
       },
-      onInvitePartyMember: (targetCharacterId) => {
-        this.sendInvitePartyMember(targetCharacterId);
+      onInvitePartyMember: () => {
+        this.sendInvitePartyMember();
       },
       onAcceptPartyInvite: (inviteId) => {
         this.sendAcceptPartyInvite(inviteId);
@@ -546,6 +595,27 @@ export class ClientApp {
       },
       onKickPartyMember: (targetCharacterId) => {
         this.sendKickPartyMember(targetCharacterId);
+      },
+      onCreateClan: (name) => {
+        this.sendCreateClan(name);
+      },
+      onInviteClanMember: () => {
+        this.sendInviteClanMember();
+      },
+      onAcceptClanInvite: (inviteId) => {
+        this.sendAcceptClanInvite(inviteId);
+      },
+      onDeclineClanInvite: (inviteId) => {
+        this.sendDeclineClanInvite(inviteId);
+      },
+      onLeaveClan: () => {
+        this.sendLeaveClan();
+      },
+      onKickClanMember: (targetCharacterId) => {
+        this.sendKickClanMember(targetCharacterId);
+      },
+      onDissolveClan: () => {
+        this.sendDissolveClan();
       },
       onSendChatMessage: (channel, text, targetCharacterName) => {
         return this.sendChatMessage(channel, text, targetCharacterName);
@@ -593,7 +663,26 @@ export class ClientApp {
     if (!this.onlineReadModel || !this.sessionClient) {
       return;
     }
+    const snapshot = this.onlineReadModel.snapshot;
+    if (snapshot.otherPlayers[targetId]) {
+      this.onlineReadModel.selectProjectedPlayerTarget(targetId);
+      this.refreshOnlineRuntime();
+      return;
+    }
     const command = this.onlineReadModel.createSelectTarget(targetId);
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendClearTarget(): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createClearTarget();
     if (!command) {
       this.refreshOnlineRuntime();
       return;
@@ -677,6 +766,12 @@ export class ClientApp {
           ? this.onlineReadModel.createPickUpLoot(pickupLootId)
           : this.onlineReadModel.createPickUpNearbyLoot();
         break;
+      case 'party_invite':
+        command = this.onlineReadModel.createInvitePartyMember();
+        break;
+      case 'party_leave':
+        command = this.onlineReadModel.createLeaveParty();
+        break;
       case 'tame_target':
         command = this.onlineReadModel.createTameMob();
         break;
@@ -692,6 +787,8 @@ export class ClientApp {
       case 'dismount_pet':
         command = this.onlineReadModel.createDismountPet();
         break;
+      case 'toggle_walk_run':
+        return;
       default:
         command = null;
         break;
@@ -834,7 +931,7 @@ export class ClientApp {
     this.renderStatus();
   }
 
-  private sendInvitePartyMember(targetCharacterId: string): void {
+  private sendInvitePartyMember(targetCharacterId?: string): void {
     if (!this.onlineReadModel || !this.sessionClient) {
       return;
     }
@@ -899,6 +996,97 @@ export class ClientApp {
     this.renderStatus();
   }
 
+  private sendCreateClan(name: string): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createClan(name);
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendInviteClanMember(): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createInviteClanMember();
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendAcceptClanInvite(inviteId: string): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createAcceptClanInvite(inviteId);
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendDeclineClanInvite(inviteId: string): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createDeclineClanInvite(inviteId);
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendLeaveClan(): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createLeaveClan();
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendKickClanMember(targetCharacterId: string): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createKickClanMember(targetCharacterId);
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendDissolveClan(): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createDissolveClan();
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
   private sendChatMessage(
     channel: 'region' | 'party' | 'whisper',
     text: string,
@@ -906,6 +1094,16 @@ export class ClientApp {
   ): boolean {
     if (!this.onlineReadModel || !this.sessionClient) {
       return false;
+    }
+    const slashCommand = this.onlineReadModel.createPartySlashCommand(text);
+    if (slashCommand !== undefined) {
+      if (!slashCommand) {
+        this.refreshOnlineRuntime();
+        return false;
+      }
+      this.sessionClient.sendCommand(slashCommand);
+      this.renderStatus();
+      return true;
     }
     const command = this.onlineReadModel.createSendChatMessage(channel, text, targetCharacterName);
     if (!command) {
@@ -1015,6 +1213,9 @@ export class ClientApp {
 
   private toUserMessage(error: unknown): string {
     if (error instanceof ApiClientError) {
+      if (error.reasonCode === 'character.name_unavailable') {
+        return 'Character name is already reserved.';
+      }
       return `${error.reasonCode}: ${error.message}`;
     }
     if (error instanceof Error) {
@@ -1183,8 +1384,8 @@ export class ClientApp {
       this.state.createBaseClass,
       this.state.createSex,
       this.state.createHairStyle,
+      this.state.createSkinType,
       this.state.createHairColor,
-      this.state.createFace,
     );
     this.characterCreationScene = new CharacterCreationScene(host, {
       race: options.selectedRace,
@@ -1192,7 +1393,7 @@ export class ClientApp {
       sex: options.selectedSex,
       hairStyle: options.selectedHairStyle,
       hairColor: options.selectedHairColor,
-      face: options.selectedFace,
+      skinType: options.selectedSkinType,
       baseClassOptions: options.baseClassOptions,
       sexOptions: options.sexOptions,
     });
@@ -1210,8 +1411,8 @@ export class ClientApp {
       this.state.createBaseClass,
       this.state.createSex,
       this.state.createHairStyle,
+      this.state.createSkinType,
       this.state.createHairColor,
-      this.state.createFace,
     );
     const selectedRace = options.selectedRace;
     const selectedBaseClass = options.selectedBaseClass;
@@ -1223,7 +1424,7 @@ export class ClientApp {
         selectedSex &&
         options.selectedHairStyle !== null &&
         options.selectedHairColor !== null &&
-        options.selectedFace !== null &&
+        options.selectedSkinType !== null &&
         this.createNameDraft.trim(),
     );
     const fields: CreationFieldConfig[] = [
@@ -1252,16 +1453,10 @@ export class ClientApp {
         enabled: Boolean(selectedRace && options.hairStyleOptions.length > 0),
       },
       {
-        label: 'Hair Color',
-        value: selectedRace && options.selectedHairColor !== null ? this.appearanceLabel(options.selectedHairColor) : '',
-        option: 'hair_color',
-        enabled: Boolean(selectedRace && options.hairColorOptions.length > 0),
-      },
-      {
-        label: 'Face',
-        value: selectedRace && options.selectedFace !== null ? this.appearanceLabel(options.selectedFace) : '',
-        option: 'face',
-        enabled: Boolean(selectedRace && options.faceOptions.length > 0),
+        label: 'Skin Type',
+        value: selectedRace && options.selectedSkinType !== null ? this.skinTypeLabel(options.selectedSkinType) : '',
+        option: 'skin_type',
+        enabled: Boolean(selectedRace && options.skinTypeOptions.length > 0),
       },
     ];
 
@@ -1274,14 +1469,21 @@ export class ClientApp {
           <input type="hidden" name="base_class" value="${escapeHtml(selectedBaseClass ?? '')}" />
           <input type="hidden" name="sex" value="${escapeHtml(selectedSex ?? '')}" />
           <input type="hidden" name="hair_style" value="${escapeHtml(options.selectedHairStyle === null ? '' : String(options.selectedHairStyle))}" />
-          <input type="hidden" name="hair_color" value="${escapeHtml(options.selectedHairColor === null ? '' : String(options.selectedHairColor))}" />
-          <input type="hidden" name="face" value="${escapeHtml(options.selectedFace === null ? '' : String(options.selectedFace))}" />
+          <input type="hidden" name="hair_color" value="${escapeHtml(options.selectedHairColor ?? '')}" />
+          <input type="hidden" name="skin_type" value="${escapeHtml(options.selectedSkinType === null ? '' : String(options.selectedSkinType))}" />
           <aside class="character-create-panel character-create-controls">
             <label class="character-create-field character-create-field--name">
               <span>Name</span>
               <input class="game-text-input" name="name" type="text" value="${escapeHtml(this.createNameDraft)}" maxlength="24" autocomplete="off" required />
             </label>
-            ${fields.map((field) => this.renderCreationField(field)).join('')}
+            ${fields
+              .map(
+                (field) =>
+                  `${this.renderCreationField(field)}${
+                    field.option === 'hair_style' ? this.renderCreationHairColorField(options.selectedHairColor) : ''
+                  }`,
+              )
+              .join('')}
           </aside>
           ${this.renderCreationDescription(selectedRace, selectedBaseClass, selectedSex)}
           ${error ? `<div class="character-create-error">${error}</div>` : ''}
@@ -1290,7 +1492,7 @@ export class ClientApp {
             sexEnabled: Boolean(selectedRace && options.sexOptions.length > 0),
             appearanceEnabled: Boolean(
               selectedRace &&
-                (options.hairStyleOptions.length > 0 || options.hairColorOptions.length > 0 || options.faceOptions.length > 0),
+                (options.hairStyleOptions.length > 0 || options.skinTypeOptions.length > 0),
             ),
           })}
           <nav class="character-create-actions" aria-label="Character creation actions">
@@ -1313,6 +1515,29 @@ export class ClientApp {
           <button class="character-create-arrow" type="button" data-click-action="cycle-create-option" data-creation-option="${field.option}" data-direction="1"${disabled}>&gt;</button>
         </div>
       </div>
+    `;
+  }
+
+  private renderCreationHairColorField(hairColor: string | null): string {
+    const value = normalizeCanonicalHairColor(hairColor);
+    if (!value) {
+      return `
+        <label class="character-create-field character-create-field--hair-color">
+          <span>Hair Color</span>
+          <span class="character-create-color-control character-create-color-control--invalid">
+            <output>Invalid</output>
+          </span>
+        </label>
+      `;
+    }
+    return `
+      <label class="character-create-field character-create-field--hair-color">
+        <span>Hair Color</span>
+        <span class="character-create-color-control">
+          <input type="color" name="hair_color" value="${escapeHtml(value)}" aria-label="Hair Color" />
+          <output>${escapeHtml(value.toUpperCase())}</output>
+        </span>
+      </label>
     `;
   }
 
@@ -1365,10 +1590,14 @@ export class ClientApp {
     if (!baseClass) {
       return '';
     }
-    return baseClass === 'Mage' ? 'Mystic' : baseClass;
+    return getBaseClassCreationLabel(baseClass);
   }
 
   private appearanceLabel(value: number): string {
+    return `Type ${String.fromCharCode(65 + value)}`;
+  }
+
+  private skinTypeLabel(value: number): string {
     return `Type ${String.fromCharCode(65 + value)}`;
   }
 
@@ -1385,10 +1614,7 @@ export class ClientApp {
       Orc: 'Orcs are direct, proud, and overwhelming, built to break enemy lines through raw will and force.',
       Dwarf: 'Dwarves carry mountain stubbornness into battle, turning craft, resilience, and timing into survival.',
     };
-    const classCopy =
-      baseClass === 'Mage'
-        ? 'Mystics begin fragile but dangerous, using slower high-impact spells and future utility to control the fight.'
-        : 'Fighters begin close to the blade, relying on weapon pressure, armor, and direct target commitment.';
+    const classCopy = getBaseClassDefinition(baseClass).description;
     return {
       quote: `${sex} ${race} ${classLabel}`,
       body: `${raceCopy[race]} ${classCopy}`,
@@ -1495,9 +1721,9 @@ export class ClientApp {
     maxMp: number;
   } {
     const level = Math.max(character.level, 1);
-    const isMage = character.base_class === 'Mage';
-    const maxHp = (isMage ? 92 : 122) + (level - 1) * (isMage ? 13 : 17);
-    const maxMp = (isMage ? 92 : 58) + (level - 1) * (isMage ? 18 : 9);
+    const archetype = gameTemplates.archetypes[getArchetypeIdForBaseClass(character.base_class)];
+    const maxHp = archetype.baseHp + (level - 1) * archetype.hpGrowth;
+    const maxMp = archetype.baseMp + (level - 1) * archetype.mpGrowth;
     return {
       hp: maxHp,
       maxHp,
@@ -1606,7 +1832,15 @@ export class ClientApp {
   }
 
   private renderCatalogInputs(): string {
-    const options = resolveCharacterCreationOptions(this.state.catalog, this.state.createRace);
+    const options = resolveCharacterCreationOptions(
+      this.state.catalog,
+      this.state.createRace,
+      this.state.createBaseClass,
+      this.state.createSex,
+      this.state.createHairStyle,
+      this.state.createSkinType,
+      this.state.createHairColor,
+    );
     const raceOptions = options.raceOptions
       .map(
         (race) =>
@@ -1624,6 +1858,7 @@ export class ClientApp {
       <label>Race<select name="race">${raceOptions}</select></label>
       <label>Base Class<select name="base_class">${classOptions}</select></label>
       <label>Sex<select name="sex">${sexOptions}</select></label>
+      <label>Hair Color<input name="hair_color" type="color" value="${escapeHtml(options.selectedHairColor ?? '#000000')}" /></label>
       <label>Name<input name="name" type="text" maxlength="24" required /></label>
     `;
   }
@@ -1644,6 +1879,9 @@ export class ClientApp {
       },
       sendSelectTarget: (targetId) => {
         this.sendSelectTarget(targetId);
+      },
+      sendClearTarget: () => {
+        this.sendClearTarget();
       },
       sendInteractNpc: (npcId, actionId) => {
         this.sendInteractNpc(npcId, actionId);
@@ -1698,6 +1936,27 @@ export class ClientApp {
       },
       sendKickPartyMember: (targetCharacterId) => {
         this.sendKickPartyMember(targetCharacterId);
+      },
+      sendCreateClan: (name) => {
+        this.sendCreateClan(name);
+      },
+      sendInviteClanMember: () => {
+        this.sendInviteClanMember();
+      },
+      sendAcceptClanInvite: (inviteId) => {
+        this.sendAcceptClanInvite(inviteId);
+      },
+      sendDeclineClanInvite: (inviteId) => {
+        this.sendDeclineClanInvite(inviteId);
+      },
+      sendLeaveClan: () => {
+        this.sendLeaveClan();
+      },
+      sendKickClanMember: (targetCharacterId) => {
+        this.sendKickClanMember(targetCharacterId);
+      },
+      sendDissolveClan: () => {
+        this.sendDissolveClan();
       },
       sendChatMessage: (channel, text, targetCharacterName) => {
         this.sendChatMessage(channel, text, targetCharacterName);

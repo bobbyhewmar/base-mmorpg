@@ -160,6 +160,44 @@ export const formatRejectMessage = (
       return 'Party action failed: player is not currently in the party.';
     case 'party.cannot_kick_self':
       return 'Party action failed: leader cannot remove itself.';
+    case 'clan.invalid_name':
+      return 'Clan create failed: name is invalid.';
+    case 'clan.name_too_short':
+      return 'Clan create failed: name is too short.';
+    case 'clan.name_too_long':
+      return 'Clan create failed: name is too long.';
+    case 'clan.name_contains_invalid_characters':
+      return 'Clan create failed: name contains invalid characters.';
+    case 'clan.name_taken':
+      return 'Clan create failed: name is already in use.';
+    case 'clan.target_not_known':
+      return 'Clan invite failed: player is no longer known in the current region.';
+    case 'clan.target_not_online':
+      return 'Clan invite failed: player is no longer available for clan invitation.';
+    case 'clan.target_already_in_clan':
+      return 'Clan invite failed: player is already in a clan.';
+    case 'clan.target_invalid':
+      return 'Clan invite failed: character cannot invite itself.';
+    case 'clan.invite_already_pending':
+      return 'Clan invite failed: player already has a pending clan invite.';
+    case 'clan.invite_not_found':
+      return 'Clan action failed: invite is no longer available.';
+    case 'clan.invite_not_recipient':
+      return 'Clan action failed: this invite belongs to another player.';
+    case 'clan.invite_expired':
+      return 'Clan action failed: invite has expired.';
+    case 'clan.leader_required':
+      return 'Clan action failed: only the current leader can do that.';
+    case 'clan.not_in_clan':
+      return 'Clan action failed: character is not currently in a clan.';
+    case 'clan.already_in_clan':
+      return 'Clan action failed: character is already in a clan.';
+    case 'clan.member_not_found':
+      return 'Clan action failed: player is not currently in the clan.';
+    case 'clan.cannot_kick_self':
+      return 'Clan action failed: leader cannot remove itself.';
+    case 'clan.leader_cannot_leave':
+      return 'Clan leave failed: leader must dissolve the clan in this phase.';
     case 'chat.channel_unknown':
       return 'Chat send failed: channel is not available in this slice.';
     case 'chat.message_empty':

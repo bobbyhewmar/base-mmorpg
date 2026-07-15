@@ -72,7 +72,7 @@ const regionContext = (regionId: string) => ({
   emitted_at_ms: Date.now(),
   region_revision: 1,
   region_id: regionId,
-  geodata_version: `${regionId}_geo_v1`,
+  geodata_version: 'clean_plain_1024_geo_v1',
   self_position: { x: -8, z: 0 },
   known_entities: [],
 });
@@ -105,10 +105,10 @@ describe('GameplaySessionClient', () => {
     firstSocket.emitClose();
     expect(closeHandler).not.toHaveBeenCalled();
 
-    secondSocket.emitMessage(regionContext('dawn_plaza'));
+    secondSocket.emitMessage(regionContext('stonecross_plaza'));
 
     await expect(firstAttach).rejects.toThrow('Gameplay WebSocket closed before region_context.');
-    await expect(secondAttach).resolves.toMatchObject({ kind: 'region_context', region_id: 'dawn_plaza' });
+    await expect(secondAttach).resolves.toMatchObject({ kind: 'region_context', region_id: 'stonecross_plaza' });
     expect(closeHandler).not.toHaveBeenCalled();
   });
 

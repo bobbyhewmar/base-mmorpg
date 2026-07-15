@@ -6,6 +6,7 @@ import type {
   CharacterSummary,
   RegionContextMessage,
 } from '../online/contracts';
+import { resolveCharacterCreationOptions } from './characterCreationOptions';
 
 export type AppMode = 'local' | 'online';
 
@@ -42,13 +43,42 @@ export interface PreGameContext {
   createBaseClass: BaseClass | null;
   createSex: CharacterSex | null;
   createHairStyle: number | null;
-  createHairColor: number | null;
-  createFace: number | null;
+  createHairColor: string | null;
+  createSkinType: number | null;
   selectedCharacterId: string | null;
   sessionBootstrap: SessionBootstrap | null;
   regionContext: RegionContextMessage | null;
   error: string | null;
 }
+
+type CharacterCreationSelection = Pick<
+  PreGameContext,
+  'createRace' | 'createBaseClass' | 'createSex' | 'createHairStyle' | 'createHairColor' | 'createSkinType'
+>;
+
+const resolveCreateSelection = (
+  catalog: CharacterCatalogResponse | null,
+  selection: Partial<CharacterCreationSelection> = {},
+): CharacterCreationSelection => {
+  const options = resolveCharacterCreationOptions(
+    catalog,
+    selection.createRace ?? null,
+    selection.createBaseClass ?? null,
+    selection.createSex ?? null,
+    selection.createHairStyle ?? null,
+    selection.createSkinType ?? null,
+    selection.createHairColor ?? null,
+  );
+
+  return {
+    createRace: options.selectedRace,
+    createBaseClass: options.selectedBaseClass,
+    createSex: options.selectedSex,
+    createHairStyle: options.selectedHairStyle,
+    createHairColor: options.selectedHairColor,
+    createSkinType: options.selectedSkinType,
+  };
+};
 
 export type PreGameEvent =
   | { type: 'choose_local' }
@@ -70,7 +100,8 @@ export type PreGameEvent =
   | { type: 'set_create_race'; race: CharacterRace }
   | { type: 'set_create_base_class'; baseClass: BaseClass }
   | { type: 'set_create_sex'; sex: CharacterSex }
-  | { type: 'set_create_appearance'; field: 'hair_style' | 'hair_color' | 'face'; value: number }
+  | { type: 'set_create_appearance'; field: 'hair_style' | 'skin_type'; value: number }
+  | { type: 'set_create_hair_color'; hairColor: string }
   | { type: 'characters_updated'; characters: CharacterSummary[]; catalog?: CharacterCatalogResponse }
   | { type: 'select_character'; characterId: string }
   | { type: 'enter_world_pending' }
@@ -95,7 +126,7 @@ export const initialPreGameContext = (): PreGameContext => ({
   createSex: null,
   createHairStyle: null,
   createHairColor: null,
-  createFace: null,
+  createSkinType: null,
   selectedCharacterId: null,
   sessionBootstrap: null,
   regionContext: null,
@@ -169,7 +200,7 @@ export const preGameReducer = (state: PreGameContext, event: PreGameEvent): PreG
         createSex: null,
         createHairStyle: null,
         createHairColor: null,
-        createFace: null,
+        createSkinType: null,
         selectedCharacterId: event.characters[0]?.character_id ?? null,
         verificationLogin: null,
         error: null,
@@ -184,47 +215,70 @@ export const preGameReducer = (state: PreGameContext, event: PreGameEvent): PreG
       return {
         ...state,
         phase: 'character_create',
-        createRace: null,
-        createBaseClass: null,
-        createSex: null,
-        createHairStyle: null,
-        createHairColor: null,
-        createFace: null,
+        ...resolveCreateSelection(state.catalog),
         error: null,
       };
     case 'set_create_race':
       return {
         ...state,
         phase: 'character_create',
-        createRace: event.race,
-        createBaseClass: null,
-        createSex: null,
-        createHairStyle: null,
-        createHairColor: null,
-        createFace: null,
+        ...resolveCreateSelection(state.catalog, { createRace: event.race }),
         error: null,
       };
     case 'set_create_base_class':
       return {
         ...state,
         phase: 'character_create',
-        createBaseClass: event.baseClass,
+        ...resolveCreateSelection(state.catalog, {
+          createRace: state.createRace,
+          createBaseClass: event.baseClass,
+          createSex: state.createSex,
+          createHairStyle: state.createHairStyle,
+          createHairColor: state.createHairColor,
+          createSkinType: state.createSkinType,
+        }),
         error: null,
       };
     case 'set_create_sex':
       return {
         ...state,
         phase: 'character_create',
-        createSex: event.sex,
+        ...resolveCreateSelection(state.catalog, {
+          createRace: state.createRace,
+          createBaseClass: state.createBaseClass,
+          createSex: event.sex,
+          createHairStyle: state.createHairStyle,
+          createHairColor: state.createHairColor,
+          createSkinType: state.createSkinType,
+        }),
         error: null,
       };
     case 'set_create_appearance':
       return {
         ...state,
         phase: 'character_create',
-        createHairStyle: event.field === 'hair_style' ? event.value : state.createHairStyle,
-        createHairColor: event.field === 'hair_color' ? event.value : state.createHairColor,
-        createFace: event.field === 'face' ? event.value : state.createFace,
+        ...resolveCreateSelection(state.catalog, {
+          createRace: state.createRace,
+          createBaseClass: state.createBaseClass,
+          createSex: state.createSex,
+          createHairStyle: event.field === 'hair_style' ? event.value : state.createHairStyle,
+          createHairColor: state.createHairColor,
+          createSkinType: event.field === 'skin_type' ? event.value : state.createSkinType,
+        }),
+        error: null,
+      };
+    case 'set_create_hair_color':
+      return {
+        ...state,
+        phase: 'character_create',
+        ...resolveCreateSelection(state.catalog, {
+          createRace: state.createRace,
+          createBaseClass: state.createBaseClass,
+          createSex: state.createSex,
+          createHairStyle: state.createHairStyle,
+          createHairColor: event.hairColor,
+          createSkinType: state.createSkinType,
+        }),
         error: null,
       };
     case 'characters_updated':
@@ -238,7 +292,7 @@ export const preGameReducer = (state: PreGameContext, event: PreGameEvent): PreG
         createSex: null,
         createHairStyle: null,
         createHairColor: null,
-        createFace: null,
+        createSkinType: null,
         selectedCharacterId: event.characters[0]?.character_id ?? null,
         error: null,
       };

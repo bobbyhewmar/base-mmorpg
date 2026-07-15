@@ -24,10 +24,10 @@ describe('pre-game state machine', () => {
           base_class: 'Fighter',
           sex: 'Female',
           hair_style: 1,
-          hair_color: 2,
-          face: 1,
+          hair_color: '#8f5fd3',
+          skin_type: 2,
           level: 1,
-          last_region_id: 'dawn_plaza',
+          last_region_id: 'stonecross_plaza',
           is_enterable: true,
         },
       ],
@@ -40,8 +40,8 @@ describe('pre-game state machine', () => {
             sex_options: ['Male', 'Female'],
             appearance_options: {
               hair_styles: [0, 1, 2],
-              hair_colors: [0, 1, 2],
-              faces: [0, 1, 2],
+              hair_color_default: '#6b4e37',
+              skin_types: [0, 1, 2],
             },
           },
         ],
@@ -51,6 +51,62 @@ describe('pre-game state machine', () => {
     expect(next.phase).toBe('character_list');
     expect(next.selectedCharacterId).toBe('char_1');
     expect(next.catalog?.races).toHaveLength(1);
+  });
+
+  it('opens character creation with the first catalog-backed template selected', () => {
+    const authed = preGameReducer(initialPreGameContext(), {
+      type: 'auth_succeeded',
+      accessToken: 'access_abc',
+      accountId: 'acc_123',
+      characters: [],
+      catalog: {
+        races: [
+          {
+            race: 'Human',
+            enabled: true,
+            base_classes: ['Fighter', 'Mage'],
+            sex_options: ['Male', 'Female'],
+            appearance_options: {
+              hair_styles: [0, 1, 2],
+              hair_color_default: '#6b4e37',
+              skin_types: [0, 1, 2],
+            },
+          },
+          {
+            race: 'Elf',
+            enabled: true,
+            base_classes: ['Mage', 'Fighter'],
+            sex_options: ['Female', 'Male'],
+            appearance_options: {
+              hair_styles: [1, 2],
+              hair_color_default: '#c5d4dc',
+              skin_types: [2],
+            },
+          },
+        ],
+      },
+    });
+
+    const create = preGameReducer(authed, { type: 'open_create_character' });
+    expect(create).toMatchObject({
+      phase: 'character_create',
+      createRace: 'Human',
+      createBaseClass: 'Fighter',
+      createSex: 'Male',
+      createHairStyle: 0,
+      createHairColor: '#6b4e37',
+      createSkinType: 0,
+    });
+
+    const elf = preGameReducer(create, { type: 'set_create_race', race: 'Elf' });
+    expect(elf).toMatchObject({
+      createRace: 'Elf',
+      createBaseClass: 'Mage',
+      createSex: 'Female',
+      createHairStyle: 1,
+      createHairColor: '#c5d4dc',
+      createSkinType: 2,
+    });
   });
 
   it('moves register flow into pending verification when required', () => {
@@ -87,8 +143,8 @@ describe('pre-game state machine', () => {
         kind: 'region_context',
         emitted_at_ms: Date.now(),
         region_revision: 1,
-        region_id: 'dawn_plaza',
-        geodata_version: 'dawn_plaza_geo_v1',
+        region_id: 'stonecross_plaza',
+        geodata_version: 'clean_plain_1024_geo_v1',
         self_position: { x: -8, z: 0 },
         known_entities: [],
       },
@@ -96,7 +152,7 @@ describe('pre-game state machine', () => {
 
     expect(entering.phase).toBe('attaching');
     expect(next.phase).toBe('online_ready');
-    expect(next.regionContext?.region_id).toBe('dawn_plaza');
+    expect(next.regionContext?.region_id).toBe('stonecross_plaza');
   });
 
   it('returns to character list when the active online session closes', () => {
@@ -114,10 +170,10 @@ describe('pre-game state machine', () => {
               base_class: 'Fighter',
               sex: 'Female',
               hair_style: 1,
-              hair_color: 2,
-              face: 1,
+              hair_color: '#8f5fd3',
+              skin_type: 2,
               level: 1,
-              last_region_id: 'dawn_plaza',
+              last_region_id: 'stonecross_plaza',
               is_enterable: true,
             },
           ],
@@ -139,8 +195,8 @@ describe('pre-game state machine', () => {
           kind: 'region_context',
           emitted_at_ms: Date.now(),
           region_revision: 1,
-          region_id: 'dawn_plaza',
-          geodata_version: 'dawn_plaza_geo_v1',
+          region_id: 'stonecross_plaza',
+          geodata_version: 'clean_plain_1024_geo_v1',
           self_position: { x: -8, z: 0 },
           known_entities: [],
         },

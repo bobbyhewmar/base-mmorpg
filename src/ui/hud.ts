@@ -54,11 +54,18 @@ type HudOptions = {
   onOfferTradeItem?: (targetCharacterId: string, itemId: string, quantity: number) => void;
   onAcceptTradeOffer?: (offerId: string) => void;
   onDeclineTradeOffer?: (offerId: string) => void;
-  onInvitePartyMember?: (targetCharacterId: string) => void;
+  onInvitePartyMember?: (targetCharacterId?: string) => void;
   onAcceptPartyInvite?: (inviteId: string) => void;
   onDeclinePartyInvite?: (inviteId: string) => void;
   onLeaveParty?: () => void;
   onKickPartyMember?: (targetCharacterId: string) => void;
+  onCreateClan?: (name: string) => void;
+  onInviteClanMember?: () => void;
+  onAcceptClanInvite?: (inviteId: string) => void;
+  onDeclineClanInvite?: (inviteId: string) => void;
+  onLeaveClan?: () => void;
+  onKickClanMember?: (targetCharacterId: string) => void;
+  onDissolveClan?: () => void;
   onSellVendorItem?: (itemId: string, quantity: number) => void;
   onDepositWarehouseItem?: (itemId: string, quantity: number) => void;
   onWithdrawWarehouseItem?: (itemId: string, quantity: number) => void;
@@ -205,6 +212,27 @@ const HOTBAR_ACTIONS: Record<HotbarActionId, HotbarActionTemplate> = {
     description: 'Pick up the nearest loot already close to the character.',
     iconKey: 'PU',
     iconTint: '#d3b55b',
+  },
+  toggle_walk_run: {
+    id: 'toggle_walk_run',
+    name: 'Walk/Run',
+    description: 'Toggle the local movement animation between run and walk.',
+    iconKey: 'WR',
+    iconTint: '#8fb5e8',
+  },
+  party_invite: {
+    id: 'party_invite',
+    name: 'Party Invite',
+    description: 'Send an authoritative party invite to the current player target.',
+    iconKey: 'PI',
+    iconTint: '#91b58a',
+  },
+  party_leave: {
+    id: 'party_leave',
+    name: 'Party Leave',
+    description: 'Leave the current party through the authoritative backend command flow.',
+    iconKey: 'PL',
+    iconTint: '#b88a7d',
   },
   tame_target: {
     id: 'tame_target',
@@ -365,7 +393,7 @@ const getTargetHudView = (state: GameState): TargetHudView | null => {
     }
     return {
       name: template.name,
-      subtitle: `Mob - ATK ${template.attack} - DEF ${template.defense}`,
+      subtitle: `Lv ${template.level} Mob - ATK ${template.attack} - DEF ${template.defense}`,
       hpPercent: clampPercent(mob.hp, template.maxHp),
       hpLabel: `HP ${Math.round(mob.hp)}/${template.maxHp}`,
       tone: 'mob',
@@ -674,6 +702,7 @@ const renderActionSlot = (actionId: HotbarActionId): string => {
       class="lineage-action-slot filled"
       draggable="true"
       data-action-hotbar-action="${action.id}"
+      data-hotbar-action="${action.id}"
       title="${action.name}\n${action.description}\nDrag to the shortcut bar"
       aria-label="${action.name}"
     >
@@ -701,6 +730,7 @@ const renderActionsPanel = (): string => `
                   ? [
                       renderActionSlot('basic_attack'),
                       renderActionSlot('pick_up_nearby'),
+                      renderActionSlot('toggle_walk_run'),
                       renderActionSlot('tame_target'),
                       renderActionSlot('summon_pet'),
                       renderActionSlot('dismiss_pet'),
@@ -708,7 +738,13 @@ const renderActionsPanel = (): string => `
                       renderActionSlot('dismount_pet'),
                       ...Array.from({ length: 11 }, (_, index) => renderEmptyActionSlot(`Basic action ${index + 8}`)),
                     ].join('')
-                  : Array.from({ length: 12 }, (_, index) => renderEmptyActionSlot(`${group} action ${index + 1}`)).join('')
+                  : group === 'Party'
+                    ? [
+                        renderActionSlot('party_invite'),
+                        renderActionSlot('party_leave'),
+                        ...Array.from({ length: 10 }, (_, index) => renderEmptyActionSlot(`Party action ${index + 3}`)),
+                      ].join('')
+                    : Array.from({ length: 12 }, (_, index) => renderEmptyActionSlot(`${group} action ${index + 1}`)).join('')
               }
             </div>
           </div>
@@ -718,23 +754,154 @@ const renderActionsPanel = (): string => `
   </section>
 `;
 
-const renderClanPanel = (): string => `
-  <section class="lineage-character-panel clan-panel">
-    <div class="lineage-panel-empty-copy">
-      <strong>Clan</strong>
-      <span>No Clan</span>
-    </div>
-    <div class="lineage-clan-table">
-      <div>Name</div><div>Lv</div><div>Cls</div><div>Status</div>
-      ${Array.from({ length: 5 }, () => '<span></span><span></span><span></span><span></span>').join('')}
-    </div>
-    <div class="lineage-clan-actions">
-      ${['Clan Info', 'Penalty', 'Leave', 'War Info', 'Declare War', 'End War', 'Invite', 'Edit Privileges', 'Edit Crest']
-        .map((label) => `<button type="button" data-no-drag>${label}</button>`)
-        .join('')}
-    </div>
-  </section>
+type ClanPanelGridAction = {
+  label: string;
+  action?: string;
+  disabled?: boolean;
+  pressed?: boolean;
+};
+
+const CLAN_PANEL_GRID_ACTIONS = (isLeader: boolean, clanInfoOpen: boolean): ClanPanelGridAction[] => [
+  { label: 'Title', disabled: true },
+  { label: 'Privileges', disabled: true },
+  { label: 'Community', disabled: true },
+  { label: 'Clan Info', action: 'data-clan-info-toggle', pressed: clanInfoOpen },
+  { label: 'Penalty', disabled: true },
+  { label: 'Leave', action: 'data-clan-leave', disabled: isLeader },
+  { label: 'War Info', disabled: true },
+  { label: 'Declare War', disabled: true },
+  { label: 'End War', disabled: true },
+  { label: 'Invite', action: 'data-clan-invite', disabled: !isLeader },
+  { label: 'Edit Privileges', disabled: true },
+  { label: 'Edit Crest', disabled: true },
+];
+
+const renderClanGridButton = ({ label, action, disabled = false, pressed = false }: ClanPanelGridAction): string => `
+  <button
+    type="button"
+    class="lineage-clan-grid-button ${pressed ? 'active' : ''}"
+    ${action ? `${action}=""` : ''}
+    ${disabled ? 'disabled aria-disabled="true"' : ''}
+    data-no-drag
+  >${label}</button>
 `;
+
+export const renderClanPanel = (state: GameState, clanNameDraft: string, clanInfoOpen = false): string => {
+  const clan = state.clan;
+  if (!clan) {
+    return `
+      <section class="lineage-character-panel clan-panel">
+        <div class="lineage-panel-empty-copy">
+          <strong>No Clan</strong>
+          <span>Found a minimal clan from ALT+N. Name must stay short and authoritative.</span>
+        </div>
+        <form class="lineage-clan-create-form" data-clan-create-form style="display:flex;flex-direction:column;gap:8px;">
+          <input
+            type="text"
+            name="clan_name"
+            value="${escapeHudText(clanNameDraft)}"
+            maxlength="16"
+            placeholder="Clan name"
+            autocomplete="off"
+            data-clan-name
+            data-no-drag
+          />
+          <button type="submit" data-clan-create-submit data-no-drag>Create Clan</button>
+        </form>
+      </section>
+    `;
+  }
+
+  const isLeader = clan.leaderCharacterId === state.player.id;
+  const leaderName = clan.members.find((member) => member.isLeader)?.name ?? 'Unknown';
+  const gridButtons = CLAN_PANEL_GRID_ACTIONS(isLeader, clanInfoOpen).map(renderClanGridButton).join('');
+  return `
+    <section class="lineage-character-panel clan-panel">
+      <div class="lineage-clan-summary-block">
+        <div class="lineage-clan-summary-heading">
+          <strong>Clan</strong>
+          <span>${escapeHudText(clan.name)}</span>
+        </div>
+        <div class="lineage-clan-summary-meta">
+          <div class="lineage-clan-summary-field">
+            <span>Leader</span>
+            <strong>${escapeHudText(leaderName)}</strong>
+          </div>
+          <div class="lineage-clan-summary-field">
+            <span>Base</span>
+            <strong class="placeholder">None</strong>
+          </div>
+          <div class="lineage-clan-summary-field member-count">
+            <span>Members</span>
+            <strong>${clan.members.length}</strong>
+          </div>
+        </div>
+      </div>
+      <div class="lineage-clan-roster-shell">
+        <div class="lineage-clan-roster-header" role="row">
+          <span>Name</span>
+          <span>Lv</span>
+          <span>Cls</span>
+          <span>Status</span>
+        </div>
+        <div class="lineage-clan-roster-body">
+          ${clan.members
+            .map(
+              (member) => `
+                <div class="lineage-clan-roster-row ${member.online ? 'online' : 'offline'}" role="row">
+                  <div class="lineage-clan-name-cell">
+                    <strong>${escapeHudText(member.name)}</strong>
+                    ${member.isLeader ? '<span class="lineage-clan-member-tag">Leader</span>' : ''}
+                  </div>
+                  <span class="lineage-clan-stat-cell">${Number.isFinite(member.level) ? member.level : '--'}</span>
+                  <span class="lineage-clan-stat-cell">${member.baseClass ? escapeHudText(member.baseClass) : '--'}</span>
+                  <div class="lineage-clan-status-cell">
+                    <span class="lineage-clan-status ${member.online ? 'online' : 'offline'}">${member.online ? 'Online' : 'Offline'}</span>
+                    ${
+                      isLeader && member.characterId !== state.player.id
+                        ? `<button type="button" class="lineage-clan-inline-action" data-clan-kick="${member.characterId}" data-no-drag>Kick</button>`
+                        : ''
+                    }
+                  </div>
+                </div>
+              `,
+            )
+            .join('')}
+        </div>
+      </div>
+      ${
+        clanInfoOpen
+          ? `
+            <section class="lineage-clan-info-surface" data-clan-info-surface>
+              <div class="lineage-clan-info-surface-header">
+                <strong>Clan Info</strong>
+                <button type="button" class="lineage-clan-inline-action" data-clan-info-close data-no-drag>Close</button>
+              </div>
+              <div class="lineage-clan-info-grid">
+                <div><span>Clan</span><strong>${escapeHudText(clan.name)}</strong></div>
+                <div><span>Leader</span><strong>${escapeHudText(leaderName)}</strong></div>
+                <div><span>Members</span><strong>${clan.members.length}</strong></div>
+                <div><span>Base</span><strong class="placeholder">None</strong></div>
+              </div>
+              ${
+                isLeader
+                  ? `
+                    <div class="lineage-clan-info-actions">
+                      <button type="button" data-clan-dissolve data-no-drag>Dissolve Clan</button>
+                    </div>
+                  `
+                  : ''
+              }
+            </section>
+          `
+          : ''
+      }
+      <div class="lineage-clan-action-grid">
+        ${gridButtons}
+      </div>
+    </section>
+  `;
+};
 
 const renderQuestPanel = (state: GameState): string => `
   <section class="lineage-character-panel quest-panel">
@@ -761,42 +928,87 @@ const renderQuestPanel = (state: GameState): string => `
   </section>
 `;
 
-const renderPartyPanel = (state: GameState, inviteCandidates: Array<{ id: string; name: string; level: number; baseClass: string }>): string => {
+const PARTY_INVITE_VISUAL_TTL_MS = 10_000;
+
+export const renderPartyInviteModal = (state: GameState, nowMs: number): string => {
+  const invite = state.partyInvites[0];
+  if (!invite) {
+    return '';
+  }
+  const remainingMs = Math.max(0, invite.expiresAtMs - nowMs);
+  const expired = remainingMs <= 0;
+  const fillPercent = Math.max(0, Math.min(100, (remainingMs / PARTY_INVITE_VISUAL_TTL_MS) * 100));
+  return `
+    <section
+      class="frame-panel classic-window lineage-party-invite-modal"
+      data-party-invite-modal
+      style="position:absolute;left:50%;bottom:104px;transform:translateX(-50%);width:280px;z-index:18;"
+    >
+      <div class="lineage-party-invite-timer" aria-hidden="true" style="height:4px;background:rgba(28,60,24,0.85);">
+        <div style="height:100%;width:${fillPercent.toFixed(2)}%;background:linear-gradient(90deg,#63c46b,#2f8a39);"></div>
+      </div>
+      <div class="hud-window-title classic-title compact">
+        <span>Party Invitation</span>
+      </div>
+      <div class="lineage-party-invite-body" style="padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px;">
+        <div class="lineage-party-invite-copy">
+          <strong>${escapeHudText(invite.inviterName)}</strong>
+          <span>${expired ? 'Invitation expired.' : 'Invites you to join a party.'}</span>
+        </div>
+        <div class="lineage-party-inline-actions">
+          <button type="button" data-party-accept="${invite.inviteId}" data-no-drag ${expired ? 'disabled aria-disabled="true"' : ''}>Accept</button>
+          <button type="button" data-party-decline="${invite.inviteId}" data-no-drag>Cancel</button>
+        </div>
+      </div>
+    </section>
+  `;
+};
+
+export const renderClanInviteModal = (state: GameState, nowMs: number): string => {
+  const invite = state.clanInvites[0];
+  if (!invite) {
+    return '';
+  }
+  const remainingMs = Math.max(0, invite.expiresAtMs - nowMs);
+  const expired = remainingMs <= 0;
+  const fillPercent = Math.max(0, Math.min(100, (remainingMs / PARTY_INVITE_VISUAL_TTL_MS) * 100));
+  const bottomOffset = state.partyInvites.length > 0 ? 198 : 104;
+  return `
+    <section
+      class="frame-panel classic-window lineage-clan-invite-modal"
+      data-clan-invite-modal
+      style="position:absolute;left:50%;bottom:${bottomOffset}px;transform:translateX(-50%);width:300px;z-index:18;"
+    >
+      <div class="lineage-party-invite-timer" aria-hidden="true" style="height:4px;background:rgba(28,60,24,0.85);">
+        <div style="height:100%;width:${fillPercent.toFixed(2)}%;background:linear-gradient(90deg,#63c46b,#2f8a39);"></div>
+      </div>
+      <div class="hud-window-title classic-title compact">
+        <span>Clan Invitation</span>
+      </div>
+      <div class="lineage-party-invite-body" style="padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px;">
+        <div class="lineage-party-invite-copy">
+          <strong>${escapeHudText(invite.clanName)}</strong>
+          <span>${expired ? 'Invitation expired.' : `${escapeHudText(invite.inviterName)} invites you to join.`}</span>
+        </div>
+        <div class="lineage-party-inline-actions">
+          <button type="button" data-clan-accept="${invite.inviteId}" data-no-drag ${expired ? 'disabled aria-disabled="true"' : ''}>Accept</button>
+          <button type="button" data-clan-decline="${invite.inviteId}" data-no-drag>Cancel</button>
+        </div>
+      </div>
+    </section>
+  `;
+};
+
+const renderPartyPanel = (state: GameState): string => {
   const party = state.party;
   const isLeader = party?.leaderCharacterId === state.player.id;
-  const inviteCards = state.partyInvites
-    .slice(0, 2)
-    .map(
-      (invite) => `
-        <div class="lineage-party-invite-card">
-          <strong>${invite.inviterName}</strong>
-          <span>Party invite pending</span>
-          <div class="lineage-party-inline-actions">
-            <button type="button" data-party-accept="${invite.inviteId}" data-no-drag>Accept</button>
-            <button type="button" data-party-decline="${invite.inviteId}" data-no-drag>Decline</button>
-          </div>
-        </div>
-      `,
-    )
-    .join('');
-
-  const candidateButtons = inviteCandidates
-    .slice(0, 3)
-    .map(
-      (candidate) => `
-        <button type="button" data-party-invite="${candidate.id}" data-no-drag>
-          Invite ${candidate.name} Lv ${candidate.level} ${candidate.baseClass}
-        </button>
-      `,
-    )
-    .join('');
 
   if (!party) {
     return `
       <section class="lineage-character-panel party-panel">
-        ${inviteCards || '<div class="lineage-panel-empty-copy"><strong>No Party</strong><span>Visible players can be invited into a fresh party.</span></div>'}
-        <div class="lineage-party-invite-actions">
-          ${candidateButtons || '<span class="lineage-party-empty-inline">No visible players available.</span>'}
+        <div class="lineage-panel-empty-copy">
+          <strong>No Party</strong>
+          <span>Use ALT+C or /invite with the current player target to send a party invite.</span>
         </div>
       </section>
     `;
@@ -808,7 +1020,6 @@ const renderPartyPanel = (state: GameState, inviteCandidates: Array<{ id: string
         <strong>${isLeader ? 'Party Leader' : 'Party Member'}</strong>
         <span>${party.members.length} member${party.members.length === 1 ? '' : 's'}</span>
       </div>
-      ${inviteCards ? `<div class="lineage-party-invites">${inviteCards}</div>` : ''}
       <div class="lineage-party-roster">
         ${party.members
           .map(
@@ -831,15 +1042,6 @@ const renderPartyPanel = (state: GameState, inviteCandidates: Array<{ id: string
           )
           .join('')}
       </div>
-      ${
-        isLeader
-          ? `
-            <div class="lineage-party-invite-actions">
-              ${candidateButtons || '<span class="lineage-party-empty-inline">No additional visible players.</span>'}
-            </div>
-          `
-          : ''
-      }
       <div class="lineage-party-footer">
         <button type="button" data-party-leave data-no-drag>Leave</button>
       </div>
@@ -855,6 +1057,8 @@ const renderCharacterPanelBody = (
   maxCp: number,
   selectedSkillBookSkills: PlayerKnownSkill[],
   skillBookTab: SkillBookTab,
+  clanNameDraft: string,
+  clanInfoOpen: boolean,
 ): string => {
   if (panelId === 'status') {
     return renderStatusPanel(state, stats, cp, maxCp);
@@ -863,7 +1067,7 @@ const renderCharacterPanelBody = (
     return renderActionsPanel();
   }
   if (panelId === 'clan') {
-    return renderClanPanel();
+    return renderClanPanel(state, clanNameDraft, clanInfoOpen);
   }
   if (panelId === 'quests') {
     return renderQuestPanel(state);
@@ -892,6 +1096,12 @@ const renderCharacterPanelBody = (
 const getInventoryIconCode = (template: ItemTemplate): string => {
   if (template.id === 'duskgold') {
     return 'DG';
+  }
+  if (template.appearance?.weaponModel === 'staff') {
+    return 'ST';
+  }
+  if (template.appearance?.chestModel === 'robe') {
+    return 'RB';
   }
   if (template.equipSlot === 'weapon') {
     return 'WP';
@@ -1065,11 +1275,18 @@ export class Hud {
   private readonly onOfferTradeItem?: (targetCharacterId: string, itemId: string, quantity: number) => void;
   private readonly onAcceptTradeOffer?: (offerId: string) => void;
   private readonly onDeclineTradeOffer?: (offerId: string) => void;
-  private readonly onInvitePartyMember?: (targetCharacterId: string) => void;
+  private readonly onInvitePartyMember?: (targetCharacterId?: string) => void;
   private readonly onAcceptPartyInvite?: (inviteId: string) => void;
   private readonly onDeclinePartyInvite?: (inviteId: string) => void;
   private readonly onLeaveParty?: () => void;
   private readonly onKickPartyMember?: (targetCharacterId: string) => void;
+  private readonly onCreateClan?: (name: string) => void;
+  private readonly onInviteClanMember?: () => void;
+  private readonly onAcceptClanInvite?: (inviteId: string) => void;
+  private readonly onDeclineClanInvite?: (inviteId: string) => void;
+  private readonly onLeaveClan?: () => void;
+  private readonly onKickClanMember?: (targetCharacterId: string) => void;
+  private readonly onDissolveClan?: () => void;
   private readonly onSellVendorItem?: (itemId: string, quantity: number) => void;
   private readonly onDepositWarehouseItem?: (itemId: string, quantity: number) => void;
   private readonly onWithdrawWarehouseItem?: (itemId: string, quantity: number) => void;
@@ -1086,9 +1303,11 @@ export class Hud {
   private skillBookTab: SkillBookTab = 'active';
   private inventoryOpen = false;
   private partyWindowOpen = false;
+  private clanInfoOpen = false;
   private activeChatFilter: ChatLogFilter = 'all';
   private chatDraft = '';
   private whisperTargetDraft = '';
+  private clanNameDraft = '';
   private chatFocusField: 'target' | 'text' | null = null;
   private visibleHotbarRowCount: HotbarOpenBarCount | null = null;
   private draggedHotbarEntry: HotbarShortcutPayload | null = null;
@@ -1110,6 +1329,7 @@ export class Hud {
   private readonly handleSubmitBound = this.handleSubmit.bind(this);
   private readonly handleInputBound = this.handleInput.bind(this);
   private readonly handleFocusInBound = this.handleFocusIn.bind(this);
+  private inviteCountdownIntervalId: ReturnType<typeof setInterval> | null = null;
 
   constructor(container: HTMLElement, store: GameStore, controls: HudControls, options?: HudOptions) {
     this.store = store;
@@ -1134,6 +1354,13 @@ export class Hud {
     this.onDeclinePartyInvite = options?.onDeclinePartyInvite;
     this.onLeaveParty = options?.onLeaveParty;
     this.onKickPartyMember = options?.onKickPartyMember;
+    this.onCreateClan = options?.onCreateClan;
+    this.onInviteClanMember = options?.onInviteClanMember;
+    this.onAcceptClanInvite = options?.onAcceptClanInvite;
+    this.onDeclineClanInvite = options?.onDeclineClanInvite;
+    this.onLeaveClan = options?.onLeaveClan;
+    this.onKickClanMember = options?.onKickClanMember;
+    this.onDissolveClan = options?.onDissolveClan;
     this.onSellVendorItem = options?.onSellVendorItem;
     this.onDepositWarehouseItem = options?.onDepositWarehouseItem;
     this.onWithdrawWarehouseItem = options?.onWithdrawWarehouseItem;
@@ -1162,6 +1389,13 @@ export class Hud {
       this.onDeclinePartyInvite ||
       this.onLeaveParty ||
       this.onKickPartyMember ||
+      this.onCreateClan ||
+      this.onInviteClanMember ||
+      this.onAcceptClanInvite ||
+      this.onDeclineClanInvite ||
+      this.onLeaveClan ||
+      this.onKickClanMember ||
+      this.onDissolveClan ||
       this.onSellVendorItem ||
       this.onDepositWarehouseItem ||
       this.onWithdrawWarehouseItem ||
@@ -1172,9 +1406,11 @@ export class Hud {
     ) {
       this.root.addEventListener('click', this.handleClick.bind(this));
     }
-    if (this.onSendChatMessage) {
+    if (this.onSendChatMessage || this.onCreateClan) {
       this.root.addEventListener('submit', this.handleSubmitBound);
       this.root.addEventListener('input', this.handleInputBound);
+    }
+    if (this.onSendChatMessage) {
       this.root.addEventListener('focusin', this.handleFocusInBound);
     }
     this.root.addEventListener('pointerdown', this.handlePointerDownBound);
@@ -1186,6 +1422,10 @@ export class Hud {
   }
 
   update(state: GameState): void {
+    if (!state.clan) {
+      this.clanInfoOpen = false;
+    }
+    this.syncInviteCountdownLoop(state);
     const snapshot = this.createSnapshot(state);
     if (snapshot === this.lastSnapshot) {
       return;
@@ -1223,16 +1463,7 @@ export class Hud {
     const nearbyVendor = getNearbyVendor(state);
     const nearbyWarehouse = getNearbyWarehouse(state);
     const nearbyTradePlayers = getNearbyTradePlayers(state).slice(0, 3);
-    const partyInviteCandidates = Object.values(state.otherPlayers)
-      .filter((otherPlayer) => !state.party?.members.some((member) => member.characterId === otherPlayer.id))
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .slice(0, 3)
-      .map((otherPlayer) => ({
-        id: otherPlayer.id,
-        name: otherPlayer.name,
-        level: otherPlayer.level,
-        baseClass: otherPlayer.baseClass,
-      }));
+    const nowMs = Date.now();
     const composeChannel = composeChatChannelForFilter(this.activeChatFilter);
     const composeSendLabel = composeChannel === 'party' ? '#' : composeChannel === 'whisper' ? '@' : '~';
     const composePlaceholder =
@@ -1369,11 +1600,13 @@ export class Hud {
                   <button type="button" data-party-close data-no-drag aria-label="Close party window">x</button>
                 </div>
               </div>
-              ${renderPartyPanel(state, partyInviteCandidates)}
+              ${renderPartyPanel(state)}
             </div>
           `
           : ''
       }
+      ${renderPartyInviteModal(state, nowMs)}
+      ${renderClanInviteModal(state, nowMs)}
 
       ${
         targetView
@@ -1437,7 +1670,9 @@ export class Hud {
       ${
         this.activeCharacterPanel
           ? `
-            <div class="skill-book-panel frame-panel lineage-skill-window" data-hud-panel="skill-book"${this.renderPanelStyle('skill-book')}>
+            <div class="skill-book-panel frame-panel lineage-skill-window ${
+              this.activeCharacterPanel === 'clan' ? 'lineage-skill-window--clan' : ''
+            }" data-hud-panel="skill-book"${this.renderPanelStyle('skill-book')}>
               <div class="lineage-skill-title hud-window-title" data-hud-drag="skill-book">
                 <span>${CHARACTER_PANEL_NAV.find((entry) => entry.id === this.activeCharacterPanel)?.label ?? 'Skills'}</span>
                 <div class="lineage-window-controls">
@@ -1456,6 +1691,8 @@ export class Hud {
                 maxCp,
                 selectedSkillBookSkills,
                 this.skillBookTab,
+                this.clanNameDraft,
+                this.clanInfoOpen,
               )}
             </div>
           `
@@ -1573,6 +1810,13 @@ export class Hud {
       }
     `;
     this.syncChatComposerFocus();
+  }
+
+  destroy(): void {
+    if (this.inviteCountdownIntervalId !== null) {
+      clearInterval(this.inviteCountdownIntervalId);
+      this.inviteCountdownIntervalId = null;
+    }
   }
 
   private renderPanelStyle(panelId: HudPanelId): string {
@@ -1704,6 +1948,26 @@ export class Hud {
     this.partyWindowOpen = !this.partyWindowOpen;
     this.lastSnapshot = '';
     this.update(this.store.getState());
+  }
+
+  private syncInviteCountdownLoop(state: GameState): void {
+    const nowMs = Date.now();
+    const hasTrackedInvite =
+      state.partyInvites.some((invite) => invite.expiresAtMs > nowMs) ||
+      state.clanInvites.some((invite) => invite.expiresAtMs > nowMs);
+    if (hasTrackedInvite) {
+      if (this.inviteCountdownIntervalId === null) {
+        this.inviteCountdownIntervalId = setInterval(() => {
+          this.lastSnapshot = '';
+          this.update(this.store.getState());
+        }, 250);
+      }
+      return;
+    }
+    if (this.inviteCountdownIntervalId !== null) {
+      clearInterval(this.inviteCountdownIntervalId);
+      this.inviteCountdownIntervalId = null;
+    }
   }
 
   focusChatInput(): void {
@@ -2021,6 +2285,14 @@ export class Hud {
   private createSnapshot(state: GameState): string {
     const hotbarShortcutOverrides =
       this.hotbarShortcutOverrides instanceof Map ? [...this.hotbarShortcutOverrides.entries()] : [];
+    const partyInviteCountdownBucket =
+      state.partyInvites.length > 0
+        ? state.partyInvites.map((invite) => Math.max(0, Math.ceil((invite.expiresAtMs - Date.now()) / 250))).join(':')
+        : 'none';
+    const clanInviteCountdownBucket =
+      state.clanInvites.length > 0
+        ? state.clanInvites.map((invite) => Math.max(0, Math.ceil((invite.expiresAtMs - Date.now()) / 250))).join(':')
+        : 'none';
     return JSON.stringify({
       hp: state.player.hp,
       mp: state.player.mp,
@@ -2053,14 +2325,20 @@ export class Hud {
       activeChatFilter: this.activeChatFilter,
       chatDraft: this.chatDraft,
       whisperTargetDraft: this.whisperTargetDraft,
+      clanNameDraft: this.clanNameDraft,
       chatFocusField: this.chatFocusField,
       skillBookTab: this.skillBookTab,
       inventoryOpen: this.inventoryOpen,
       partyWindowOpen: this.partyWindowOpen,
+      clanInfoOpen: this.clanInfoOpen,
       quest: state.quest,
       dialog: state.dialog,
       party: state.party,
       partyInvites: state.partyInvites,
+      clan: state.clan,
+      clanInvites: state.clanInvites,
+      partyInviteCountdownBucket,
+      clanInviteCountdownBucket,
       incomingTradeOffer: state.incomingTradeOffer,
       outgoingTradeOffer: state.outgoingTradeOffer,
       region: getRegionIdForPoint(state.player.position),
@@ -2069,7 +2347,19 @@ export class Hud {
 
   private handleSubmit(event: Event): void {
     const target = event.target;
-    if (!(target instanceof HTMLFormElement) || !target.matches('[data-chat-compose]')) {
+    if (!(target instanceof HTMLFormElement)) {
+      return;
+    }
+    if (target.matches('[data-clan-create-form]')) {
+      event.preventDefault();
+      const nextName = this.clanNameDraft.trim();
+      if (!nextName || !this.onCreateClan) {
+        return;
+      }
+      this.onCreateClan(nextName);
+      return;
+    }
+    if (!target.matches('[data-chat-compose]')) {
       return;
     }
     event.preventDefault();
@@ -2087,6 +2377,10 @@ export class Hud {
     }
     if (target.matches('[data-chat-target]')) {
       this.whisperTargetDraft = target.value;
+      return;
+    }
+    if (target.matches('[data-clan-name]')) {
+      this.clanNameDraft = target.value;
     }
   }
 
@@ -2368,16 +2662,6 @@ export class Hud {
       return;
     }
 
-    const partyInviteButton = target.closest<HTMLElement>('[data-party-invite]');
-    if (partyInviteButton) {
-      const targetCharacterId = partyInviteButton.dataset.partyInvite;
-      if (!targetCharacterId || !this.onInvitePartyMember) {
-        return;
-      }
-      this.onInvitePartyMember(targetCharacterId);
-      return;
-    }
-
     const partyAcceptButton = target.closest<HTMLElement>('[data-party-accept]');
     if (partyAcceptButton) {
       const inviteId = partyAcceptButton.dataset.partyAccept;
@@ -2414,6 +2698,74 @@ export class Hud {
         return;
       }
       this.onKickPartyMember(targetCharacterId);
+      return;
+    }
+
+    const clanAcceptButton = target.closest<HTMLElement>('[data-clan-accept]');
+    if (clanAcceptButton) {
+      const inviteId = clanAcceptButton.dataset.clanAccept;
+      if (!inviteId || !this.onAcceptClanInvite) {
+        return;
+      }
+      this.onAcceptClanInvite(inviteId);
+      return;
+    }
+
+    const clanDeclineButton = target.closest<HTMLElement>('[data-clan-decline]');
+    if (clanDeclineButton) {
+      const inviteId = clanDeclineButton.dataset.clanDecline;
+      if (!inviteId || !this.onDeclineClanInvite) {
+        return;
+      }
+      this.onDeclineClanInvite(inviteId);
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-clan-invite]')) {
+      if (!this.onInviteClanMember) {
+        return;
+      }
+      this.onInviteClanMember();
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-clan-info-toggle]')) {
+      this.clanInfoOpen = !this.clanInfoOpen;
+      this.lastSnapshot = '';
+      this.update(this.store.getState());
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-clan-info-close]')) {
+      this.clanInfoOpen = false;
+      this.lastSnapshot = '';
+      this.update(this.store.getState());
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-clan-leave]')) {
+      if (!this.onLeaveClan) {
+        return;
+      }
+      this.onLeaveClan();
+      return;
+    }
+
+    const clanKickButton = target.closest<HTMLElement>('[data-clan-kick]');
+    if (clanKickButton) {
+      const targetCharacterId = clanKickButton.dataset.clanKick;
+      if (!targetCharacterId || !this.onKickClanMember) {
+        return;
+      }
+      this.onKickClanMember(targetCharacterId);
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-clan-dissolve]')) {
+      if (!this.onDissolveClan) {
+        return;
+      }
+      this.onDissolveClan();
       return;
     }
 

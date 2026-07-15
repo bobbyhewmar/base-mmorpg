@@ -1,7 +1,41 @@
 import { describe, expect, it } from 'vitest';
 
-import { createInitialState, getLearnedSkillsForCharacter } from '../data/templates';
+import { createInitialState, createMob, createNpc, gameTemplates, getLearnedSkillsForCharacter } from '../data/templates';
+import type { GameState } from './types';
 import { GameStore, getDerivedStats, getItemAttributeSummary } from './game';
+
+const seedTestMob = (
+  state: GameState,
+  id = 'mob_1',
+  templateId: keyof typeof gameTemplates.mobTemplates = 'mireling',
+  x = -108,
+  z = 0,
+): void => {
+  state.mobs[id] = createMob(id, templateId, x, z, gameTemplates.mobTemplates[templateId].maxHp);
+};
+
+const createCombatState = (): GameState => {
+  const state = createInitialState();
+  seedTestMob(state, 'mob_1');
+  seedTestMob(state, 'mob_2');
+  seedTestMob(state, 'mob_3');
+  seedTestMob(state, 'mob_4');
+  return state;
+};
+
+const seedMerchant = (state: GameState): void => {
+  state.npcs.npc_merchant = createNpc('npc_merchant', 'Ilya', 'Provisioner of the Plaza', -10, -3);
+};
+
+const seedWarehouseKeeper = (state: GameState): void => {
+  state.npcs.npc_warehouse_keeper = createNpc(
+    'npc_warehouse_keeper',
+    'Rhea',
+    'Vaultkeeper of the Plaza',
+    -5,
+    2.5,
+  );
+};
 
 describe('domain combat rules', () => {
   it('regenerates CP, HP, and MP by 3 percent per second after standing still for 5 seconds', () => {
@@ -54,7 +88,7 @@ describe('domain combat rules', () => {
   });
 
   it('walks into skill range before starting the cast against a selected target', () => {
-    const state = createInitialState();
+    const state = createCombatState();
     state.player.position = { x: 20, z: 10 };
     state.mobs.mob_1.position = { x: 34, z: 10 };
     state.targetId = 'mob_1';
@@ -66,7 +100,7 @@ describe('domain combat rules', () => {
     expect(store.getState().player.queuedSkill).toEqual({ skillId: 'crescent_strike', targetId: 'mob_1' });
     expect(store.getState().logs[0]?.text).toContain('Moving into range');
 
-    store.tick(700);
+    store.tick(2100);
 
     expect(store.getState().player.cast?.skillId).toBe('crescent_strike');
     expect(store.getState().player.queuedSkill).toBeNull();
@@ -75,7 +109,7 @@ describe('domain combat rules', () => {
   });
 
   it('walks into melee range before resolving a basic attack against the selected target', () => {
-    const state = createInitialState();
+    const state = createCombatState();
     state.player.position = { x: 20, z: 10 };
     state.mobs.mob_1.position = { x: 26, z: 10 };
     state.targetId = 'mob_1';
@@ -87,16 +121,16 @@ describe('domain combat rules', () => {
     expect(store.getState().mobs.mob_1.hp).toBe(54);
     expect(store.getState().logs[0]?.text).toContain('Moving into range');
 
-    store.tick(450);
+    store.tick(1400);
 
     expect(store.getState().player.queuedBasicAttackTargetId).toBeNull();
     expect(store.getState().player.cooldowns.basic_attack).toBe(750);
     expect(store.getState().mobs.mob_1.hp).toBeLessThan(54);
-    expect(store.getState().logs[0]?.text).toContain('basic attack');
+    expect(store.getState().logs.some((entry) => entry.text.includes('basic attack'))).toBe(true);
   });
 
   it('splits target-centered AoE damage across nearby enemies', () => {
-    const state = createInitialState();
+    const state = createCombatState();
     state.player.level = 2;
     state.player.learnedSkills = getLearnedSkillsForCharacter(state.player.baseClass, state.player.level);
     state.player.position = { x: 42, z: 0 };
@@ -117,7 +151,7 @@ describe('domain combat rules', () => {
   });
 
   it('rejects active skills that are not learned at the current level', () => {
-    const state = createInitialState();
+    const state = createCombatState();
     state.targetId = 'mob_1';
     const store = new GameStore(state);
 
@@ -128,7 +162,7 @@ describe('domain combat rules', () => {
   });
 
   it('rejects passive skills as activatable commands', () => {
-    const state = createInitialState();
+    const state = createCombatState();
     state.targetId = 'mob_1';
     const store = new GameStore(state);
 
@@ -163,7 +197,7 @@ describe('inventory and equipment rules', () => {
     expect(store.getState().items.item_loot_far.container).toBe('ground');
     expect(store.getState().logs[0]?.text).toContain('Moving to pick up');
 
-    store.tick(600);
+    store.tick(1300);
 
     expect(store.getState().player.queuedLootId).toBeNull();
     expect(store.getState().loot.loot_far).toBeUndefined();
@@ -231,7 +265,7 @@ describe('inventory and equipment rules', () => {
     expect(store.getState().player.queuedLootId).toBe('loot_nearby');
     expect(store.getState().logs[0]?.text).toContain('Moving to pick up');
 
-    store.tick(600);
+    store.tick(1300);
 
     expect(store.getState().player.queuedLootId).toBeNull();
     expect(store.getState().loot.loot_nearby).toBeUndefined();
@@ -354,7 +388,8 @@ describe('inventory and equipment rules', () => {
 
   it('buys a vendor offer without trusting any client-side price payload', () => {
     const state = createInitialState();
-    state.player.position = { x: -10, z: 8 };
+    seedMerchant(state);
+    state.player.position = { x: -10, z: -3 };
     const store = new GameStore(state);
 
     store.dispatch({ type: 'buyVendorOffer', offerId: 'merchant_spear_offer', quantity: 1 });
@@ -369,7 +404,8 @@ describe('inventory and equipment rules', () => {
 
   it('exchanges a fixed merchant offer without trusting any client-side material valuation', () => {
     const state = createInitialState();
-    state.player.position = { x: -10, z: 8 };
+    seedMerchant(state);
+    state.player.position = { x: -10, z: -3 };
     const store = new GameStore(state);
 
     store.dispatch({ type: 'exchangeVendorOffer', offerId: 'merchant_mantle_exchange', quantity: 1 });
@@ -384,7 +420,8 @@ describe('inventory and equipment rules', () => {
 
   it('sells an inventory item to the nearby vendor with backend-owned valuation semantics', () => {
     const state = createInitialState();
-    state.player.position = { x: -10, z: 8 };
+    seedMerchant(state);
+    state.player.position = { x: -10, z: -3 };
     state.items.item_weapon_inventory = {
       id: 'item_weapon_inventory',
       templateId: 'ironwood_spear',
@@ -402,7 +439,8 @@ describe('inventory and equipment rules', () => {
 
   it('moves stackable items into and out of the warehouse through container truth', () => {
     const state = createInitialState();
-    state.player.position = { x: -13, z: 4 };
+    seedWarehouseKeeper(state);
+    state.player.position = { x: -5, z: 2.5 };
     const store = new GameStore(state);
 
     store.dispatch({ type: 'depositWarehouseItem', itemId: 'item_duskgold_start', quantity: 2 });

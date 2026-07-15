@@ -5,11 +5,13 @@ import {
   getLearnedSkillsForCharacter,
   normalizeHotbarState,
 } from '../game/data/templates';
+import { isCanonicalBaseClass } from '../game/data/characterClasses';
 import type {
   AppearanceOptionIndex,
   BaseClass,
   CharacterRace,
   CharacterSex,
+  ClanState,
   CompanionState,
   DerivedStats,
   GameState,
@@ -19,6 +21,7 @@ import type {
   NpcState,
   OwnedPetState,
   OtherPlayerState,
+  PendingClanInviteState,
   PendingPartyInviteState,
   PendingTradeOfferState,
   PlayerHotbarState,
@@ -33,6 +36,7 @@ import type {
   ChatMessageServerMessage,
   CharacterSummary,
   CharacterItemSnapshot,
+  ClanNoticeMessage,
   DeltaMessage,
   EntityAppearMessage,
   EntityDisappearMessage,
@@ -66,6 +70,8 @@ import {
 } from './readModelMovement';
 import {
   activePetIdFromRoster,
+  cloneClanInvites,
+  cloneClanState,
   cloneHotbarState,
   cloneOwnedPets,
   clonePartyInvites,
@@ -80,6 +86,8 @@ import {
   parseAuthoritativePath,
   parseAuthoritativeStats,
   parseAuthoritativeXP,
+  parseClanInvites,
+  parseClanSnapshot,
   parseHotbarState,
   parseKnownSkills,
   parseNpcInteractionSnapshot,
@@ -148,7 +156,7 @@ const CHAT_MESSAGE_MAX_LENGTH = 240;
 
 const makeCommandId = (commandSeq: number): string => `cmd_${Date.now()}_${commandSeq}`;
 
-const isBaseClass = (value: unknown): value is BaseClass => value === 'Fighter' || value === 'Mage';
+const isBaseClass = isCanonicalBaseClass;
 
 const CHARACTER_RACES: readonly CharacterRace[] = ['Human', 'Elf', 'Dark Elf', 'Orc', 'Dwarf'];
 const CHARACTER_SEXES: readonly CharacterSex[] = ['Male', 'Female'];
@@ -181,6 +189,13 @@ const requireAppearanceIndex = (value: unknown, field: string): AppearanceOption
   throw new Error(`Missing canonical ${field}.`);
 };
 
+const requireHairColor = (value: unknown, field: string): string => {
+  if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) {
+    return value.toLowerCase();
+  }
+  throw new Error(`Missing canonical ${field}.`);
+};
+
 const npcTemplate = (templateId: string): Pick<NpcState, 'name' | 'title'> => {
   if (templateId === 'wardkeeper') {
     return {
@@ -198,6 +213,24 @@ const npcTemplate = (templateId: string): Pick<NpcState, 'name' | 'title'> => {
     return {
       name: 'Rhea',
       title: 'Vaultkeeper of the Plaza',
+    };
+  }
+  if (templateId === 'gatekeeper') {
+    return {
+      name: 'Oren',
+      title: 'Gatekeeper of Stonecross',
+    };
+  }
+  if (templateId === 'combat_trainer') {
+    return {
+      name: 'Darian',
+      title: 'Combat Trainer',
+    };
+  }
+  if (templateId === 'mystic_trainer') {
+    return {
+      name: 'Maelis',
+      title: 'Mystic Trainer',
     };
   }
   return {
@@ -219,8 +252,8 @@ const otherPlayerSnapshot = (
     baseClass,
     sex: requireSex(entity.state.sex, 'other player sex'),
     hairStyle: requireAppearanceIndex(entity.state.hair_style, 'other player hair_style'),
-    hairColor: requireAppearanceIndex(entity.state.hair_color, 'other player hair_color'),
-    face: requireAppearanceIndex(entity.state.face, 'other player face'),
+    hairColor: requireHairColor(entity.state.hair_color, 'other player hair_color'),
+    skinType: requireAppearanceIndex(entity.state.skin_type, 'other player skin_type'),
     archetypeId: getArchetypeIdForBaseClass(baseClass),
     level: typeof entity.state.level === 'number' ? entity.state.level : 1,
     hp: typeof entity.state.hp === 'number' ? entity.state.hp : 1,
@@ -361,6 +394,8 @@ export class OnlineReadModel {
   private authoritativeQuest: GameState['quest'] | null;
   private authoritativeParty: GameState['party'] | null;
   private authoritativePartyInvites: PendingPartyInviteState[] = [];
+  private authoritativeClan: ClanState | null;
+  private authoritativeClanInvites: PendingClanInviteState[] = [];
   private activeNpcInteraction: OnlineNpcInteraction | null;
   private incomingTradeOffer: PendingTradeOfferState | null = null;
   private outgoingTradeOffer: PendingTradeOfferState | null = null;
@@ -400,6 +435,8 @@ export class OnlineReadModel {
     this.authoritativeQuest = parseQuestSnapshot(selfState?.quest);
     this.authoritativeParty = parsePartySnapshot(selfState?.party);
     this.authoritativePartyInvites = parsePartyInvites(selfState?.party_invites);
+    this.authoritativeClan = parseClanSnapshot(selfState?.clan);
+    this.authoritativeClanInvites = parseClanInvites(selfState?.clan_invites);
     this.activeNpcInteraction = parseNpcInteractionSnapshot(selfState?.npc_interaction);
     if (selfState?.cooldowns && typeof selfState.cooldowns === 'object') {
       this.syncCooldownSnapshot(selfState.cooldowns, Date.now());
@@ -427,8 +464,8 @@ export class OnlineReadModel {
     state.player.baseClass = this.authoritativeBaseClass;
     state.player.sex = this.character.sex;
     state.player.hairStyle = requireAppearanceIndex(this.character.hair_style, 'character hair_style');
-    state.player.hairColor = requireAppearanceIndex(this.character.hair_color, 'character hair_color');
-    state.player.face = requireAppearanceIndex(this.character.face, 'character face');
+    state.player.hairColor = requireHairColor(this.character.hair_color, 'character hair_color');
+    state.player.skinType = requireAppearanceIndex(this.character.skin_type, 'character skin_type');
     state.player.archetypeId = getArchetypeIdForBaseClass(this.authoritativeBaseClass);
     state.player.level = this.authoritativeLevel ?? this.character.level;
     state.player.xp = this.authoritativeXP ?? state.player.xp;
@@ -483,6 +520,8 @@ export class OnlineReadModel {
     state.dialog = projectNpcDialog(this.activeNpcInteraction, this.authoritativeQuest);
     state.party = clonePartyState(this.authoritativeParty);
     state.partyInvites = clonePartyInvites(this.authoritativePartyInvites);
+    state.clan = cloneClanState(this.authoritativeClan);
+    state.clanInvites = cloneClanInvites(this.authoritativeClanInvites);
     state.incomingTradeOffer = clonePendingTradeOffer(this.incomingTradeOffer);
     state.outgoingTradeOffer = clonePendingTradeOffer(this.outgoingTradeOffer);
     state.floatingTexts = this.projectFloatingTexts();
@@ -507,13 +546,16 @@ export class OnlineReadModel {
 
       if (entity.entityType === 'mob') {
         const hp = typeof entity.state.hp === 'number' ? entity.state.hp : 1;
+        const personality = entity.state.personality === 'aggressive' ? 'aggressive' : 'passive';
+        const aiState = entity.state.alive === false ? 'dead' : entity.state.ai_state === 'aggro' ? 'aggro' : 'idle';
         state.mobs[entity.entityId] = {
           id: entity.entityId,
           templateId: entity.templateId,
+          personality,
           position: { ...entity.position },
           spawnPoint: { ...entity.position },
           hp,
-          aiState: entity.state.alive === false ? 'dead' : 'idle',
+          aiState,
           attackCooldownMs: 0,
           respawnAtMs: null,
         } satisfies MobState;
@@ -659,6 +701,46 @@ export class OnlineReadModel {
       payload: {
         target_id: targetId,
       },
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  selectProjectedPlayerTarget(targetId: string): boolean {
+    const target = this.entities.get(targetId);
+    if (!target || target.entityType !== 'player') {
+      this.pushLog('Player targeting failed: target is no longer known in the current region.', 'warning');
+      return false;
+    }
+    this.targetId = targetId;
+    const targetName = (target.state['name'] as string | undefined)?.trim() || 'Player';
+    this.pushLog(`${targetName} is now your target.`, 'neutral');
+    return true;
+  }
+
+  createClearTarget(): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'clear_target',
+      payload: {},
     };
     this.pendingCommands.set(commandId, {
       commandId,
@@ -1534,7 +1616,7 @@ export class OnlineReadModel {
     return envelope;
   }
 
-  createInvitePartyMember(targetCharacterId: string): GameplayCommandEnvelope | null {
+  createInvitePartyMember(targetCharacterId?: string | null): GameplayCommandEnvelope | null {
     if (this.isCommandFlowBlocked()) {
       this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
       return null;
@@ -1543,7 +1625,12 @@ export class OnlineReadModel {
       this.pushLog('Actor is currently dead.', 'warning');
       return null;
     }
-    const target = this.entities.get(targetCharacterId);
+    const resolvedTargetCharacterId = targetCharacterId ?? this.targetId;
+    if (!resolvedTargetCharacterId) {
+      this.pushLog('Party invite failed: player is no longer known in the current region.', 'warning');
+      return null;
+    }
+    const target = this.entities.get(resolvedTargetCharacterId);
     if (!target || target.entityType !== 'player') {
       this.pushLog('Party invite failed: player is no longer known in the current region.', 'warning');
       return null;
@@ -1552,7 +1639,7 @@ export class OnlineReadModel {
       this.pushLog('Party invite failed: only the current leader can invite new members.', 'warning');
       return null;
     }
-    if (this.authoritativeParty?.members.some((member) => member.characterId === targetCharacterId)) {
+    if (this.authoritativeParty?.members.some((member) => member.characterId === resolvedTargetCharacterId)) {
       this.pushLog('Party invite failed: player is already in the party.', 'warning');
       return null;
     }
@@ -1565,6 +1652,247 @@ export class OnlineReadModel {
       command_seq: commandSeq,
       client_sent_at_ms: Date.now(),
       type: 'invite_party_member',
+      payload: {},
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createClan(name: string): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    const normalizedName = name.trim();
+    if (!normalizedName) {
+      this.pushLog('Clan create failed: choose a clan name first.', 'warning');
+      return null;
+    }
+    if (this.authoritativeClan) {
+      this.pushLog('Clan create failed: character is already in a clan.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'create_clan',
+      payload: {
+        name: normalizedName,
+      },
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createInviteClanMember(targetCharacterId?: string | null): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    const resolvedTargetCharacterId = targetCharacterId ?? this.targetId;
+    if (!resolvedTargetCharacterId) {
+      this.pushLog('Clan invite failed: player is no longer known in the current region.', 'warning');
+      return null;
+    }
+    const target = this.entities.get(resolvedTargetCharacterId);
+    if (!target || target.entityType !== 'player') {
+      this.pushLog('Clan invite failed: player is no longer known in the current region.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeClan) {
+      this.pushLog('Clan invite failed: character is not currently in a clan.', 'warning');
+      return null;
+    }
+    if (this.authoritativeClan.leaderCharacterId !== this.character.character_id) {
+      this.pushLog('Clan invite failed: only the current leader can invite new members.', 'warning');
+      return null;
+    }
+    if (this.authoritativeClan.members.some((member) => member.characterId === resolvedTargetCharacterId)) {
+      this.pushLog('Clan invite failed: player is already in the clan.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'invite_clan_member',
+      payload: {
+        target_character_id: resolvedTargetCharacterId,
+      },
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createAcceptClanInvite(inviteId: string): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeClanInvites.some((invite) => invite.inviteId === inviteId)) {
+      this.pushLog('Clan accept failed: invite is no longer available.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'accept_clan_invite',
+      payload: {
+        invite_id: inviteId,
+      },
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createDeclineClanInvite(inviteId: string): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeClanInvites.some((invite) => invite.inviteId === inviteId)) {
+      this.pushLog('Clan decline failed: invite is no longer available.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'decline_clan_invite',
+      payload: {
+        invite_id: inviteId,
+      },
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createLeaveClan(): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeClan) {
+      this.pushLog('Clan leave failed: character is not currently in a clan.', 'warning');
+      return null;
+    }
+    if (this.authoritativeClan.leaderCharacterId === this.character.character_id) {
+      this.pushLog('Clan leave failed: leader must dissolve the clan in this phase.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'leave_clan',
+      payload: {},
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createKickClanMember(targetCharacterId: string): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeClan) {
+      this.pushLog('Clan removal failed: character is not currently in a clan.', 'warning');
+      return null;
+    }
+    if (this.authoritativeClan.leaderCharacterId !== this.character.character_id) {
+      this.pushLog('Clan removal failed: only the current leader can remove members.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeClan.members.some((member) => member.characterId === targetCharacterId)) {
+      this.pushLog('Clan removal failed: player is no longer in the clan.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'kick_clan_member',
       payload: {
         target_character_id: targetCharacterId,
       },
@@ -1576,6 +1904,68 @@ export class OnlineReadModel {
       status: 'sent',
     });
     return envelope;
+  }
+
+  createDissolveClan(): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeClan) {
+      this.pushLog('Clan dissolve failed: character is not currently in a clan.', 'warning');
+      return null;
+    }
+    if (this.authoritativeClan.leaderCharacterId !== this.character.character_id) {
+      this.pushLog('Clan dissolve failed: only the current leader can dissolve the clan.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'dissolve_clan',
+      payload: {},
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createPartySlashCommand(text: string): GameplayCommandEnvelope | null | undefined {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith('/')) {
+      return undefined;
+    }
+
+    const [rawCommand, ...rawArgs] = trimmed.split(/\s+/);
+    const command = rawCommand.toLowerCase();
+    if (command === '/invite') {
+      if (rawArgs.length > 0) {
+        this.pushLog('Party invite failed: /invite currently uses the current player target only.', 'warning');
+        return null;
+      }
+      return this.createInvitePartyMember();
+    }
+    if (command === '/leave') {
+      if (rawArgs.length > 0) {
+        this.pushLog('Party leave failed: /leave does not accept extra arguments.', 'warning');
+        return null;
+      }
+      return this.createLeaveParty();
+    }
+    return undefined;
   }
 
   createAcceptPartyInvite(inviteId: string): GameplayCommandEnvelope | null {
@@ -1809,6 +2199,8 @@ export class OnlineReadModel {
         return this.applyTradeNotice(message);
       case 'party_notice':
         return this.applyPartyNotice(message);
+      case 'clan_notice':
+        return this.applyClanNotice(message);
       case 'chat_message':
         return this.applyChatMessage(message);
       default:
@@ -1926,6 +2318,12 @@ export class OnlineReadModel {
     }
     if (self.party_invites !== undefined) {
       this.authoritativePartyInvites = parsePartyInvites(self.party_invites);
+    }
+    if (self.clan !== undefined) {
+      this.authoritativeClan = self.clan === null ? null : parseClanSnapshot(self.clan);
+    }
+    if (self.clan_invites !== undefined) {
+      this.authoritativeClanInvites = parseClanInvites(self.clan_invites);
     }
     const maybeDead = parseAuthoritativeDead(self.dead);
     if (maybeDead !== null) {
@@ -2173,6 +2571,24 @@ export class OnlineReadModel {
     return { changed: true };
   }
 
+  private applyClanNotice(message: ClanNoticeMessage): { changed: boolean } {
+    if (message.command_id) {
+      const pending = this.pendingCommands.get(message.command_id);
+      if (pending) {
+        pending.status = 'applied';
+      }
+    }
+
+    const tone =
+      message.status === 'created' || message.status === 'invite_accepted' || message.status === 'member_joined'
+        ? 'success'
+        : message.status === 'invite_received' || message.status === 'invite_sent'
+          ? 'neutral'
+          : 'warning';
+    this.pushLog(message.message, tone, 'system');
+    return { changed: true };
+  }
+
   private applyChatMessage(message: ChatMessageServerMessage): { changed: boolean } {
     if (message.command_id) {
       const pending = this.pendingCommands.get(message.command_id);
@@ -2359,8 +2775,22 @@ export class OnlineReadModel {
     return entity;
   }
 
+  private hasProjectedTarget(targetId: string | null): boolean {
+    if (!targetId) {
+      return false;
+    }
+    const entity = this.entities.get(targetId);
+    if (!entity) {
+      return false;
+    }
+    if (entity.entityType === 'mob') {
+      return entity.state.alive !== false;
+    }
+    return entity.entityType === 'player' || entity.entityType === 'npc';
+  }
+
   private clearInvalidTargetIfNeeded(): void {
-    if (!this.getLivingMobTarget(this.targetId)) {
+    if (!this.hasProjectedTarget(this.targetId)) {
       this.targetId = null;
     }
   }

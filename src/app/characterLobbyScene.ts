@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Object3D } from 'three';
 import type { CharacterSummary } from '../online/contracts';
+import { ensureClassCharacterModel, updateClassCharacterModelAnimation } from '../game/scene/characterModelAssets';
 
 type AppearanceOptionIndex = 0 | 1 | 2;
 
@@ -57,7 +58,7 @@ const requireAppearanceIndex = (value: number, field: string): AppearanceOptionI
 };
 
 const characterSkin = (character: CharacterSummary): string => {
-  const face = requireAppearanceIndex(character.face, 'face');
+  const skinType = requireAppearanceIndex(character.skin_type, 'skin_type');
   const palettes: Record<CharacterSummary['race'], readonly [string, string, string]> = {
     Human: ['#d8b99f', '#cfaa91', '#e0c7ad'],
     Elf: ['#e5d2b5', '#dfc9a7', '#f0dfc0'],
@@ -65,7 +66,7 @@ const characterSkin = (character: CharacterSummary): string => {
     Orc: ['#78906d', '#6d8664', '#879b75'],
     Dwarf: ['#c0926f', '#ad7c58', '#d3a27b'],
   };
-  return palettes[character.race][face];
+  return palettes[character.race][skinType];
 };
 
 const gearTint = (character: CharacterSummary): string => {
@@ -76,15 +77,7 @@ const gearTint = (character: CharacterSummary): string => {
 };
 
 const hairTint = (character: CharacterSummary): string => {
-  const hairColor = requireAppearanceIndex(character.hair_color, 'hair_color');
-  const palettes: Record<CharacterSummary['race'], readonly [string, string, string]> = {
-    Human: ['#6b4e37', '#c5a46a', '#26211c'],
-    Elf: ['#e4d47d', '#fff0a8', '#c6c3b4'],
-    'Dark Elf': ['#e7eef0', '#c5d4dc', '#f4f4ff'],
-    Orc: ['#1d201c', '#44372d', '#2e3026'],
-    Dwarf: ['#b66d3d', '#e0a65d', '#f1f1e6'],
-  };
-  return palettes[character.race][hairColor];
+  return character.hair_color;
 };
 
 const createStandardMaterial = (color: string, roughness = 0.82): THREE.MeshStandardMaterial =>
@@ -117,8 +110,17 @@ export const animateCharacterVisual = (
     phaseOffset?: number;
   } = {},
 ): void => {
+  const previousModelAnimationTime = group.userData.modelLastAnimationTimeMs;
+  const modelDeltaMs =
+    typeof previousModelAnimationTime === 'number' ? Math.max(0, Math.min(timeMs - previousModelAnimationTime, 80)) : 16;
+  group.userData.modelLastAnimationTimeMs = timeMs;
+
   const rig = group.userData.proceduralRig as ProceduralCharacterRig | undefined;
   if (!rig) {
+    updateClassCharacterModelAnimation(group, modelDeltaMs, {
+      moving: options.moving,
+      basicAttacking: options.interactionProgress !== null && options.interactionProgress !== undefined,
+    });
     return;
   }
 
@@ -152,6 +154,11 @@ export const animateCharacterVisual = (
     rig.armLeft.object.rotation.z = 0.62;
     rig.armRight.object.rotation.z = -0.62;
   }
+
+  updateClassCharacterModelAnimation(group, modelDeltaMs, {
+    moving: options.moving,
+    basicAttacking: options.interactionProgress !== null && options.interactionProgress !== undefined,
+  });
 };
 
 const createNameSprite = (name: string): THREE.Sprite => {
@@ -220,6 +227,8 @@ export const createCharacterVisual = (
   options: CharacterVisualOptions = {},
 ): THREE.Group => {
   const group = new THREE.Group();
+  const proceduralRoot = new THREE.Group();
+  proceduralRoot.visible = false;
   const isMage = character.base_class === 'Mage';
   const isDwarf = character.race === 'Dwarf';
   const isOrc = character.race === 'Orc';
@@ -311,7 +320,7 @@ export const createCharacterVisual = (
     weapon.add(blade, hilt);
   }
 
-  group.add(
+  proceduralRoot.add(
     legs,
     torso,
     chestPlate,
@@ -326,11 +335,26 @@ export const createCharacterVisual = (
     shoulderRight,
     weapon,
   );
+  group.add(proceduralRoot);
   if (options.showName !== false) {
     group.add(createNameSprite(character.name));
   }
   group.scale.setScalar(1.04);
   tagCharacterObject(group, character.character_id);
+  ensureClassCharacterModel(
+    group,
+    {
+      baseClass: character.base_class,
+      sex: character.sex,
+      hairStyle: character.hair_style,
+      hairColor: character.hair_color,
+      skinType: character.skin_type,
+    },
+    {
+      desiredHeight: 3.35,
+      proceduralRoot,
+    },
+  );
   const [leftLeg, rightLeg] = legMeshes as [THREE.Mesh, THREE.Mesh];
   group.userData.proceduralRig = {
     torso: captureRigPart(torso),

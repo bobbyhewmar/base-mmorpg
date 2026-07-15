@@ -10,10 +10,10 @@ const character: CharacterSummary = {
   base_class: 'Fighter',
   sex: 'Female',
   hair_style: 1,
-  hair_color: 2,
-  face: 1,
+  hair_color: '#8f5fd3',
+  skin_type: 2,
   level: 1,
-  last_region_id: 'dawn_plaza',
+  last_region_id: 'stonecross_plaza',
   is_enterable: true,
 };
 
@@ -21,8 +21,8 @@ const regionContext: RegionContextMessage = {
   kind: 'region_context',
   emitted_at_ms: Date.now(),
   region_revision: 1,
-  region_id: 'dawn_plaza',
-  geodata_version: 'dawn_plaza_geo_v1',
+  region_id: 'stonecross_plaza',
+  geodata_version: 'clean_plain_1024_geo_v1',
   self_position: { x: -8, z: 0 },
   known_entities: [
     {
@@ -64,8 +64,8 @@ const partyRegionContext: RegionContextMessage = {
         base_class: 'Mage',
         sex: 'Female',
         hair_style: 1,
-        hair_color: 2,
-        face: 1,
+        hair_color: '#c5a46a',
+        skin_type: 2,
         level: 4,
         hp: 98,
         dead: false,
@@ -98,7 +98,7 @@ const initialSelfState: SelfStateSnapshot = {
     max_mp: 58,
     attack: 17,
     defense: 9,
-    move_speed: 8.6,
+    move_speed: 3.225,
   },
 };
 
@@ -242,6 +242,100 @@ describe('online read model', () => {
     expect(model.snapshot.partyInvites).toEqual([]);
   });
 
+  it('projects authoritative clan state and pending clan invites from self state and deltas only', () => {
+    const model = new OnlineReadModel(partyRegionContext, character, initialItemState, {
+      ...initialSelfState,
+      clan: {
+        clan_id: 'clan_1',
+        name: 'Nightfall',
+        leader_character_id: 'char_1',
+        members: [
+          {
+            character_id: 'char_1',
+            name: 'Arden',
+            level: 1,
+            base_class: 'Fighter',
+            online: true,
+            is_leader: true,
+          },
+        ],
+      },
+      clan_invites: [
+        {
+          invite_id: 'clan_invite_1',
+          clan_id: 'clan_2',
+          clan_name: 'Moonrise',
+          inviter_character_id: 'char_2',
+          inviter_name: 'Selene',
+          expires_at_ms: Date.now() + 30_000,
+        },
+      ],
+    });
+
+    expect(model.snapshot.clan).toEqual({
+      clanId: 'clan_1',
+      name: 'Nightfall',
+      leaderCharacterId: 'char_1',
+      members: [
+        {
+          characterId: 'char_1',
+          name: 'Arden',
+          level: 1,
+          baseClass: 'Fighter',
+          online: true,
+          isLeader: true,
+        },
+      ],
+    });
+    expect(model.snapshot.clanInvites).toEqual([
+      {
+        inviteId: 'clan_invite_1',
+        clanId: 'clan_2',
+        clanName: 'Moonrise',
+        inviterCharacterId: 'char_2',
+        inviterName: 'Selene',
+        expiresAtMs: expect.any(Number),
+      },
+    ]);
+
+    model.applyMessage({
+      kind: 'delta',
+      emitted_at_ms: Date.now(),
+      revision: 1,
+      applies_to_command_id: '',
+      applies_to_command_seq: 0,
+      self: {
+        clan: {
+          clan_id: 'clan_1',
+          name: 'Nightfall',
+          leader_character_id: 'char_1',
+          members: [
+            {
+              character_id: 'char_1',
+              name: 'Arden',
+              level: 1,
+              base_class: 'Fighter',
+              online: true,
+              is_leader: true,
+            },
+            {
+              character_id: 'char_2',
+              name: 'Selene',
+              level: 4,
+              base_class: 'Mage',
+              online: true,
+              is_leader: false,
+            },
+          ],
+        },
+        clan_invites: [],
+      },
+    });
+
+    expect(model.snapshot.clan?.members).toHaveLength(2);
+    expect(model.snapshot.clanInvites).toEqual([]);
+  });
+
   it('starts moving immediately and shows a pending path preview before any delta arrives', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
@@ -279,11 +373,42 @@ describe('online read model', () => {
       ],
     });
 
-    const inviteCommand = model.createInvitePartyMember('char_2');
+    (model as any).targetId = 'char_2';
+
+    const inviteCommand = model.createInvitePartyMember();
     expect(inviteCommand?.type).toBe('invite_party_member');
+    expect(inviteCommand?.payload).toEqual({});
 
     const acceptCommand = model.createAcceptPartyInvite('invite_accept_1');
     expect(acceptCommand?.type).toBe('accept_party_invite');
+
+    const slashInviteCommand = model.createPartySlashCommand('/invite');
+    expect(slashInviteCommand?.type).toBe('invite_party_member');
+
+    const leaveModel = new OnlineReadModel(partyRegionContext, character, initialItemState, {
+      ...initialSelfState,
+      party: {
+        party_id: 'party_1',
+        leader_character_id: character.character_id,
+        members: [
+          {
+            character_id: character.character_id,
+            name: character.name,
+            level: character.level,
+            base_class: character.base_class,
+            hp: 100,
+            mp: 50,
+            online: true,
+            is_leader: true,
+          },
+        ],
+      },
+    });
+    const slashLeaveCommand = leaveModel.createPartySlashCommand('/leave');
+    expect(slashLeaveCommand?.type).toBe('leave_party');
+
+    expect(model.createPartySlashCommand('/invite Selene')).toBeNull();
+    expect(model.snapshot.logs[0].text).toBe('Party invite failed: /invite currently uses the current player target only.');
 
     model.applyMessage({
       kind: 'party_notice',
@@ -299,6 +424,130 @@ describe('online read model', () => {
       text: 'Selene joined the party.',
       tone: 'success',
     });
+  });
+
+  it('creates clan commands from authoritative state and keeps local clan truth immutable on semantic reject', () => {
+    const model = new OnlineReadModel(partyRegionContext, character, initialItemState, {
+      ...initialSelfState,
+      clan: {
+        clan_id: 'clan_1',
+        name: 'Nightfall',
+        leader_character_id: character.character_id,
+        members: [
+          {
+            character_id: character.character_id,
+            name: character.name,
+            level: character.level,
+            base_class: character.base_class,
+            online: true,
+            is_leader: true,
+          },
+        ],
+      },
+      clan_invites: [
+        {
+          invite_id: 'clan_invite_accept_1',
+          clan_id: 'clan_remote',
+          clan_name: 'Moonrise',
+          inviter_character_id: 'char_2',
+          inviter_name: 'Selene',
+          expires_at_ms: Date.now() + 30_000,
+        },
+      ],
+    });
+
+    (model as any).targetId = 'char_2';
+
+    const inviteCommand = model.createInviteClanMember();
+    expect(inviteCommand?.type).toBe('invite_clan_member');
+    expect(inviteCommand?.payload).toEqual({ target_character_id: 'char_2' });
+
+    const acceptCommand = model.createAcceptClanInvite('clan_invite_accept_1');
+    expect(acceptCommand?.type).toBe('accept_clan_invite');
+
+    model.applyMessage({
+      kind: 'clan_notice',
+      emitted_at_ms: Date.now(),
+      status: 'member_joined',
+      clan_id: 'clan_1',
+      message: 'Selene joined the clan.',
+      command_id: inviteCommand?.command_id,
+    });
+    expect(model.snapshot.logs[0]).toMatchObject({
+      text: 'Selene joined the clan.',
+      tone: 'success',
+      channel: 'system',
+    });
+
+    const beforeRejectClan = model.snapshot.clan;
+    model.applyMessage({
+      kind: 'reject',
+      emitted_at_ms: Date.now(),
+      command_id: inviteCommand?.command_id,
+      reason_code: 'clan.target_already_in_clan',
+      message: 'Referenced player is already in a clan.',
+    });
+    expect(model.snapshot.clan).toEqual(beforeRejectClan);
+    expect(model.snapshot.logs[0].text).toBe('Clan invite failed: player is already in a clan.');
+  });
+
+  it('allows local player target selection for clan and party affordances without waiting for a server target delta', () => {
+    const model = new OnlineReadModel(regionContext, character, undefined, {
+      ...initialSelfState,
+      clan: {
+        clan_id: 'clan_1',
+        name: 'Dawnwatch',
+        leader_character_id: 'char_1',
+        members: [
+          {
+            character_id: 'char_1',
+            name: 'Arden',
+            level: 1,
+            base_class: 'Fighter',
+            online: true,
+            is_leader: true,
+          },
+        ],
+      },
+    });
+
+    model.applyMessage({
+      kind: 'entity_appear',
+      emitted_at_ms: Date.now(),
+      region_revision: 2,
+      entity: {
+        entity_id: 'char_other',
+        entity_type: 'player',
+        template_id: 'player_character',
+        position: { x: -4, z: 2 },
+        state: {
+          name: 'Selene',
+          level: 4,
+          race: 'Elf',
+          base_class: 'Mage',
+          sex: 'Female',
+          hair_style: 2,
+          hair_color: '#3366cc',
+          skin_type: 1,
+          hp: 118,
+          dead: false,
+          facing: 0.5,
+        },
+      },
+    });
+
+    expect(model.selectProjectedPlayerTarget('char_other')).toBe(true);
+    expect(model.snapshot.targetId).toBe('char_other');
+    expect(model.snapshot.targetId).toBe('char_other');
+    expect(model.snapshot.logs[0].text).toBe('Selene is now your target.');
+
+    const partyInvite = model.createInvitePartyMember();
+    expect(partyInvite?.type).toBe('invite_party_member');
+    expect(partyInvite?.payload).toEqual({});
+
+    const clanInvite = model.createInviteClanMember();
+    expect(clanInvite?.type).toBe('invite_clan_member');
+    expect(clanInvite?.payload).toEqual({ target_character_id: 'char_other' });
   });
 
   it('creates authoritative chat envelopes and projects region plus whisper messages into logs', () => {
@@ -347,7 +596,7 @@ describe('online read model', () => {
       channel: 'region',
       sender_character_id: 'char_1',
       sender_name: 'Arden',
-      region_id: 'dawn_plaza',
+      region_id: 'stonecross_plaza',
       text: 'Hello there',
     });
 
@@ -411,7 +660,7 @@ describe('online read model', () => {
     const model = new OnlineReadModel(regionContext, character, initialItemState);
     model.createMoveIntent({ x: 10, z: 0 });
 
-    advanceProjectionFrames(model, 2000);
+    advanceProjectionFrames(model, 4000);
 
     const snapshot = model.snapshot;
     expect(snapshot.player.position.x).toBeGreaterThan(-8);
@@ -454,7 +703,7 @@ describe('online read model', () => {
     advanceProjectionFrames(model, 120);
     expect(model.snapshot.player.position.x).toBeGreaterThan(rightAfterDelta);
 
-    advanceProjectionFrames(model, 2000);
+    advanceProjectionFrames(model, 4000);
     expect(model.snapshot.player.position).toEqual({ x: 4, z: 0 });
     expect(model.snapshot.player.moveTarget).toEqual({ x: 4, z: 0 });
   });
@@ -485,7 +734,7 @@ describe('online read model', () => {
       applies_to_command_seq: command?.command_seq ?? 1,
       self: {
         position: { x: -8, z: 0 },
-        geodata_version: 'dawn_plaza_geo_v1',
+        geodata_version: 'clean_plain_1024_geo_v1',
         authoritative_path: [
           { x: -8, z: 0 },
           { x: -8, z: -4 },
@@ -554,7 +803,7 @@ describe('online read model', () => {
     expect(settled).toBeGreaterThan(rightAfterCorrection);
     expect(settled).toBeLessThanOrEqual(6);
 
-    advanceProjectionFrames(model, 1200);
+    advanceProjectionFrames(model, 4200);
     expect(model.snapshot.player.position).toEqual({ x: 6, z: 0 });
   });
 
@@ -686,8 +935,8 @@ describe('online read model', () => {
           base_class: 'Mage',
           sex: 'Female',
           hair_style: 2,
-          hair_color: 1,
-          face: 0,
+          hair_color: '#d8bfd8',
+          skin_type: 1,
           hp: 118,
           dead: false,
           facing: 0.5,
@@ -702,8 +951,8 @@ describe('online read model', () => {
       baseClass: 'Mage',
       sex: 'Female',
       hairStyle: 2,
-      hairColor: 1,
-      face: 0,
+      hairColor: '#d8bfd8',
+      skinType: 1,
       archetypeId: 'ashen_oracle',
       level: 4,
       hp: 118,
@@ -789,8 +1038,8 @@ describe('online read model', () => {
           base_class: 'Fighter',
           sex: 'Male',
           hair_style: 1,
-          hair_color: 0,
-          face: 2,
+          hair_color: '#44372d',
+          skin_type: 0,
           hp: 134,
           dead: false,
           facing: 0.2,
@@ -858,6 +1107,19 @@ describe('online read model', () => {
     expect(snapshot.player.hotbar.openBarCount).toBe(2);
     expect(snapshot.player.hotbar.slots[0]?.skillId).toBe('ember_shot');
     expect(snapshot.player.hotbar.slots[1]?.skillId).toBe('astral_burst');
+  });
+
+  it('seeds only starter learned skills in the default hotbar projection', () => {
+    const model = new OnlineReadModel(regionContext, character, initialItemState, initialSelfState);
+
+    expect(model.snapshot.player.hotbar.slots[0]).toMatchObject({
+      entryType: 'skill',
+      skillId: 'crescent_strike',
+    });
+    expect(model.snapshot.player.hotbar.slots[1]).toMatchObject({
+      entryType: null,
+      skillId: null,
+    });
   });
 
   it('projects authoritative quest state and wardkeeper dialog from self snapshots', () => {
@@ -974,7 +1236,7 @@ describe('online read model', () => {
           max_mp: 58,
           attack: 17,
           defense: 9,
-          move_speed: 8.6,
+          move_speed: 3.225,
         },
       },
     });
@@ -1058,6 +1320,26 @@ describe('online read model', () => {
     expect(model.createUseSkill('iron_will')).toBeNull();
     expect(model.createUseSkill('grave_bloom')).toBeNull();
     expect(model.snapshot.logs[0]?.text).toContain('not learned');
+  });
+
+  it('builds a clear target command for the Escape target reset shortcut', () => {
+    const model = new OnlineReadModel(regionContext, character);
+
+    const command = model.createClearTarget();
+
+    expect(command).not.toBeNull();
+    if (!command) {
+      return;
+    }
+    expect(command.type).toBe('clear_target');
+    expect(command.payload).toEqual({});
+    const pendingCommands = model.getStateInfo().pendingCommands;
+    expect(pendingCommands[pendingCommands.length - 1]).toMatchObject({
+      commandId: command.command_id,
+      commandSeq: command.command_seq,
+      type: 'clear_target',
+      status: 'sent',
+    });
   });
 
   it('reflects cooldown only after authoritative delta arrives', () => {
@@ -1655,7 +1937,7 @@ describe('online read model', () => {
           max_mp: 58,
           attack: 27,
           defense: 9,
-          move_speed: 8.6,
+          move_speed: 3.225,
         },
       },
     });
@@ -1712,7 +1994,7 @@ describe('online read model', () => {
           max_mp: 58,
           attack: 32,
           defense: 20,
-          move_speed: 8.6,
+          move_speed: 3.225,
         },
       },
     });
@@ -1748,7 +2030,7 @@ describe('online read model', () => {
           max_mp: 58,
           attack: 17,
           defense: 9,
-          move_speed: 8.6,
+          move_speed: 3.225,
         },
       },
       entities: [
@@ -1784,7 +2066,7 @@ describe('online read model', () => {
           max_mp: 65,
           attack: 21,
           defense: 11,
-          move_speed: 8.6,
+          move_speed: 3.225,
         },
       },
     });
@@ -1814,7 +2096,7 @@ describe('online read model', () => {
           max_mp: 58,
           attack: 17,
           defense: 9,
-          move_speed: 8.6,
+          move_speed: 3.225,
         },
       },
     });
@@ -1834,7 +2116,7 @@ describe('online read model', () => {
         max_mp: 58,
         attack: 17,
         defense: 9,
-        move_speed: 8.6,
+        move_speed: 3.225,
       },
     };
     const model = new OnlineReadModel(regionContext, character, initialItemState, deadSelfState);
@@ -1857,7 +2139,7 @@ describe('online read model', () => {
           max_mp: 58,
           attack: 17,
           defense: 9,
-          move_speed: 8.6,
+          move_speed: 3.225,
         },
       },
     });
@@ -2008,8 +2290,8 @@ describe('online read model', () => {
             base_class: 'Mage',
             sex: 'Female',
             hair_style: 2,
-            hair_color: 2,
-            face: 1,
+            hair_color: '#f4f4ff',
+            skin_type: 2,
             hp: 92,
             dead: false,
             facing: 0,
@@ -2209,7 +2491,7 @@ describe('online read model', () => {
           max_mp: 58,
           attack: 17,
           defense: 15,
-          move_speed: 8.6,
+          move_speed: 3.225,
         },
       },
     });
@@ -2357,7 +2639,7 @@ describe('online read model', () => {
           max_mp: 58,
           attack: 17,
           defense: 9,
-          move_speed: 10.8,
+          move_speed: 4.05,
         },
       },
     });
@@ -2390,7 +2672,7 @@ describe('online read model', () => {
           max_mp: 58,
           attack: 17,
           defense: 9,
-          move_speed: 8.6,
+          move_speed: 3.225,
         },
       },
     });
@@ -2466,13 +2748,13 @@ describe('online read model', () => {
           max_mp: 58,
           attack: 17,
           defense: 9,
-          move_speed: 10.8,
+          move_speed: 4.05,
         },
       },
     });
 
     expect(model.snapshot.logs[0].text).toBe('You mount Mireling Strider.');
     expect(model.snapshot.player.mountedPetId).toBe('pet_1');
-    expect(model.snapshot.player.authoritativeStats?.moveSpeed).toBe(10.8);
+    expect(model.snapshot.player.authoritativeStats?.moveSpeed).toBe(4.05);
   });
 });
