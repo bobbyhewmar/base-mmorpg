@@ -10,9 +10,9 @@ describe('pre-game state machine', () => {
     expect(next.phase).toBe('login');
   });
 
-  it('moves to character list after auth success', () => {
+  it('moves through EULA and world selection after auth success', () => {
     const pending = initialPreGameContext();
-    const next = preGameReducer(pending, {
+    const authed = preGameReducer(pending, {
       type: 'auth_succeeded',
       accessToken: 'access_abc',
       accountId: 'acc_123',
@@ -48,9 +48,17 @@ describe('pre-game state machine', () => {
       },
     });
 
+    expect(authed.phase).toBe('eula_review');
+    expect(authed.selectedCharacterId).toBe('char_1');
+    expect(authed.catalog?.races).toHaveLength(1);
+
+    const eulaAccepted = preGameReducer(authed, { type: 'accept_eula' });
+    expect(eulaAccepted.phase).toBe('server_select');
+    expect(eulaAccepted.eulaAccepted).toBe(true);
+    expect(eulaAccepted.selectedWorldId).toBe('detona-500x');
+
+    const next = preGameReducer(eulaAccepted, { type: 'confirm_world_selection' });
     expect(next.phase).toBe('character_list');
-    expect(next.selectedCharacterId).toBe('char_1');
-    expect(next.catalog?.races).toHaveLength(1);
   });
 
   it('opens character creation with the first catalog-backed template selected', () => {
@@ -87,7 +95,10 @@ describe('pre-game state machine', () => {
       },
     });
 
-    const create = preGameReducer(authed, { type: 'open_create_character' });
+    const characterList = preGameReducer(preGameReducer(authed, { type: 'accept_eula' }), {
+      type: 'confirm_world_selection',
+    });
+    const create = preGameReducer(characterList, { type: 'open_create_character' });
     expect(create).toMatchObject({
       phase: 'character_create',
       createRace: 'Human',
@@ -128,7 +139,10 @@ describe('pre-game state machine', () => {
       characters: [],
       catalog: { races: [] },
     });
-    const entering = preGameReducer(authed, {
+    const characterList = preGameReducer(preGameReducer(authed, { type: 'accept_eula' }), {
+      type: 'confirm_world_selection',
+    });
+    const entering = preGameReducer(characterList, {
       type: 'enter_world_succeeded',
       characterId: 'char_1',
       bootstrap: {
@@ -159,27 +173,33 @@ describe('pre-game state machine', () => {
   it('returns to character list when the active online session closes', () => {
     const ready = preGameReducer(
       preGameReducer(
-        preGameReducer(initialPreGameContext(), {
-          type: 'auth_succeeded',
-          accessToken: 'access_abc',
-          accountId: 'acc_123',
-          characters: [
-            {
-              character_id: 'char_1',
-              name: 'Arden',
-              race: 'Human',
-              base_class: 'Fighter',
-              sex: 'Female',
-              hair_style: 1,
-              hair_color: '#8f5fd3',
-              skin_type: 2,
-              level: 1,
-              last_region_id: 'stonecross_plaza',
-              is_enterable: true,
-            },
-          ],
-          catalog: { races: [] },
-        }),
+        preGameReducer(
+          preGameReducer(
+            preGameReducer(initialPreGameContext(), {
+              type: 'auth_succeeded',
+              accessToken: 'access_abc',
+              accountId: 'acc_123',
+              characters: [
+                {
+                  character_id: 'char_1',
+                  name: 'Arden',
+                  race: 'Human',
+                  base_class: 'Fighter',
+                  sex: 'Female',
+                  hair_style: 1,
+                  hair_color: '#8f5fd3',
+                  skin_type: 2,
+                  level: 1,
+                  last_region_id: 'stonecross_plaza',
+                  is_enterable: true,
+                },
+              ],
+              catalog: { races: [] },
+            }),
+            { type: 'accept_eula' },
+          ),
+          { type: 'confirm_world_selection' },
+        ),
         {
           type: 'enter_world_succeeded',
           characterId: 'char_1',

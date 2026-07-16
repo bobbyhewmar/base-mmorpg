@@ -177,14 +177,14 @@ Focus:
 - authoritative HUD skill book and hotbar projection
 - classic HUD skill-book and hotbar visuals with `32x32px` slots
 - authoritative `skill`, `item`, and `action` drag-to-hotbar persistence through `set_hotbar_state`
-- planned classic bottom-right quick access mini menu for Status, Inventory, Map, and System with `32x32px` icon buttons and classic confirmation modal behavior
+- classic bottom-right quick access mini menu for Status, Inventory, Map, and System with `32x32px` icon buttons and classic confirmation modal behavior
 
 Status:
 
 - concluida para o slice online atual
 - `use_item` autoritativo agora cobre consumiveis no inventario e na hotbar
 - actions futuras alem de `basic_attack`/`pick_up_nearby` continuam como expansao separada
-- bottom-right quick access mini menu remains planned and not yet implemented
+- bottom-right quick access mini menu implemented with `ALT+T`, `ALT+V`, `ALT+M`, `ALT+X`, classic map placeholder, system menu and exit confirmation
 
 ### Fase I - Inventario e economia ampliados
 

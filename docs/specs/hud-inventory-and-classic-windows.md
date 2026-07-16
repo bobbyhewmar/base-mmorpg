@@ -53,7 +53,9 @@ Classic HUD windows must not use:
 - task tracker panels in the default combat HUD
 - duplicated skill shortcut rows above skill categories
 
-## Planned Bottom-Right Quick Access Mini Menu
+## Bottom-Right Quick Access Mini Menu
+
+Status: implemented in the client HUD.
 
 The gameplay HUD must add a bottom-right quick access mini menu matching the classic client reference.
 
@@ -74,7 +76,7 @@ Required buttons for the first slice:
 
 The system menu must be a classic square window above the mini menu and include icon rows for future features such as Community, Macro, Help, Petition, Options, Restart, and Exit Game. Only implemented actions may mutate state. Unimplemented rows may be disabled or informational, but they must not fake success.
 
-`Exit Game` must open a classic confirmation modal with warning icon, message `Do you wish to exit the game?`, and `OK` plus `Cancel` buttons. `Cancel` closes only the modal. `OK` may initially return to the login/pre-game flow if no fuller logout flow exists, but it must be explicit and documented.
+`Exit Game` opens a classic confirmation modal with warning icon, message `Do you wish to exit the game?`, and `OK` plus `Cancel` buttons. `Cancel` closes only the modal. `OK` currently performs an explicit client reload to return to the pre-game flow until a fuller logout/session-teardown endpoint exists.
 
 ## Inventory Rules
 

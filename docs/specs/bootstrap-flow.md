@@ -33,14 +33,17 @@ The official bootstrap flow for `Fase 1.1` is:
 2. player registers or logs in
 3. client fetches authoritative character list
 4. client fetches authoritative character-creation catalog
-5. player selects an existing character or creates a new one
-6. client requests world entry for one selected character
-7. backend creates a gameplay session in `pending_attach`
-8. client opens the gameplay WebSocket
-9. client sends `attach_session`
-10. backend validates the attach and binds the gameplay actor
-11. backend sends authoritative `region_context`
-12. gameplay command flow begins
+5. successful login opens the classic EULA review screen
+6. accepting the EULA opens classic server/world selection
+7. confirming a world opens character selection
+8. player selects an existing character or creates a new one
+9. client requests world entry for one selected character
+10. backend creates a gameplay session in `pending_attach`
+11. client opens the gameplay WebSocket
+12. client sends `attach_session`
+13. backend validates the attach and binds the gameplay actor
+14. backend sends authoritative `region_context`
+15. gameplay command flow begins
 
 The client must not enter the world directly from a cold start.
 
@@ -54,6 +57,8 @@ The cold client must open on:
 - login UI
 
 The cold client must not instantiate online world runtime before authenticated account flow and character entry succeed.
+
+After a successful login, the client must show EULA review and server/world selection before character selection. The current server list is a canonical client-side selection gate for the single logical backend world; it does not imply multi-world backend sharding yet.
 
 ### Step 2: Registration Path
 

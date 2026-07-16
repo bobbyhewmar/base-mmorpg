@@ -17,6 +17,8 @@ export type PreGamePhase =
   | 'pending_verification'
   | 'recovery_entry'
   | 'loading_account'
+  | 'eula_review'
+  | 'server_select'
   | 'character_list'
   | 'character_create'
   | 'entering_world'
@@ -37,6 +39,8 @@ export interface PreGameContext {
   verificationLogin: string | null;
   accessToken: string | null;
   accountId: string | null;
+  eulaAccepted: boolean;
+  selectedWorldId: string | null;
   characters: CharacterSummary[];
   catalog: CharacterCatalogResponse | null;
   createRace: CharacterRace | null;
@@ -95,6 +99,10 @@ export type PreGameEvent =
       characters: CharacterSummary[];
       catalog: CharacterCatalogResponse;
     }
+  | { type: 'accept_eula' }
+  | { type: 'reject_eula' }
+  | { type: 'select_world'; worldId: string }
+  | { type: 'confirm_world_selection' }
   | { type: 'auth_failed'; message: string }
   | { type: 'open_create_character' }
   | { type: 'set_create_race'; race: CharacterRace }
@@ -119,6 +127,8 @@ export const initialPreGameContext = (): PreGameContext => ({
   verificationLogin: null,
   accessToken: null,
   accountId: null,
+  eulaAccepted: false,
+  selectedWorldId: null,
   characters: [],
   catalog: null,
   createRace: null,
@@ -189,10 +199,12 @@ export const preGameReducer = (state: PreGameContext, event: PreGameEvent): PreG
     case 'auth_succeeded':
       return {
         ...state,
-        phase: 'character_list',
+        phase: 'eula_review',
         mode: 'online',
         accessToken: event.accessToken,
         accountId: event.accountId,
+        eulaAccepted: false,
+        selectedWorldId: null,
         characters: event.characters,
         catalog: event.catalog,
         createRace: null,
@@ -203,6 +215,42 @@ export const preGameReducer = (state: PreGameContext, event: PreGameEvent): PreG
         createSkinType: null,
         selectedCharacterId: event.characters[0]?.character_id ?? null,
         verificationLogin: null,
+        error: null,
+      };
+    case 'accept_eula':
+      return {
+        ...state,
+        phase: 'server_select',
+        eulaAccepted: true,
+        selectedWorldId: state.selectedWorldId ?? 'detona-500x',
+        error: null,
+      };
+    case 'reject_eula':
+      return {
+        ...initialPreGameContext(),
+        mode: 'online',
+        authScreen: 'login',
+        phase: 'login',
+        error: 'You must accept the user agreement before selecting a world.',
+      };
+    case 'select_world':
+      return {
+        ...state,
+        phase: 'server_select',
+        selectedWorldId: event.worldId,
+        error: null,
+      };
+    case 'confirm_world_selection':
+      if (!state.eulaAccepted || !state.selectedWorldId) {
+        return {
+          ...state,
+          phase: state.eulaAccepted ? 'server_select' : 'eula_review',
+          error: state.eulaAccepted ? 'Select a world before continuing.' : 'Accept the user agreement before continuing.',
+        };
+      }
+      return {
+        ...state,
+        phase: 'character_list',
         error: null,
       };
     case 'auth_failed':

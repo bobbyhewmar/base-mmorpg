@@ -21,10 +21,12 @@ The mandatory flow is:
 1. register or log in
 2. complete account verification requirements when needed
 3. fetch the authoritative character list and creation catalog
-4. select an existing character or create a new one
-5. request character entry
-6. attach the resulting gameplay session to the online client flow
-7. treat authoritative `region_context` as the effective attach success marker before gameplay commands begin
+4. accept the classic EULA screen
+5. select the target world/server from the classic server-selection screen
+6. select an existing character or create a new one
+7. request character entry
+8. attach the resulting gameplay session to the online client flow
+9. treat authoritative `region_context` as the effective attach success marker before gameplay commands begin
 
 The backend is authoritative for every step in this flow.
 
@@ -35,6 +37,7 @@ The backend is authoritative for every step in this flow.
 The client may:
 
 - render login, registration, verification, recovery, character-list, and character-creation UI
+- render the classic EULA and server-selection gates before character selection
 - collect credentials and character-creation choices
 - display server-provided validation feedback
 - request world entry for a selected character
@@ -81,6 +84,8 @@ The browser client must expose these pre-gameplay screens:
 
 - login
 - registration
+- EULA review
+- server/world selection
 - account verification or pending-verification feedback
 - password recovery
 - character list

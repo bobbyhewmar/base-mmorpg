@@ -256,6 +256,7 @@ O frontend ja possui:
 - fundo de floresta dark fantasy inspirado no clima de Interlude, sem logos ou branding de terceiros
 - login/register online
 - login/register usando componentes visuais compartilhados e botoes canonicos do jogo
+- fluxo pre-game canonico: login, EULA classico, selecao de servidor/mundo, selecao/criacao de personagem e so entao entrada no mundo
 - hook visual de verificacao pendente
 - hook visual de recovery
 - listagem de personagens
@@ -276,7 +277,7 @@ O frontend ja possui:
 - chat/system log no canto inferior esquerdo
 - shortcut/action bar classica bottom-center com slots `32x32px`, uma barra azul de drag na esquerda, botao `16x16px` de expandir na direita e linhas crescendo de baixo para cima
 - inventario `ALT+V` fechado por padrao, com janela classica, grid de icones `32x32px`, tooltip de item, footer de moeda/peso e botao de fechar funcional
-- evolucao planejada de HUD: mini menu fixo no canto inferior direito, identico ao estilo classico, com uma barra azul vertical de drag na esquerda, quatro botoes `32x32px` para Status, Inventory, Map e System, tooltips `Character Status (Alt+T)`, `Inventory (Alt+V)`, `Map (Alt+M)` e `System (Alt+X)`, janela System classica e confirmacao `Do you wish to exit the game?` com `OK` e `Cancel`
+- mini menu fixo no canto inferior direito, identico ao estilo classico, com uma barra azul vertical de drag na esquerda, quatro botoes `32x32px` para Status, Inventory, Map e System, tooltips `Character Status (Alt+T)`, `Inventory (Alt+V)`, `Map (Alt+M)` e `System (Alt+X)`, mapa placeholder, janela System classica e confirmacao `Do you wish to exit the game?` com `OK` e `Cancel`
 - familia de janelas do personagem com `ALT+T` Status, `ALT+K` Skills, `ALT+C` Actions, `ALT+N` Clan e `ALT+U` Quests
 - topo das janelas do personagem reservado para botoes de navegacao `32x32px`, nao para duplicar skills
 - skill book `ALT+K` com janela classica, abas `Active`/`Passive`, grid de icones `32x32px`, tooltips e drag persistente de skills ativas para hotbar via `set_hotbar_state`

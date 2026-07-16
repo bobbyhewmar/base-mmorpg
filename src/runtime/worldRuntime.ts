@@ -581,6 +581,30 @@ export class WorldRuntime {
       return;
     }
 
+    if (event.altKey && event.key.toLowerCase() === 'm') {
+      event.preventDefault();
+      this.hud.toggleMap();
+      return;
+    }
+
+    if (event.altKey && event.key.toLowerCase() === 'x') {
+      event.preventDefault();
+      this.hud.toggleSystemMenu();
+      return;
+    }
+
+    if (event.altKey && event.key.toLowerCase() === 'b') {
+      event.preventDefault();
+      this.hud.openSystemMenuPlaceholder('community');
+      return;
+    }
+
+    if (event.altKey && event.key.toLowerCase() === 'r') {
+      event.preventDefault();
+      this.hud.openSystemMenuPlaceholder('macro');
+      return;
+    }
+
     if (event.altKey && event.key.toLowerCase() === 'p') {
       event.preventDefault();
       this.hud.togglePartyPanel();

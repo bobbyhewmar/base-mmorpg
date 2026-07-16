@@ -92,6 +92,26 @@ type GameButtonConfig = {
   disabled?: boolean;
 };
 
+type GameWorldConfig = {
+  id: string;
+  no: string;
+  name: string;
+  traffic: 'Light' | 'Normal' | 'Heavy';
+  ping: number;
+  type: string;
+};
+
+const GAME_WORLDS: readonly GameWorldConfig[] = [
+  {
+    id: 'detona-500x',
+    no: '01',
+    name: 'L2 DETONA 500x',
+    traffic: 'Light',
+    ping: 0,
+    type: '',
+  },
+];
+
 type CreationCycleOption = 'race' | 'base_class' | 'sex' | 'hair_style' | 'skin_type';
 
 type CreationFieldConfig = {
@@ -354,6 +374,25 @@ export class ClientApp {
         return;
       case 'open-recovery':
         this.transition({ type: 'open_recovery' });
+        return;
+      case 'accept-eula':
+        this.transition({ type: 'accept_eula' });
+        return;
+      case 'reject-eula':
+        this.transition({ type: 'reject_eula' });
+        return;
+      case 'select-world': {
+        const worldId = actionElement.dataset.worldId;
+        if (worldId) {
+          this.transition({ type: 'select_world', worldId });
+        }
+        return;
+      }
+      case 'confirm-world-selection':
+        this.transition({ type: 'confirm_world_selection' });
+        return;
+      case 'cancel-world-selection':
+        this.transition({ type: 'open_login' });
         return;
       case 'open-create-character':
         this.createNameDraft = '';
@@ -1304,6 +1343,10 @@ export class ClientApp {
             </div>
           </section>
         `;
+      case 'eula_review':
+        return this.renderEulaScreen(error);
+      case 'server_select':
+        return this.renderServerSelectScreen(error);
       case 'recovery_entry':
         return `
           <section class="pregame-screen center">
@@ -1346,6 +1389,96 @@ export class ClientApp {
       ],
       sideMenuActive: 'login',
     });
+  }
+
+  private renderEulaScreen(error: string): string {
+    return `
+      <section class="pregame-screen classic-prelogin-screen eula-screen" aria-label="User agreement">
+        <div class="classic-login-mark" aria-hidden="true">
+          <strong>LINEAGE</strong>
+          <span>THE CHAOTIC THRONE</span>
+        </div>
+        <article class="classic-eula-window">
+          <div class="classic-scroll-rail" aria-hidden="true"><span></span><i></i></div>
+          <div class="classic-eula-content">
+            <p>Lineage II User Agreement (the Agreement)</p>
+            <p>Last Modified January 2007</p>
+            <h3>1. TERMS OF AGREEMENT</h3>
+            <p>
+              This user agreement defines the rules for accessing this game world. By selecting Agree, you confirm
+              that gameplay, account access, character progression, chat, trades and social systems are governed by
+              server authority and by the operational policies of this project.
+            </p>
+            <p>
+              You agree not to exploit bugs, automate gameplay, abuse other players, duplicate items, evade PvP/PK
+              consequences or attempt to bypass authoritative session ownership. Access may be limited while systems
+              are under active development.
+            </p>
+            <p>
+              The agreement is intentionally presented before world selection so every account follows the same
+              canonical entry flow: login, agreement, world selection and character selection.
+            </p>
+          </div>
+          ${error}
+          <div class="classic-eula-actions">
+            <button class="game-menu-button" type="button" data-click-action="accept-eula">Agree</button>
+            <button class="game-menu-button" type="button" data-click-action="reject-eula">Disagree</button>
+          </div>
+        </article>
+      </section>
+    `;
+  }
+
+  private renderServerSelectScreen(error: string): string {
+    const selectedWorldId = this.state.selectedWorldId ?? GAME_WORLDS[0]?.id ?? '';
+    return `
+      <section class="pregame-screen classic-prelogin-screen server-select-screen" aria-label="Server selection">
+        <div class="classic-login-mark classic-login-mark--server" aria-hidden="true">
+          <strong>LINEAGE</strong>
+          <span>THE CHAOTIC THRONE</span>
+        </div>
+        <div class="classic-server-stack">
+          <section class="classic-server-window" aria-label="World list">
+            <div class="classic-server-table">
+              <div class="classic-server-header">
+                <span>No</span><span>Name</span><span>Traffic</span><span>Ping</span><span>Type</span>
+              </div>
+              <div class="classic-server-rows">
+                ${GAME_WORLDS.map(
+                  (world) => `
+                    <button
+                      type="button"
+                      class="classic-server-row ${world.id === selectedWorldId ? 'selected' : ''}"
+                      data-click-action="select-world"
+                      data-world-id="${escapeHtml(world.id)}"
+                    >
+                      <span>${escapeHtml(world.no)}</span>
+                      <strong>${escapeHtml(world.name)}</strong>
+                      <span>${escapeHtml(world.traffic)}</span>
+                      <span>${world.ping}</span>
+                      <span>${escapeHtml(world.type)}</span>
+                    </button>
+                  `,
+                ).join('')}
+                ${Array.from({ length: 10 }, () => '<div class="classic-server-row empty" aria-hidden="true"></div>').join('')}
+              </div>
+            </div>
+            ${error}
+            <div class="classic-server-actions">
+              <button class="game-menu-button" type="button" disabled aria-disabled="true">Quality</button>
+              <button class="game-menu-button" type="button" data-click-action="confirm-world-selection" ${selectedWorldId ? '' : 'disabled aria-disabled="true"'}>OK</button>
+              <button class="game-menu-button" type="button" data-click-action="cancel-world-selection">Cancel</button>
+            </div>
+          </section>
+          <section class="classic-server-help" aria-label="Server Selection Help">
+            <div class="classic-help-title">Server Selection Help</div>
+            <a>Server Concepts</a>
+            <a>Server Status</a>
+            <hr />
+          </section>
+        </div>
+      </section>
+    `;
   }
 
   private mountCharacterLobbyScene(): void {

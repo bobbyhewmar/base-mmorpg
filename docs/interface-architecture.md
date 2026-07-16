@@ -205,12 +205,13 @@ Responsibilities:
 
 1. The player lands on login or registration UI, not directly inside the world.
 2. The client submits credentials or registration data to the backend over secure transport.
-3. The backend returns account status, verification requirements, and the authoritative character list.
-4. The player selects an existing character or opens the creation flow.
-5. The client requests the available race and base-class catalog from the backend.
-6. The player chooses race, base class, sex, hairstyle, skin type, and name.
-7. The backend validates the creation request and either rejects it with explicit reasons or persists the character.
-8. Only after successful character entry does the client transition into the online world scene.
+3. The backend returns account status, verification requirements, the authoritative character list, and the creation catalog.
+4. The client shows the classic EULA gate.
+5. The client shows the classic server/world-selection gate.
+6. The player selects an existing character or opens the creation flow.
+7. The player chooses race, base class, sex, hairstyle, skin type, and name.
+8. The backend validates the creation request and either rejects it with explicit reasons or persists the character.
+9. Only after successful character entry does the client transition into the online world scene.
 
 ### Core Loop
 

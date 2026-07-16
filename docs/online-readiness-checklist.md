@@ -131,8 +131,8 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Inventory close control works as a real title-bar button.
 - [x] Character-window family opens through `ALT+T`, `ALT+K`, `ALT+C`, `ALT+N`, and `ALT+U`.
 - [x] Character-window top row switches panels instead of duplicating skill icons.
-- [ ] Bottom-right quick access mini menu matches the classic reference with `32x32px` Status, Inventory, Map, and System buttons plus `ALT+T`, `ALT+V`, `ALT+M`, and `ALT+X` shortcuts.
-- [ ] System menu opens as a classic square window and `Exit Game` shows an explicit `OK` or `Cancel` confirmation modal.
+- [x] Bottom-right quick access mini menu matches the classic reference with `32x32px` Status, Inventory, Map, and System buttons plus `ALT+T`, `ALT+V`, `ALT+M`, and `ALT+X` shortcuts.
+- [x] System menu opens as a classic square window and `Exit Game` shows an explicit `OK` or `Cancel` confirmation modal.
 - [x] Skill book opens through `ALT+K`.
 - [x] Skill book separates `Active` and `Passive` skills with compact icon grids.
 - [x] Active skills can be dragged to hotbar slots for immediate local UI rebinding with the icon following the cursor during drag.

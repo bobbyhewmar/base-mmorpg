@@ -82,10 +82,23 @@ type HudOptions = {
 export type ChatLogFilter = 'all' | 'region' | 'party' | 'whisper';
 type ChatComposeChannel = 'region' | 'party' | 'whisper';
 
-type HudPanelId = 'player' | 'party' | 'target' | 'hotbar' | 'skill-book' | 'log' | 'inventory' | 'dialog';
+type HudPanelId =
+  | 'player'
+  | 'party'
+  | 'target'
+  | 'hotbar'
+  | 'skill-book'
+  | 'log'
+  | 'inventory'
+  | 'dialog'
+  | 'quick-menu'
+  | 'world-map'
+  | 'system-menu'
+  | 'system-placeholder';
 type HotbarOpenBarCount = 1 | 2 | 3;
 type SkillBookTab = 'active' | 'passive';
 export type CharacterPanelId = 'status' | 'skills' | 'actions' | 'clan' | 'quests';
+export type SystemPlaceholderId = 'community' | 'macro' | 'help' | 'petition' | 'options' | 'restart';
 
 type HudDragState = {
   panelId: HudPanelId;
@@ -1306,6 +1319,10 @@ export class Hud {
   private activeCharacterPanel: CharacterPanelId | null = null;
   private skillBookTab: SkillBookTab = 'active';
   private inventoryOpen = false;
+  private mapOpen = false;
+  private systemMenuOpen = false;
+  private exitConfirmOpen = false;
+  private systemPlaceholderOpen: SystemPlaceholderId | null = null;
   private partyWindowOpen = false;
   private clanInfoOpen = false;
   private activeChatFilter: ChatLogFilter = 'all';
@@ -1749,6 +1766,22 @@ export class Hud {
         }
       </div>
 
+      <div class="lineage-quick-menu" data-hud-panel="quick-menu"${this.renderPanelStyle('quick-menu')}>
+        <div class="hud-drag-rail left" data-hud-drag="quick-menu" aria-label="Drag quick access menu"></div>
+        <button type="button" data-quick-menu="status" title="Character Status (Alt+T)" aria-label="Character Status (Alt+T)">
+          <span class="lineage-quick-icon lineage-quick-icon--status">ST</span>
+        </button>
+        <button type="button" data-quick-menu="inventory" title="Inventory (Alt+V)" aria-label="Inventory (Alt+V)">
+          <span class="lineage-quick-icon lineage-quick-icon--inventory">IV</span>
+        </button>
+        <button type="button" data-quick-menu="map" title="Map (Alt+M)" aria-label="Map (Alt+M)">
+          <span class="lineage-quick-icon lineage-quick-icon--map">MP</span>
+        </button>
+        <button type="button" data-quick-menu="system" title="System (Alt+X)" aria-label="System (Alt+X)">
+          <span class="lineage-quick-icon lineage-quick-icon--system">SY</span>
+        </button>
+      </div>
+
       ${
         this.inventoryOpen
           ? `
@@ -1816,6 +1849,104 @@ export class Hud {
           `
           : ''
       }
+
+      ${
+        this.mapOpen
+          ? `
+            <div class="lineage-map-window frame-panel classic-window" data-hud-panel="world-map"${this.renderPanelStyle('world-map')}>
+              <div class="hud-window-title classic-title compact" data-hud-drag="world-map">
+                <span>Map</span>
+                <div class="lineage-window-controls">
+                  <button type="button" data-map-close data-no-drag aria-label="Close map">x</button>
+                </div>
+              </div>
+              <div class="lineage-map-toolbar">
+                <button type="button">- Cursed Weapon -</button>
+                <button type="button">Find</button>
+                <button type="button">World Info.</button>
+              </div>
+              <div class="lineage-map-canvas" aria-label="Current map">
+                <span class="lineage-map-sun">PM 05 : 15</span>
+                <span class="lineage-map-label warehouse">Warehouse</span>
+                <span class="lineage-map-label gatekeeper">Gatekeeper</span>
+                <span class="lineage-map-label temple">Temple</span>
+                <span class="lineage-map-label magic">Magic Shop</span>
+                <i class="lineage-map-player" aria-hidden="true"></i>
+              </div>
+              <div class="lineage-map-footer">
+                <span>Current Position : ${escapeHudText(getRegionIdForPoint(state.player.position))}</span>
+                <div>
+                  <button type="button">Current Loc.</button>
+                  <button type="button">Party Member</button>
+                  <button type="button">Target Loc.</button>
+                  <button type="button">Enlarge Map</button>
+                </div>
+              </div>
+            </div>
+          `
+          : ''
+      }
+
+      ${
+        this.systemMenuOpen
+          ? `
+            <div class="lineage-system-window frame-panel classic-window" data-hud-panel="system-menu"${this.renderPanelStyle('system-menu')}>
+              <div class="hud-window-title classic-title compact">
+                <span>System Menu</span>
+                <div class="lineage-window-controls">
+                  <button type="button" data-system-close data-no-drag aria-label="Close system menu">x</button>
+                </div>
+              </div>
+              <button type="button" data-system-placeholder="community"><span>CM</span>Community(Alt+B)</button>
+              <button type="button" data-system-placeholder="macro"><span>MR</span>Macro(Alt+R)</button>
+              <button type="button" data-system-placeholder="help"><span>?</span>Help</button>
+              <button type="button" data-system-placeholder="petition"><span>PT</span>Petition</button>
+              <button type="button" data-system-placeholder="options"><span>OP</span>Options</button>
+              <button type="button" data-system-placeholder="restart"><span>RS</span>Restart</button>
+              <button type="button" data-exit-game-open><span>EX</span>Exit Game</button>
+            </div>
+          `
+          : ''
+      }
+
+      ${
+        this.systemPlaceholderOpen
+          ? `
+            <div class="lineage-system-placeholder frame-panel classic-window" data-hud-panel="system-placeholder"${this.renderPanelStyle('system-placeholder')}>
+              <div class="hud-window-title classic-title compact">
+                <span>${this.renderSystemPlaceholderTitle(this.systemPlaceholderOpen)}</span>
+                <div class="lineage-window-controls">
+                  <button type="button" data-system-placeholder-close data-no-drag aria-label="Close window">x</button>
+                </div>
+              </div>
+              <div class="lineage-system-placeholder-body">
+                <span class="lineage-system-placeholder-icon">${this.renderSystemPlaceholderIcon(this.systemPlaceholderOpen)}</span>
+                <p>${this.renderSystemPlaceholderMessage(this.systemPlaceholderOpen)}</p>
+              </div>
+              <div class="lineage-system-placeholder-actions">
+                <button class="game-menu-button" type="button" data-system-placeholder-close data-no-drag>OK</button>
+              </div>
+            </div>
+          `
+          : ''
+      }
+
+      ${
+        this.exitConfirmOpen
+          ? `
+            <div class="lineage-exit-confirm">
+              <div class="lineage-exit-box">
+                <span class="lineage-exit-warning">!</span>
+                <p>Do you wish to exit the game?</p>
+                <div>
+                  <button class="game-menu-button" type="button" data-exit-game-ok>OK</button>
+                  <button class="game-menu-button" type="button" data-exit-game-cancel>Cancel</button>
+                </div>
+              </div>
+            </div>
+          `
+          : ''
+      }
     `;
     this.syncChatComposerFocus();
   }
@@ -1844,7 +1975,11 @@ export class Hud {
       value === 'skill-book' ||
       value === 'log' ||
       value === 'inventory' ||
-      value === 'dialog'
+      value === 'dialog' ||
+      value === 'quick-menu' ||
+      value === 'world-map' ||
+      value === 'system-menu' ||
+      value === 'system-placeholder'
     );
   }
 
@@ -1950,6 +2085,80 @@ export class Hud {
     this.inventoryOpen = !this.inventoryOpen;
     this.lastSnapshot = '';
     this.update(this.store.getState());
+  }
+
+  toggleMap(): void {
+    this.mapOpen = !this.mapOpen;
+    this.lastSnapshot = '';
+    this.update(this.store.getState());
+  }
+
+  toggleSystemMenu(): void {
+    this.systemMenuOpen = !this.systemMenuOpen;
+    if (!this.systemMenuOpen) {
+      this.exitConfirmOpen = false;
+      this.systemPlaceholderOpen = null;
+    }
+    this.lastSnapshot = '';
+    this.update(this.store.getState());
+  }
+
+  openSystemMenuPlaceholder(placeholderId: SystemPlaceholderId): void {
+    this.systemMenuOpen = true;
+    this.systemPlaceholderOpen = placeholderId;
+    this.lastSnapshot = '';
+    this.update(this.store.getState());
+  }
+
+  private renderSystemPlaceholderTitle(placeholderId: SystemPlaceholderId): string {
+    switch (placeholderId) {
+      case 'community':
+        return 'Community';
+      case 'macro':
+        return 'Macro';
+      case 'help':
+        return 'Help';
+      case 'petition':
+        return 'Petition';
+      case 'options':
+        return 'Options';
+      case 'restart':
+        return 'Restart';
+    }
+  }
+
+  private renderSystemPlaceholderIcon(placeholderId: SystemPlaceholderId): string {
+    switch (placeholderId) {
+      case 'community':
+        return 'CM';
+      case 'macro':
+        return 'MR';
+      case 'help':
+        return '?';
+      case 'petition':
+        return 'PT';
+      case 'options':
+        return 'OP';
+      case 'restart':
+        return 'RS';
+    }
+  }
+
+  private renderSystemPlaceholderMessage(placeholderId: SystemPlaceholderId): string {
+    switch (placeholderId) {
+      case 'community':
+        return 'Community board placeholder. This window is reserved for future server news, rankings, market notices and social shortcuts.';
+      case 'macro':
+        return 'Macro placeholder. Future support will let players organize command sequences without client-side authority.';
+      case 'help':
+        return 'Help placeholder. This will become the in-game guide for movement, targeting, combat, party, clan and economy flows.';
+      case 'petition':
+        return 'Petition placeholder. This will become the support request flow when moderation and support tooling are implemented.';
+      case 'options':
+        return 'Options placeholder. Future client settings will live here, including audio, graphics, camera and interface preferences.';
+      case 'restart':
+        return 'Restart placeholder. Character restart will require an authoritative logout/session teardown flow before it becomes active.';
+    }
   }
 
   togglePartyPanel(): void {
@@ -2337,6 +2546,10 @@ export class Hud {
       chatFocusField: this.chatFocusField,
       skillBookTab: this.skillBookTab,
       inventoryOpen: this.inventoryOpen,
+      mapOpen: this.mapOpen,
+      systemMenuOpen: this.systemMenuOpen,
+      exitConfirmOpen: this.exitConfirmOpen,
+      systemPlaceholderOpen: this.systemPlaceholderOpen,
       partyWindowOpen: this.partyWindowOpen,
       clanInfoOpen: this.clanInfoOpen,
       quest: state.quest,
@@ -2465,6 +2678,44 @@ export class Hud {
     const hotbarRowToggle = target.closest<HTMLElement>('[data-hotbar-row-toggle]');
     if (hotbarRowToggle) {
       this.toggleHotbarRows();
+      return;
+    }
+
+    const quickMenuButton = target.closest<HTMLElement>('[data-quick-menu]');
+    if (quickMenuButton) {
+      const action = quickMenuButton.dataset.quickMenu;
+      if (action === 'status') {
+        this.toggleCharacterPanel('status');
+      } else if (action === 'inventory') {
+        this.toggleInventory();
+      } else if (action === 'map') {
+        this.toggleMap();
+      } else if (action === 'system') {
+        this.toggleSystemMenu();
+      }
+      return;
+    }
+
+    const systemPlaceholderButton = target.closest<HTMLElement>('[data-system-placeholder]');
+    if (systemPlaceholderButton) {
+      const placeholderId = systemPlaceholderButton.dataset.systemPlaceholder;
+      if (
+        placeholderId === 'community' ||
+        placeholderId === 'macro' ||
+        placeholderId === 'help' ||
+        placeholderId === 'petition' ||
+        placeholderId === 'options' ||
+        placeholderId === 'restart'
+      ) {
+        this.openSystemMenuPlaceholder(placeholderId);
+      }
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-system-placeholder-close]')) {
+      this.systemPlaceholderOpen = null;
+      this.lastSnapshot = '';
+      this.update(this.store.getState());
       return;
     }
 
@@ -2856,6 +3107,41 @@ export class Hud {
 
     if (target.closest<HTMLElement>('[data-inventory-close]')) {
       this.toggleInventory();
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-map-close]')) {
+      this.mapOpen = false;
+      this.lastSnapshot = '';
+      this.update(this.store.getState());
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-system-close]')) {
+      this.systemMenuOpen = false;
+      this.exitConfirmOpen = false;
+      this.systemPlaceholderOpen = null;
+      this.lastSnapshot = '';
+      this.update(this.store.getState());
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-exit-game-open]')) {
+      this.exitConfirmOpen = true;
+      this.lastSnapshot = '';
+      this.update(this.store.getState());
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-exit-game-cancel]')) {
+      this.exitConfirmOpen = false;
+      this.lastSnapshot = '';
+      this.update(this.store.getState());
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-exit-game-ok]')) {
+      window.location.reload();
       return;
     }
 
