@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 	"unicode"
@@ -172,34 +173,53 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 	targetCharacterName := ""
 	targetCharacterID := ""
 	var whisperTarget *attachedSession
+	var whisperOwnership *SessionOwnership
 	if channel == chatChannelWhisper {
 		targetCharacterName = strings.TrimSpace(parsed.chatTargetName)
 		if targetCharacterName == "" {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "chat.whisper_target_required", "Whisper requires a target character name."))
 		}
-		whisperTarget = s.attachedSessionByCharacterName(targetCharacterName)
-		if whisperTarget == nil || whisperTarget.runtime == nil {
+		targetCharacter, targetErr := s.store.Characters.GetByName(ctx, targetCharacterName)
+		if targetErr != nil {
+			if !errors.Is(targetErr, errRecordNotFound) {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve whisper target."))
+			}
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "chat.whisper_target_not_found", "Whisper target is not currently online."))
 		}
-		targetCharacterID = whisperTarget.runtime.characterID
-		targetCharacterName = whisperTarget.runtime.characterName
+		targetCharacterID = targetCharacter.ID
+		targetCharacterName = targetCharacter.Name
+		presenceScope, targetAttached, ownership, presenceErr := s.resolveCharacterPresence(ctx, targetCharacterID)
+		if presenceErr != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve whisper target presence."))
+		}
+		switch presenceScope {
+		case characterPresenceLocal:
+			if targetAttached == nil || targetAttached.runtime == nil {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "chat.whisper_target_not_found", "Whisper target is not currently online."))
+			}
+			whisperTarget = targetAttached
+		case characterPresenceRemote:
+			whisperOwnership = ownership
+		default:
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "chat.whisper_target_not_found", "Whisper target is not currently online."))
+		}
 	}
 
 	record := ChatMessageRecord{
 		ID:                randomID("chat"),
 		CharacterID:       actorCharacterID,
+		AccountID:         session.AccountID,
 		Channel:           channel,
 		TargetCharacterID: targetCharacterID,
 		Text:              text,
+		SessionID:         session.ID,
+		CommandID:         command.CommandID,
+		CommandSeq:        command.CommandSeq,
 		CreatedAt:         now,
 	}
 	if channel == chatChannelRegion {
 		record.RegionID = actorRegionID
 	}
-	if err := s.store.ChatMessages.Create(ctx, record); err != nil {
-		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist chat history."))
-	}
-
 	senderMessage := chatMessagePayload(
 		command.CommandID,
 		command.CommandSeq,
@@ -224,6 +244,30 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 		text,
 		now,
 	)
+	var remoteWhisperEvent *GameplayEvent
+	if channel == chatChannelWhisper && whisperOwnership != nil {
+		var buildErr error
+		remoteWhisperEvent, buildErr = buildRemoteSocialDeliveryEvent(
+			session,
+			command,
+			whisperOwnership,
+			targetCharacterID,
+			remoteChatMessageEventType,
+			"chat-whisper",
+			recipientMessage,
+		)
+		if buildErr != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote whisper delivery."))
+		}
+	}
+	if err := collectChatMessage(ctx, record); err != nil {
+		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to stage chat history."))
+	}
+	if remoteWhisperEvent != nil {
+		if err := collectGameplayEvent(ctx, remoteWhisperEvent); err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote whisper delivery."))
+		}
+	}
 
 	switch channel {
 	case chatChannelRegion:

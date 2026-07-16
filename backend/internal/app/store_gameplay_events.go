@@ -248,28 +248,100 @@ func (repo memoryGameplayEventRepo) DeleteDeliveredBefore(_ context.Context, cut
 }
 
 func (backend *memoryStoreBackend) FinalizeGameplayCommandWithEvent(_ context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, event *GameplayEvent) (bool, error) {
-	normalized, err := normalizeGameplayEvent(event, time.Now())
-	if err != nil {
-		return false, err
+	created, err := backend.FinalizeGameplayCommandWithEvents(context.Background(), sessionID, commandSeq, status, outboundMessages, []*GameplayEvent{event})
+	return created == 1, err
+}
+
+func (backend *memoryStoreBackend) FinalizeGameplayCommandWithEvents(_ context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, events []*GameplayEvent) (int, error) {
+	normalizedEvents := make([]*GameplayEvent, 0, len(events))
+	normalizedByKey := make(map[string]*GameplayEvent, len(events))
+	for _, event := range events {
+		normalized, err := normalizeGameplayEvent(event, time.Now())
+		if err != nil {
+			return 0, err
+		}
+		if previous := normalizedByKey[normalized.IdempotencyKey]; previous != nil && !sameGameplayEventIdentity(previous, normalized) {
+			return 0, errRecordConflict
+		}
+		normalizedByKey[normalized.IdempotencyKey] = normalized
+		normalizedEvents = append(normalizedEvents, normalized)
 	}
+
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	record := backend.commandRecords[gameplayCommandRecordKey(sessionID, commandSeq)]
 	if record == nil {
-		return false, errRecordNotFound
+		return 0, errRecordNotFound
 	}
-	previousStatus := record.Status
-	previousMessages := cloneOutboundMessages(record.OutboundMessages)
+	for _, normalized := range normalizedEvents {
+		if existingID, exists := backend.gameplayEventByKey[normalized.IdempotencyKey]; exists {
+			if !sameGameplayEventIdentity(backend.gameplayEvents[existingID], normalized) {
+				return 0, errRecordConflict
+			}
+		}
+	}
+
 	record.Status = status
 	record.OutboundMessages = cloneOutboundMessages(outboundMessages)
-	created, err := backend.createGameplayEventLocked(normalized)
-	if err != nil {
-		record.Status = previousStatus
-		record.OutboundMessages = previousMessages
-		return false, err
+	createdCount := 0
+	for index, normalized := range normalizedEvents {
+		created, err := backend.createGameplayEventLocked(normalized)
+		if err != nil {
+			return 0, err
+		}
+		if created {
+			createdCount++
+		}
+		*events[index] = *cloneGameplayEvent(normalized)
 	}
-	*event = *cloneGameplayEvent(normalized)
-	return created, nil
+	return createdCount, nil
+}
+
+func (backend *memoryStoreBackend) FinalizeGameplayCommandWithChatAndEvents(_ context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, chatMessage ChatMessageRecord, events []*GameplayEvent) (int, error) {
+	chatMessage = normalizeChatMessageRecord(chatMessage)
+	if chatMessage.ID == "" || chatMessage.CharacterID == "" || chatMessage.Channel == "" || chatMessage.Text == "" {
+		return 0, errors.New("invalid chat message record")
+	}
+	normalizedEvents := make([]*GameplayEvent, 0, len(events))
+	normalizedByKey := make(map[string]*GameplayEvent, len(events))
+	for _, event := range events {
+		normalized, err := normalizeGameplayEvent(event, time.Now())
+		if err != nil {
+			return 0, err
+		}
+		if previous := normalizedByKey[normalized.IdempotencyKey]; previous != nil && !sameGameplayEventIdentity(previous, normalized) {
+			return 0, errRecordConflict
+		}
+		normalizedByKey[normalized.IdempotencyKey] = normalized
+		normalizedEvents = append(normalizedEvents, normalized)
+	}
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	record := backend.commandRecords[gameplayCommandRecordKey(sessionID, commandSeq)]
+	if record == nil {
+		return 0, errRecordNotFound
+	}
+	for _, normalized := range normalizedEvents {
+		if existingID, exists := backend.gameplayEventByKey[normalized.IdempotencyKey]; exists && !sameGameplayEventIdentity(backend.gameplayEvents[existingID], normalized) {
+			return 0, errRecordConflict
+		}
+	}
+	record.Status = status
+	record.OutboundMessages = cloneOutboundMessages(outboundMessages)
+	backend.chatMessages[chatMessage.CharacterID] = append(backend.chatMessages[chatMessage.CharacterID], chatMessage)
+	createdCount := 0
+	for index, normalized := range normalizedEvents {
+		created, err := backend.createGameplayEventLocked(normalized)
+		if err != nil {
+			return 0, err
+		}
+		if created {
+			createdCount++
+		}
+		*events[index] = *cloneGameplayEvent(normalized)
+	}
+	return createdCount, nil
 }
 
 type postgresGameplayEventRepo struct{ backend *postgresStoreBackend }
@@ -507,13 +579,18 @@ func (repo postgresGameplayEventRepo) DeleteDeliveredBefore(ctx context.Context,
 }
 
 func (backend *postgresStoreBackend) FinalizeGameplayCommandWithEvent(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, event *GameplayEvent) (bool, error) {
+	created, err := backend.FinalizeGameplayCommandWithEvents(ctx, sessionID, commandSeq, status, outboundMessages, []*GameplayEvent{event})
+	return created == 1, err
+}
+
+func (backend *postgresStoreBackend) FinalizeGameplayCommandWithEvents(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, events []*GameplayEvent) (int, error) {
 	outcomeJSON, err := json.Marshal(outboundMessages)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	tx, err := backend.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx,
@@ -529,21 +606,78 @@ func (backend *postgresStoreBackend) FinalizeGameplayCommandWithEvent(ctx contex
 		outcomeJSON,
 	)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if rows == 0 {
-		return false, errRecordNotFound
+		return 0, errRecordNotFound
 	}
-	created, err := insertGameplayEvent(ctx, tx, event)
-	if err != nil {
-		return false, err
+	createdCount := 0
+	for _, event := range events {
+		created, insertErr := insertGameplayEvent(ctx, tx, event)
+		if insertErr != nil {
+			return 0, insertErr
+		}
+		if created {
+			createdCount++
+		}
 	}
 	if err := tx.Commit(); err != nil {
-		return false, err
+		return 0, err
 	}
-	return created, nil
+	return createdCount, nil
+}
+
+func (backend *postgresStoreBackend) FinalizeGameplayCommandWithChatAndEvents(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, chatMessage ChatMessageRecord, events []*GameplayEvent) (int, error) {
+	outcomeJSON, err := json.Marshal(outboundMessages)
+	if err != nil {
+		return 0, err
+	}
+	tx, err := backend.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx,
+		`UPDATE gameplay_command_records
+		 SET status = $3,
+		     outcome_json = $4,
+		     updated_at = NOW()
+		 WHERE session_id = $1
+		   AND command_seq = $2`,
+		sessionID,
+		commandSeq,
+		string(status),
+		outcomeJSON,
+	)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if rows == 0 {
+		return 0, errRecordNotFound
+	}
+	if err := insertChatMessage(ctx, tx, normalizeChatMessageRecord(chatMessage)); err != nil {
+		return 0, err
+	}
+	createdCount := 0
+	for _, event := range events {
+		created, insertErr := insertGameplayEvent(ctx, tx, event)
+		if insertErr != nil {
+			return 0, insertErr
+		}
+		if created {
+			createdCount++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return createdCount, nil
 }

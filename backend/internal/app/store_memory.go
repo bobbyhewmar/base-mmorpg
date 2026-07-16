@@ -354,6 +354,22 @@ func (repo memoryCharacterRepo) GetByID(_ context.Context, characterID string) (
 	return &characterCopy, nil
 }
 
+func (repo memoryCharacterRepo) GetByName(_ context.Context, characterName string) (*Character, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	characterID, exists := repo.backend.nameIndex[normalizeName(characterName)]
+	if !exists {
+		return nil, errRecordNotFound
+	}
+	character, exists := repo.backend.characters[characterID]
+	if !exists {
+		return nil, errRecordNotFound
+	}
+	characterCopy := *character
+	return &characterCopy, nil
+}
+
 func (repo memoryCharacterRepo) Create(_ context.Context, character *Character) error {
 	repo.backend.mu.Lock()
 	defer repo.backend.mu.Unlock()

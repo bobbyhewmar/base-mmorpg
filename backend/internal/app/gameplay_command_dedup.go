@@ -85,11 +85,12 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 		}
 	}
 
-	auditCtx := withCommandAuditMetadata(ctx, commandAuditMetadata{
+	eventCollector := &gameplayEventCollector{}
+	auditCtx := withGameplayEventCollector(withCommandAuditMetadata(ctx, commandAuditMetadata{
 		SessionID:  session.ID,
 		CommandID:  command.CommandID,
 		CommandSeq: command.CommandSeq,
-	})
+	}), eventCollector)
 
 	var outboundMessages []map[string]any
 	var gameplayEvent *GameplayEvent
@@ -120,6 +121,9 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 		outboundMessages = runtime.processItemCommand(auditCtx, s.store, command)
 	} else if command.Type == "select_target" {
 		outboundMessages, gameplayEvent = s.processTargetCommand(auditCtx, session, runtime, command)
+		if gameplayEvent != nil {
+			_ = collectGameplayEvent(auditCtx, gameplayEvent)
+		}
 	} else {
 		outboundMessages = runtime.processCommand(command)
 	}
@@ -129,11 +133,31 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 	if shouldPersist {
 		status := gameplayCommandRecordStatusFromOutbound(outboundMessages)
 		var finalizeErr error
-		if gameplayEvent != nil {
-			var created bool
-			created, finalizeErr = s.store.FinalizeGameplayCommandWithEvent(ctx, session.ID, command.CommandSeq, status, outboundMessages, gameplayEvent)
-			if finalizeErr == nil && created {
-				s.recordGameplayEvent("produced", gameplayEvent, "")
+		if eventCollector.chatMessage != nil {
+			var created int
+			created, finalizeErr = s.store.FinalizeGameplayCommandWithChatAndEvents(ctx, session.ID, command.CommandSeq, status, outboundMessages, *eventCollector.chatMessage, eventCollector.events)
+			if finalizeErr == nil {
+				for _, event := range eventCollector.events {
+					result := "produced"
+					if created != len(eventCollector.events) {
+						result = "duplicate"
+					}
+					s.recordGameplayEvent(result, event, "")
+					s.recordSocialFanoutEvent(result, event, "")
+				}
+			}
+		} else if len(eventCollector.events) > 0 {
+			var created int
+			created, finalizeErr = s.store.FinalizeGameplayCommandWithEvents(ctx, session.ID, command.CommandSeq, status, outboundMessages, eventCollector.events)
+			if finalizeErr == nil {
+				for _, event := range eventCollector.events {
+					result := "produced"
+					if created != len(eventCollector.events) {
+						result = "duplicate"
+					}
+					s.recordGameplayEvent(result, event, "")
+					s.recordSocialFanoutEvent(result, event, "")
+				}
 			}
 		} else {
 			finalizeErr = s.store.GameplayCommands.UpdateOutcome(ctx, session.ID, command.CommandSeq, status, outboundMessages)
@@ -141,6 +165,12 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 		if finalizeErr != nil {
 			s.recordStoreError("gameplay_commands.update_outcome", finalizeErr)
 			log.Printf("gameplay command dedup finalize failed session=%s seq=%d: %v", session.ID, command.CommandSeq, finalizeErr)
+			if eventCollector.chatMessage != nil {
+				outboundMessages = []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist chat delivery.")}
+				if err := s.store.GameplayCommands.UpdateOutcome(ctx, session.ID, command.CommandSeq, gameplayCommandRecordStatusRejected, outboundMessages); err != nil {
+					s.recordStoreError("gameplay_commands.reject_chat_outcome", err)
+				}
+			}
 		}
 	}
 

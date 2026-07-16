@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS characters (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_characters_name_lower ON characters(LOWER(name));
+
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS current_position_x DOUBLE PRECISION NOT NULL DEFAULT -8;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS current_position_z DOUBLE PRECISION NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS xp INTEGER NOT NULL DEFAULT 0;
@@ -301,6 +303,9 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_character_id ON chat_messages(chara
 CREATE INDEX IF NOT EXISTS idx_chat_messages_target_character_id ON chat_messages(target_character_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_channel ON chat_messages(channel, created_at);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_region_id ON chat_messages(region_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_gameplay_command
+  ON chat_messages(session_id, command_seq)
+  WHERE session_id IS NOT NULL AND command_seq IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS character_items (
   item_instance_id TEXT PRIMARY KEY,

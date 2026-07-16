@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -301,8 +302,12 @@ func (s *Server) expireClanInvitesForDisconnectedCharacter(ctx context.Context, 
 			continue
 		}
 		affected = append(affected, invite.InviterCharacterID)
-		if attached := s.attachedSessionByCharacterID(invite.InviterCharacterID); attached != nil {
-			_ = attached.sendSerialized(clanNoticeMessage(
+		if err := s.sendOrProduceLifecycleSocialMessage(
+			ctx,
+			invite.InviterCharacterID,
+			remoteClanNoticeEventType,
+			fmt.Sprintf("clan-invite/%s/disconnect-expired/%s", invite.ID, invite.InviterCharacterID),
+			clanNoticeMessage(
 				clanNoticeStatusInviteExpired,
 				invite.ClanID,
 				invite.ID,
@@ -311,7 +316,9 @@ func (s *Server) expireClanInvitesForDisconnectedCharacter(ctx context.Context, 
 				"",
 				"",
 				"Clan invite expired because the invited player disconnected.",
-			))
+			),
+		); err != nil {
+			s.recordStoreError("clans.publish_disconnect_expiry", err)
 		}
 	}
 	for _, invite := range outboundInvites {
@@ -320,8 +327,12 @@ func (s *Server) expireClanInvitesForDisconnectedCharacter(ctx context.Context, 
 			continue
 		}
 		affected = append(affected, invite.InviteeCharacterID)
-		if attached := s.attachedSessionByCharacterID(invite.InviteeCharacterID); attached != nil {
-			_ = attached.sendSerialized(clanNoticeMessage(
+		if err := s.sendOrProduceLifecycleSocialMessage(
+			ctx,
+			invite.InviteeCharacterID,
+			remoteClanNoticeEventType,
+			fmt.Sprintf("clan-invite/%s/disconnect-expired/%s", invite.ID, invite.InviteeCharacterID),
+			clanNoticeMessage(
 				clanNoticeStatusInviteExpired,
 				invite.ClanID,
 				invite.ID,
@@ -330,7 +341,9 @@ func (s *Server) expireClanInvitesForDisconnectedCharacter(ctx context.Context, 
 				"",
 				"",
 				"Clan invite expired because the inviter disconnected.",
-			))
+			),
+		); err != nil {
+			s.recordStoreError("clans.publish_disconnect_expiry", err)
 		}
 	}
 	s.refreshClanStates(ctx, affected)
@@ -466,14 +479,11 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 		if inviteTargetID == actorCharacterID {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "clan.target_invalid", "Character cannot invite itself to a clan."))
 		}
-		presenceScope, _, _, presenceErr := s.resolveCharacterPresence(ctx, inviteTargetID)
+		presenceScope, targetAttached, targetOwnership, presenceErr := s.resolveCharacterPresence(ctx, inviteTargetID)
 		if presenceErr != nil {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve authoritative player presence."))
 		}
-		if presenceScope == characterPresenceRemote {
-			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "presence.target_remote", "Referenced player is online on another server instance and cannot receive a local clan invite."))
-		}
-		if presenceScope != characterPresenceLocal {
+		if presenceScope != characterPresenceLocal && presenceScope != characterPresenceRemote {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "clan.target_not_online", "Referenced player is not currently available for clan invitation."))
 		}
 
@@ -527,22 +537,27 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 		if err != nil {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to project clan state."))
 		}
-		if attached := s.attachedSessionByCharacterID(inviteTargetID); attached != nil {
-			_ = attached.dispatchAll(func(targetRuntime *attachedRuntime) []map[string]any {
+		targetNotice := clanNoticeMessage(
+			clanNoticeStatusInviteReceived,
+			clan.ID,
+			invite.ID,
+			actorCharacterID,
+			actorName,
+			inviteTargetID,
+			"",
+			actorName+" invited you to join "+clan.Name+".",
+		)
+		if targetAttached != nil {
+			_ = targetAttached.dispatchAll(func(targetRuntime *attachedRuntime) []map[string]any {
 				return []map[string]any{
 					targetRuntime.clanDeltaMessage(targetClan, targetInvites),
-					clanNoticeMessage(
-						clanNoticeStatusInviteReceived,
-						clan.ID,
-						invite.ID,
-						actorCharacterID,
-						actorName,
-						inviteTargetID,
-						"",
-						actorName+" invited you to join "+clan.Name+".",
-					),
+					targetNotice,
 				}
 			})
+		} else if targetOwnership != nil {
+			if err := s.collectRemoteSocialDelivery(ctx, session, command, targetOwnership, inviteTargetID, remoteClanNoticeEventType, "clan-invite-received", targetNotice); err != nil {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote clan invitation."))
+			}
 		}
 		outbound = append(outbound, runtime.clanCommandDeltaMessage(actorClan, actorInvites, command))
 		outbound = append(outbound, clanNoticeMessage(
@@ -586,8 +601,11 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 			_ = s.store.Clans.DeleteInvite(ctx, invite.ID)
 			return s.rejectClanCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "clan.invite_expired", "Clan invite is no longer valid.")
 		}
-		inviterAttached := s.attachedSessionByCharacterID(invite.InviterCharacterID)
-		if inviterAttached == nil {
+		inviterScope, inviterAttached, _, inviterPresenceErr := s.resolveCharacterPresence(ctx, invite.InviterCharacterID)
+		if inviterPresenceErr != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve clan inviter presence."))
+		}
+		if (inviterScope != characterPresenceLocal && inviterScope != characterPresenceRemote) || (inviterScope == characterPresenceLocal && inviterAttached == nil) {
 			_ = s.store.Clans.DeleteInvite(ctx, invite.ID)
 			return s.rejectClanCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "clan.invite_expired", "Clan invite is no longer valid.")
 		}
@@ -629,18 +647,16 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 		}
 		s.refreshClanStatesExcept(ctx, affected, actorCharacterID)
 		for _, member := range members {
-			if attached := s.attachedSessionByCharacterID(member.CharacterID); attached != nil {
-				_ = attached.sendSerialized(clanNoticeMessage(
-					clanNoticeStatusMemberJoined,
-					clan.ID,
-					invite.ID,
-					actorCharacterID,
-					actorName,
-					"",
-					"",
-					actorName+" joined the clan.",
-				))
-			}
+			_ = s.sendOrCollectSocialMessage(ctx, session, command, member.CharacterID, remoteClanNoticeEventType, "clan-member-joined", clanNoticeMessage(
+				clanNoticeStatusMemberJoined,
+				clan.ID,
+				invite.ID,
+				actorCharacterID,
+				actorName,
+				"",
+				"",
+				actorName+" joined the clan.",
+			))
 		}
 		outbound = append(outbound, runtime.clanCommandDeltaMessage(actorClan, actorInvites, command))
 		outbound = append(outbound, clanNoticeMessage(
@@ -674,19 +690,17 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to project clan state."))
 		}
 		outbound = append(outbound, runtime.clanCommandDeltaMessage(actorClan, actorInvites, command))
-		if attached := s.attachedSessionByCharacterID(invite.InviterCharacterID); attached != nil {
-			_ = attached.sendSerialized(clanNoticeMessage(
-				clanNoticeStatusInviteDeclined,
-				invite.ClanID,
-				invite.ID,
-				actorCharacterID,
-				actorName,
-				"",
-				"",
-				actorName+" declined the clan invitation.",
-			))
-			s.sendClanStateRefresh(ctx, invite.InviterCharacterID)
-		}
+		_ = s.sendOrCollectSocialMessage(ctx, session, command, invite.InviterCharacterID, remoteClanNoticeEventType, "clan-invite-declined", clanNoticeMessage(
+			clanNoticeStatusInviteDeclined,
+			invite.ClanID,
+			invite.ID,
+			actorCharacterID,
+			actorName,
+			"",
+			"",
+			actorName+" declined the clan invitation.",
+		))
+		s.sendClanStateRefresh(ctx, invite.InviterCharacterID)
 		outbound = append(outbound, clanNoticeMessage(
 			clanNoticeStatusInviteDeclined,
 			invite.ClanID,
@@ -733,18 +747,16 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 			if member.CharacterID == actorCharacterID {
 				continue
 			}
-			if attached := s.attachedSessionByCharacterID(member.CharacterID); attached != nil {
-				_ = attached.sendSerialized(clanNoticeMessage(
-					clanNoticeStatusMemberLeft,
-					clan.ID,
-					"",
-					actorCharacterID,
-					actorName,
-					"",
-					"",
-					actorName+" left the clan.",
-				))
-			}
+			_ = s.sendOrCollectSocialMessage(ctx, session, command, member.CharacterID, remoteClanNoticeEventType, "clan-member-left", clanNoticeMessage(
+				clanNoticeStatusMemberLeft,
+				clan.ID,
+				"",
+				actorCharacterID,
+				actorName,
+				"",
+				"",
+				actorName+" left the clan.",
+			))
 		}
 		outbound = append(outbound, runtime.clanCommandDeltaMessage(actorClan, actorInvites, command))
 		outbound = append(outbound, clanNoticeMessage(
@@ -800,21 +812,7 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 			if member.CharacterID == actorCharacterID || member.CharacterID == parsed.targetID {
 				continue
 			}
-			if attached := s.attachedSessionByCharacterID(member.CharacterID); attached != nil {
-				_ = attached.sendSerialized(clanNoticeMessage(
-					clanNoticeStatusMemberKicked,
-					clan.ID,
-					"",
-					actorCharacterID,
-					actorName,
-					parsed.targetID,
-					targetName,
-					targetName+" was removed from the clan.",
-				))
-			}
-		}
-		if attached := s.attachedSessionByCharacterID(parsed.targetID); attached != nil {
-			_ = attached.sendSerialized(clanNoticeMessage(
+			_ = s.sendOrCollectSocialMessage(ctx, session, command, member.CharacterID, remoteClanNoticeEventType, "clan-member-kicked", clanNoticeMessage(
 				clanNoticeStatusMemberKicked,
 				clan.ID,
 				"",
@@ -822,9 +820,19 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 				actorName,
 				parsed.targetID,
 				targetName,
-				"You were removed from the clan by "+actorName+".",
+				targetName+" was removed from the clan.",
 			))
 		}
+		_ = s.sendOrCollectSocialMessage(ctx, session, command, parsed.targetID, remoteClanNoticeEventType, "clan-member-kicked", clanNoticeMessage(
+			clanNoticeStatusMemberKicked,
+			clan.ID,
+			"",
+			actorCharacterID,
+			actorName,
+			parsed.targetID,
+			targetName,
+			"You were removed from the clan by "+actorName+".",
+		))
 		outbound = append(outbound, runtime.clanCommandDeltaMessage(actorClan, actorInvites, command))
 		outbound = append(outbound, clanNoticeMessage(
 			clanNoticeStatusMemberKicked,
@@ -870,35 +878,31 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 		}
 		s.refreshClanStatesExcept(ctx, affected, actorCharacterID)
 		for _, invite := range pendingInvites {
-			if attached := s.attachedSessionByCharacterID(invite.InviteeCharacterID); attached != nil {
-				_ = attached.sendSerialized(clanNoticeMessage(
-					clanNoticeStatusInviteExpired,
-					clan.ID,
-					invite.ID,
-					actorCharacterID,
-					actorName,
-					"",
-					"",
-					"Clan invite expired because the clan was dissolved.",
-				))
-			}
+			_ = s.sendOrCollectSocialMessage(ctx, session, command, invite.InviteeCharacterID, remoteClanNoticeEventType, "clan-invite-expired", clanNoticeMessage(
+				clanNoticeStatusInviteExpired,
+				clan.ID,
+				invite.ID,
+				actorCharacterID,
+				actorName,
+				"",
+				"",
+				"Clan invite expired because the clan was dissolved.",
+			))
 		}
 		for _, member := range members {
 			if member.CharacterID == actorCharacterID {
 				continue
 			}
-			if attached := s.attachedSessionByCharacterID(member.CharacterID); attached != nil {
-				_ = attached.sendSerialized(clanNoticeMessage(
-					clanNoticeStatusClanDissolved,
-					clan.ID,
-					"",
-					actorCharacterID,
-					actorName,
-					"",
-					"",
-					"The clan was dissolved by "+actorName+".",
-				))
-			}
+			_ = s.sendOrCollectSocialMessage(ctx, session, command, member.CharacterID, remoteClanNoticeEventType, "clan-dissolved", clanNoticeMessage(
+				clanNoticeStatusClanDissolved,
+				clan.ID,
+				"",
+				actorCharacterID,
+				actorName,
+				"",
+				"",
+				"The clan was dissolved by "+actorName+".",
+			))
 		}
 		actorClan, actorInvites, err := s.loadCharacterClanState(ctx, actorCharacterID, now)
 		if err != nil {

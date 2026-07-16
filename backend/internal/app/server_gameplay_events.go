@@ -102,6 +102,7 @@ func (s *Server) dispatchGameplayEventsOnce(ctx context.Context, workerID string
 			continue
 		}
 		s.recordGameplayEvent("delivered", event, "")
+		s.recordSocialFanoutEvent("delivered", event, "")
 	}
 	return len(events)
 }
@@ -114,11 +115,18 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent)
 		return errors.New("wrong_target_instance")
 	}
 	if s.gameplayEventWasSeen(event.ID) {
+		s.recordSocialFanoutEvent("duplicate", event, "")
 		return nil
 	}
 	switch event.Type {
 	case remoteTargetNoticeEventType:
 		return s.deliverRemoteTargetNotice(ctx, event)
+	case remoteChatMessageEventType:
+		return s.deliverRemoteChatMessage(ctx, event)
+	case remotePartyNoticeEventType:
+		return s.deliverRemotePartyNotice(ctx, event)
+	case remoteClanNoticeEventType:
+		return s.deliverRemoteClanNotice(ctx, event)
 	default:
 		return errors.New("unsupported_event_type")
 	}
@@ -182,8 +190,14 @@ func (s *Server) failGameplayEvent(ctx context.Context, workerID string, event *
 	}
 	event.RetryCount = failure.RetryCount
 	s.recordGameplayEvent("failed", event, failureCode)
+	if failureCode == "social.recipient_stale_owner" {
+		s.recordSocialFanoutEvent("stale_owner", event, failureCode)
+	} else {
+		s.recordSocialFanoutEvent("failed", event, failureCode)
+	}
 	if failure.DeadLettered {
 		s.recordGameplayEvent("dead_lettered", event, failureCode)
+		s.recordSocialFanoutEvent("dead_letter", event, failureCode)
 		return
 	}
 	s.recordGameplayEvent("retried", event, failureCode)

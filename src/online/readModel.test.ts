@@ -726,6 +726,50 @@ describe('online read model', () => {
     });
   });
 
+  it('deduplicates at-least-once remote chat and social notices by authoritative event id', () => {
+    const model = new OnlineReadModel(partyRegionContext, character, initialItemState, initialSelfState);
+    const command = model.createSendChatMessage('whisper', 'Remote hello.', 'Selene');
+    const logsBeforeAck = model.snapshot.logs.length;
+    model.applyMessage({
+      kind: 'ack',
+      emitted_at_ms: Date.now(),
+      command_id: command!.command_id,
+      command_seq: command!.command_seq,
+      status: 'received',
+    });
+    expect(model.snapshot.logs).toHaveLength(logsBeforeAck);
+    const remoteWhisper = {
+      kind: 'chat_message' as const,
+      event_id: 42,
+      emitted_at_ms: Date.now(),
+      channel: 'whisper' as const,
+      sender_character_id: 'char_2',
+      sender_name: 'Selene',
+      target_character_id: character.character_id,
+      target_character_name: character.name,
+      text: 'Remote hello.',
+    };
+
+    expect(model.applyMessage(remoteWhisper)).toEqual({ changed: true });
+    const afterFirstWhisper = model.snapshot.logs.length;
+    expect(model.applyMessage(remoteWhisper)).toEqual({ changed: false });
+    expect(model.snapshot.logs).toHaveLength(afterFirstWhisper);
+
+    const remotePartyNotice = {
+      kind: 'party_notice' as const,
+      event_id: 43,
+      emitted_at_ms: Date.now(),
+      status: 'invite_received' as const,
+      party_id: 'party_remote',
+      invite_id: 'invite_remote',
+      message: 'Selene invited you to a party.',
+    };
+    expect(model.applyMessage(remotePartyNotice)).toEqual({ changed: true });
+    const afterFirstNotice = model.snapshot.logs.length;
+    expect(model.applyMessage(remotePartyNotice)).toEqual({ changed: false });
+    expect(model.snapshot.logs).toHaveLength(afterFirstNotice);
+  });
+
   it('allows region chat while dead and keeps party or whisper prerequisites authoritative', () => {
     const model = new OnlineReadModel(regionContext, character, initialItemState, {
       ...initialSelfState,

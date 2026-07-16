@@ -378,6 +378,41 @@ func TestPostgresGameplayCommandAndOutboxFinalizeAtomically(t *testing.T) {
 	if err != nil || rolledBack.Status != gameplayCommandRecordStatusPending || len(rolledBack.OutboundMessages) != 0 {
 		t.Fatalf("command update was not rolled back with event failure: record=%+v error=%v", rolledBack, err)
 	}
+
+	chatPending := &GameplayCommandRecord{SessionID: session.ID, CommandSeq: 3, CommandID: "outbox_atomic_chat", CommandType: "send_chat_message"}
+	if err := env.store.GameplayCommands.CreatePending(context.Background(), chatPending); err != nil {
+		t.Fatalf("GameplayCommands.CreatePending(chat) error=%v", err)
+	}
+	chatRecord := ChatMessageRecord{
+		ID:                "outbox_atomic_chat_message",
+		CharacterID:       character.ID,
+		AccountID:         account.ID,
+		Channel:           chatChannelWhisper,
+		TargetCharacterID: character.ID,
+		Text:              "atomic remote chat",
+		SessionID:         session.ID,
+		CommandID:         chatPending.CommandID,
+		CommandSeq:        chatPending.CommandSeq,
+		CreatedAt:         time.Now().UTC(),
+	}
+	chatEvents := []*GameplayEvent{
+		gameplayEventForTest("outbox-atomic-chat-event-a", "pg-instance-b"),
+		gameplayEventForTest("outbox-atomic-chat-event-b", "pg-instance-c"),
+	}
+	chatOutbound := []map[string]any{chatMessagePayload(chatPending.CommandID, chatPending.CommandSeq, chatChannelWhisper, character.ID, character.Name, character.ID, character.Name, "", chatRecord.Text, chatRecord.CreatedAt)}
+	createdCount, err := env.store.FinalizeGameplayCommandWithChatAndEvents(context.Background(), session.ID, chatPending.CommandSeq, gameplayCommandRecordStatusApplied, chatOutbound, chatRecord, chatEvents)
+	if err != nil || createdCount != len(chatEvents) {
+		t.Fatalf("FinalizeGameplayCommandWithChatAndEvents() created=%d error=%v", createdCount, err)
+	}
+	chatHistory, err := env.store.ChatMessages.ListByCharacterID(context.Background(), character.ID)
+	if err != nil || len(chatHistory) != 1 || chatHistory[0].CommandID != chatPending.CommandID || chatHistory[0].CommandSeq != chatPending.CommandSeq {
+		t.Fatalf("atomic chat history mismatch: records=%+v error=%v", chatHistory, err)
+	}
+	for _, chatEvent := range chatEvents {
+		if persisted, eventErr := env.store.GameplayEvents.GetByIdempotencyKey(context.Background(), chatEvent.IdempotencyKey); eventErr != nil || persisted.ID != chatEvent.ID {
+			t.Fatalf("atomic chat event mismatch: event=%+v error=%v", persisted, eventErr)
+		}
+	}
 }
 
 func TestPostgresGameplayEventRetentionDeletesOnlyOldDeliveredRows(t *testing.T) {

@@ -153,6 +153,7 @@ const LOOT_PICKUP_SEARCH_RANGE = 16;
 const PET_FOLLOW_DISTANCE = 1.8;
 const PET_FOLLOW_SIDE_OFFSET = 0.75;
 const CHAT_MESSAGE_MAX_LENGTH = 240;
+const REMOTE_SOCIAL_EVENT_DEDUP_LIMIT = 4096;
 
 const makeCommandId = (commandSeq: number): string => `cmd_${Date.now()}_${commandSeq}`;
 
@@ -412,6 +413,8 @@ export class OnlineReadModel {
   private outgoingTradeOffer: PendingTradeOfferState | null = null;
   private floatingTexts: OnlineFloatingText[] = [];
   private readonly remotePlayerProjections = new Map<string, RemotePlayerProjection>();
+  private readonly seenRemoteSocialEventIds = new Set<number>();
+  private readonly remoteSocialEventOrder: number[] = [];
   private logs: OnlineLogEntry[] = [];
   private desyncState: DesyncState = 'none';
 
@@ -2576,6 +2579,9 @@ export class OnlineReadModel {
   }
 
   private applyPartyNotice(message: PartyNoticeMessage): { changed: boolean } {
+    if (!this.acceptRemoteSocialEvent(message.event_id)) {
+      return { changed: false };
+    }
     if (message.command_id) {
       const pending = this.pendingCommands.get(message.command_id);
       if (pending) {
@@ -2594,6 +2600,9 @@ export class OnlineReadModel {
   }
 
   private applyClanNotice(message: ClanNoticeMessage): { changed: boolean } {
+    if (!this.acceptRemoteSocialEvent(message.event_id)) {
+      return { changed: false };
+    }
     if (message.command_id) {
       const pending = this.pendingCommands.get(message.command_id);
       if (pending) {
@@ -2612,6 +2621,9 @@ export class OnlineReadModel {
   }
 
   private applyChatMessage(message: ChatMessageServerMessage): { changed: boolean } {
+    if (!this.acceptRemoteSocialEvent(message.event_id)) {
+      return { changed: false };
+    }
     if (message.command_id) {
       const pending = this.pendingCommands.get(message.command_id);
       if (pending) {
@@ -2621,6 +2633,27 @@ export class OnlineReadModel {
 
     this.pushLog(formatChatMessage(message, this.character.character_id), 'neutral', message.channel);
     return { changed: true };
+  }
+
+  private acceptRemoteSocialEvent(eventId: number | undefined): boolean {
+    if (eventId === undefined) {
+      return true;
+    }
+    if (!Number.isSafeInteger(eventId) || eventId <= 0) {
+      return false;
+    }
+    if (this.seenRemoteSocialEventIds.has(eventId)) {
+      return false;
+    }
+    this.seenRemoteSocialEventIds.add(eventId);
+    this.remoteSocialEventOrder.push(eventId);
+    if (this.remoteSocialEventOrder.length > REMOTE_SOCIAL_EVENT_DEDUP_LIMIT) {
+      const oldestEventId = this.remoteSocialEventOrder.shift();
+      if (oldestEventId !== undefined) {
+        this.seenRemoteSocialEventIds.delete(oldestEventId);
+      }
+    }
+    return true;
   }
 
   private logQuestChange(previousQuest: GameState['quest'] | null, nextQuest: GameState['quest'] | null): void {

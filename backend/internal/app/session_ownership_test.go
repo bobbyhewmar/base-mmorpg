@@ -268,7 +268,7 @@ func TestRemoteOwnedPlayerRejectsTargetAndPvPWithoutLocalFallback(t *testing.T) 
 	}
 }
 
-func TestRemoteOwnedPlayerCannotReceiveLocalPartyOrClanInvite(t *testing.T) {
+func TestRemoteOwnedPlayerReceivesPartyAndClanInviteThroughOutbox(t *testing.T) {
 	store := newMemoryStore()
 	actorCharacter, actorSession := createOwnershipTestCharacterAndSession(t, store, "character_remote_inviter", "session_remote_inviter")
 	targetCharacter, targetSession := createOwnershipTestCharacterAndSession(t, store, "character_remote_invitee", "session_remote_invitee")
@@ -300,8 +300,12 @@ func TestRemoteOwnedPlayerCannotReceiveLocalPartyOrClanInvite(t *testing.T) {
 		Payload:         json.RawMessage(`{}`),
 	}
 	partyOutbound, _ := serverA.processGameplayCommandWithDedup(context.Background(), actor.Session, runtime, partyInvite)
-	if extractRejectReason(partyOutbound) != "presence.target_remote" {
-		t.Fatalf("remote party invite must reject without local fallback, got %+v", partyOutbound)
+	if extractRejectReason(partyOutbound) != "" || gameplayCommandRecordStatusFromOutbound(partyOutbound) != gameplayCommandRecordStatusApplied {
+		t.Fatalf("remote party invite must apply authoritatively, got %+v", partyOutbound)
+	}
+	partyEventKey := "gameplay-command/" + actor.Session.ID + "/1/social/party-invite-received/" + targetCharacter.ID
+	if event, eventErr := store.GameplayEvents.GetByIdempotencyKey(context.Background(), partyEventKey); eventErr != nil || event.Type != remotePartyNoticeEventType || event.TargetServerInstanceID != "instance-b" {
+		t.Fatalf("remote party invite event mismatch: event=%+v err=%v", event, eventErr)
 	}
 
 	createClan := commandEnvelope{
@@ -323,11 +327,15 @@ func TestRemoteOwnedPlayerCannotReceiveLocalPartyOrClanInvite(t *testing.T) {
 		Payload:         json.RawMessage(`{}`),
 	}
 	clanOutbound, _ := serverA.processGameplayCommandWithDedup(context.Background(), actor.Session, runtime, clanInvite)
-	if extractRejectReason(clanOutbound) != "presence.target_remote" {
-		t.Fatalf("remote clan invite must reject without local fallback, got %+v", clanOutbound)
+	if extractRejectReason(clanOutbound) != "" || gameplayCommandRecordStatusFromOutbound(clanOutbound) != gameplayCommandRecordStatusApplied {
+		t.Fatalf("remote clan invite must apply authoritatively, got %+v", clanOutbound)
 	}
-	if invites, err := store.Clans.ListPendingInvitesByInvitee(context.Background(), targetCharacter.ID, time.Now()); !errors.Is(err, errRecordNotFound) || len(invites) != 0 {
-		t.Fatalf("remote clan invite created durable fallback state: invites=%+v err=%v", invites, err)
+	if invites, invitesErr := store.Clans.ListPendingInvitesByInvitee(context.Background(), targetCharacter.ID, time.Now()); invitesErr != nil || len(invites) != 1 {
+		t.Fatalf("remote clan invite did not persist canonical state: invites=%+v err=%v", invites, invitesErr)
+	}
+	clanEventKey := "gameplay-command/" + actor.Session.ID + "/3/social/clan-invite-received/" + targetCharacter.ID
+	if event, eventErr := store.GameplayEvents.GetByIdempotencyKey(context.Background(), clanEventKey); eventErr != nil || event.Type != remoteClanNoticeEventType || event.TargetServerInstanceID != "instance-b" {
+		t.Fatalf("remote clan invite event mismatch: event=%+v err=%v", event, eventErr)
 	}
 }
 

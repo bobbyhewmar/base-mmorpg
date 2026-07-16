@@ -874,6 +874,7 @@ export interface TradeNoticeMessage extends ServerMessageBase {
 
 export interface PartyNoticeMessage extends ServerMessageBase {
   kind: 'party_notice';
+  event_id?: number;
   command_id?: string;
   command_seq?: number;
   status:
@@ -898,6 +899,7 @@ export interface PartyNoticeMessage extends ServerMessageBase {
 
 export interface ClanNoticeMessage extends ServerMessageBase {
   kind: 'clan_notice';
+  event_id?: number;
   command_id?: string;
   command_seq?: number;
   status:
@@ -922,6 +924,7 @@ export interface ClanNoticeMessage extends ServerMessageBase {
 
 export interface ChatMessageServerMessage extends ServerMessageBase {
   kind: 'chat_message';
+  event_id?: number;
   command_id?: string;
   command_seq?: number;
   channel: ChatChannel;

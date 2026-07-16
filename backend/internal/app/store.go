@@ -74,12 +74,15 @@ type GameplayEventRepository interface {
 
 type gameplayCommandEventWriter interface {
 	FinalizeGameplayCommandWithEvent(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, event *GameplayEvent) (bool, error)
+	FinalizeGameplayCommandWithEvents(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, events []*GameplayEvent) (int, error)
+	FinalizeGameplayCommandWithChatAndEvents(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, chatMessage ChatMessageRecord, events []*GameplayEvent) (int, error)
 }
 
 type CharacterRepository interface {
 	ListByAccountID(ctx context.Context, accountID string) ([]Character, error)
 	CountByAccountID(ctx context.Context, accountID string) (int, error)
 	GetByID(ctx context.Context, characterID string) (*Character, error)
+	GetByName(ctx context.Context, characterName string) (*Character, error)
 	Create(ctx context.Context, character *Character) error
 	UpdateWorldState(ctx context.Context, characterID string, regionID string, positionX float64, positionZ float64) error
 	UpdateProgression(ctx context.Context, characterID string, level int, xp int, currentCP int, currentHP int, currentMP int) error
@@ -292,6 +295,20 @@ func (s *Store) FinalizeGameplayCommandWithEvent(ctx context.Context, sessionID 
 		return false, errors.New("atomic gameplay command event writer is unavailable")
 	}
 	return s.commandEventWriter.FinalizeGameplayCommandWithEvent(ctx, sessionID, commandSeq, status, outboundMessages, event)
+}
+
+func (s *Store) FinalizeGameplayCommandWithEvents(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, events []*GameplayEvent) (int, error) {
+	if s == nil || s.commandEventWriter == nil {
+		return 0, errors.New("atomic gameplay command event writer is unavailable")
+	}
+	return s.commandEventWriter.FinalizeGameplayCommandWithEvents(ctx, sessionID, commandSeq, status, outboundMessages, events)
+}
+
+func (s *Store) FinalizeGameplayCommandWithChatAndEvents(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, chatMessage ChatMessageRecord, events []*GameplayEvent) (int, error) {
+	if s == nil || s.commandEventWriter == nil {
+		return 0, errors.New("atomic gameplay chat command writer is unavailable")
+	}
+	return s.commandEventWriter.FinalizeGameplayCommandWithChatAndEvents(ctx, sessionID, commandSeq, status, outboundMessages, chatMessage, events)
 }
 
 func (s *Store) Close() error {

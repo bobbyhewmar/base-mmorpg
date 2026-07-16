@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -268,8 +269,12 @@ func (s *Server) expirePartyInvitesForDisconnectedCharacter(ctx context.Context,
 			continue
 		}
 		affected = append(affected, invite.InviterCharacterID)
-		if attached := s.attachedSessionByCharacterID(invite.InviterCharacterID); attached != nil {
-			_ = attached.sendSerialized(partyNoticeMessage(
+		if err := s.sendOrProduceLifecycleSocialMessage(
+			ctx,
+			invite.InviterCharacterID,
+			remotePartyNoticeEventType,
+			fmt.Sprintf("party-invite/%s/disconnect-expired/%s", invite.ID, invite.InviterCharacterID),
+			partyNoticeMessage(
 				partyNoticeStatusInviteExpired,
 				invite.PartyID,
 				invite.ID,
@@ -278,7 +283,9 @@ func (s *Server) expirePartyInvitesForDisconnectedCharacter(ctx context.Context,
 				"",
 				"",
 				"Party invite expired because the invited player disconnected.",
-			))
+			),
+		); err != nil {
+			s.recordStoreError("parties.publish_disconnect_expiry", err)
 		}
 	}
 	for _, invite := range outboundInvites {
@@ -287,8 +294,12 @@ func (s *Server) expirePartyInvitesForDisconnectedCharacter(ctx context.Context,
 			continue
 		}
 		affected = append(affected, invite.InviteeCharacterID)
-		if attached := s.attachedSessionByCharacterID(invite.InviteeCharacterID); attached != nil {
-			_ = attached.sendSerialized(partyNoticeMessage(
+		if err := s.sendOrProduceLifecycleSocialMessage(
+			ctx,
+			invite.InviteeCharacterID,
+			remotePartyNoticeEventType,
+			fmt.Sprintf("party-invite/%s/disconnect-expired/%s", invite.ID, invite.InviteeCharacterID),
+			partyNoticeMessage(
 				partyNoticeStatusInviteExpired,
 				invite.PartyID,
 				invite.ID,
@@ -297,7 +308,9 @@ func (s *Server) expirePartyInvitesForDisconnectedCharacter(ctx context.Context,
 				"",
 				"",
 				"Party invite expired because the inviter disconnected.",
-			))
+			),
+		); err != nil {
+			s.recordStoreError("parties.publish_disconnect_expiry", err)
 		}
 	}
 	s.refreshPartyStates(ctx, affected)
@@ -424,17 +437,17 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.target_invalid", "Character cannot invite itself to a party."))
 		}
 
-		presenceScope, targetAttached, _, presenceErr := s.resolveCharacterPresence(ctx, inviteTargetID)
+		presenceScope, targetAttached, targetOwnership, presenceErr := s.resolveCharacterPresence(ctx, inviteTargetID)
 		if presenceErr != nil {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve authoritative player presence."))
 		}
-		if presenceScope == characterPresenceRemote {
-			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "presence.target_remote", "Referenced player is online on another server instance and cannot receive a local party invite."))
-		}
-		if presenceScope != characterPresenceLocal || targetAttached == nil || targetAttached.runtime == nil {
+		if presenceScope != characterPresenceLocal && presenceScope != characterPresenceRemote {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.target_not_online", "Referenced player is not currently available for party invitation."))
 		}
-		if targetAttached.runtime.regionIDValue() != actorRegionID {
+		if presenceScope == characterPresenceLocal && (targetAttached == nil || targetAttached.runtime == nil || targetAttached.runtime.regionIDValue() != actorRegionID) {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.target_not_online", "Referenced player is not currently available for party invitation."))
+		}
+		if presenceScope == characterPresenceRemote && (targetOwnership == nil || targetOwnership.RegionID != actorRegionID) {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.target_not_online", "Referenced player is not currently available for party invitation."))
 		}
 
@@ -520,23 +533,30 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 		targetName := inviteTargetID
 		if attached := s.attachedSessionByCharacterID(inviteTargetID); attached != nil && attached.runtime != nil {
 			targetName = attached.runtime.partyRosterMemberSnapshot(false).Name
+		} else if character, characterErr := s.store.Characters.GetByID(ctx, inviteTargetID); characterErr == nil && character.Name != "" {
+			targetName = character.Name
 		}
+		targetNotice := partyNoticeMessage(
+			partyNoticeStatusInviteReceived,
+			currentParty.ID,
+			invite.ID,
+			actorCharacterID,
+			actorName,
+			inviteTargetID,
+			targetName,
+			actorName+" invited you to a party.",
+		)
 		if targetAttached != nil {
 			_ = targetAttached.dispatchAll(func(targetRuntime *attachedRuntime) []map[string]any {
 				return []map[string]any{
 					targetRuntime.partyDeltaMessage(targetParty, targetInvites),
-					partyNoticeMessage(
-						partyNoticeStatusInviteReceived,
-						currentParty.ID,
-						invite.ID,
-						actorCharacterID,
-						actorName,
-						inviteTargetID,
-						targetName,
-						actorName+" invited you to a party.",
-					),
+					targetNotice,
 				}
 			})
+		} else if targetOwnership != nil {
+			if err := s.collectRemoteSocialDelivery(ctx, session, command, targetOwnership, inviteTargetID, remotePartyNoticeEventType, "party-invite-received", targetNotice); err != nil {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote party invitation."))
+			}
 		}
 
 		outbound = append(outbound, runtime.partyDeltaMessage(actorParty, actorInvites))
@@ -570,8 +590,11 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect party state."))
 		}
 
-		inviterAttached := s.attachedSessionByCharacterID(invite.InviterCharacterID)
-		if inviterAttached == nil || inviterAttached.runtime == nil {
+		inviterScope, inviterAttached, _, inviterPresenceErr := s.resolveCharacterPresence(ctx, invite.InviterCharacterID)
+		if inviterPresenceErr != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve party inviter presence."))
+		}
+		if (inviterScope != characterPresenceLocal && inviterScope != characterPresenceRemote) || (inviterScope == characterPresenceLocal && (inviterAttached == nil || inviterAttached.runtime == nil)) {
 			_ = s.deleteInviteAndMaybeOrphanParty(ctx, invite, now)
 			return s.rejectPartyCommandWithRefresh(ctx, outbound, runtime, actorCharacterID, command, "party.invite_expired", "Party invite is no longer valid.")
 		}
@@ -658,18 +681,16 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 			if member.CharacterID == actorCharacterID {
 				continue
 			}
-			if attached := s.attachedSessionByCharacterID(member.CharacterID); attached != nil {
-				_ = attached.sendSerialized(partyNoticeMessage(
-					partyNoticeStatusMemberJoined,
-					party.ID,
-					invite.ID,
-					actorCharacterID,
-					actorName,
-					"",
-					"",
-					actorName+" joined the party.",
-				))
-			}
+			_ = s.sendOrCollectSocialMessage(ctx, session, command, member.CharacterID, remotePartyNoticeEventType, "party-member-joined", partyNoticeMessage(
+				partyNoticeStatusMemberJoined,
+				party.ID,
+				invite.ID,
+				actorCharacterID,
+				actorName,
+				"",
+				"",
+				actorName+" joined the party.",
+			))
 		}
 
 		outbound = append(outbound, runtime.partyDeltaMessage(actorParty, actorInvites))
@@ -704,18 +725,16 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 		if err != nil {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to project party state."))
 		}
-		if attached := s.attachedSessionByCharacterID(invite.InviterCharacterID); attached != nil {
-			_ = attached.sendSerialized(partyNoticeMessage(
-				partyNoticeStatusInviteDeclined,
-				invite.PartyID,
-				invite.ID,
-				actorCharacterID,
-				actorName,
-				"",
-				"",
-				actorName+" declined your party invite.",
-			))
-		}
+		_ = s.sendOrCollectSocialMessage(ctx, session, command, invite.InviterCharacterID, remotePartyNoticeEventType, "party-invite-declined", partyNoticeMessage(
+			partyNoticeStatusInviteDeclined,
+			invite.PartyID,
+			invite.ID,
+			actorCharacterID,
+			actorName,
+			"",
+			"",
+			actorName+" declined your party invite.",
+		))
 
 		outbound = append(outbound, runtime.partyDeltaMessage(actorParty, actorInvites))
 		outbound = append(outbound, partyNoticeMessage(
@@ -760,32 +779,28 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 			}
 			s.refreshPartyStatesExcept(ctx, affected, actorCharacterID)
 			for _, member := range remainingMembers {
-				if attached := s.attachedSessionByCharacterID(member.CharacterID); attached != nil {
-					_ = attached.sendSerialized(partyNoticeMessage(
-						partyNoticeStatusPartyDissolved,
-						party.ID,
-						"",
-						actorCharacterID,
-						actorName,
-						"",
-						"",
-						"The party dissolved after "+actorName+" left.",
-					))
-				}
+				_ = s.sendOrCollectSocialMessage(ctx, session, command, member.CharacterID, remotePartyNoticeEventType, "party-dissolved", partyNoticeMessage(
+					partyNoticeStatusPartyDissolved,
+					party.ID,
+					"",
+					actorCharacterID,
+					actorName,
+					"",
+					"",
+					"The party dissolved after "+actorName+" left.",
+				))
 			}
 			for _, inviteeCharacterID := range pendingInviteTargets {
-				if attached := s.attachedSessionByCharacterID(inviteeCharacterID); attached != nil {
-					_ = attached.sendSerialized(partyNoticeMessage(
-						partyNoticeStatusInviteExpired,
-						party.ID,
-						"",
-						actorCharacterID,
-						actorName,
-						"",
-						"",
-						"Party invite expired because the party dissolved.",
-					))
-				}
+				_ = s.sendOrCollectSocialMessage(ctx, session, command, inviteeCharacterID, remotePartyNoticeEventType, "party-invite-expired", partyNoticeMessage(
+					partyNoticeStatusInviteExpired,
+					party.ID,
+					"",
+					actorCharacterID,
+					actorName,
+					"",
+					"",
+					"Party invite expired because the party dissolved.",
+				))
 			}
 			outbound = append(outbound, runtime.partyDeltaMessage(nil, nil))
 			outbound = append(outbound, partyNoticeMessage(
@@ -815,18 +830,16 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 			noticeStatus = partyNoticeStatusLeaderTransferred
 			noticeMessage = actorName + " left the party. Leadership transfers to the next member."
 			for _, inviteeCharacterID := range pendingInviteTargets {
-				if attached := s.attachedSessionByCharacterID(inviteeCharacterID); attached != nil {
-					_ = attached.sendSerialized(partyNoticeMessage(
-						partyNoticeStatusInviteExpired,
-						party.ID,
-						"",
-						actorCharacterID,
-						actorName,
-						"",
-						"",
-						"Party invite expired because the party leader left.",
-					))
-				}
+				_ = s.sendOrCollectSocialMessage(ctx, session, command, inviteeCharacterID, remotePartyNoticeEventType, "party-invite-expired", partyNoticeMessage(
+					partyNoticeStatusInviteExpired,
+					party.ID,
+					"",
+					actorCharacterID,
+					actorName,
+					"",
+					"",
+					"Party invite expired because the party leader left.",
+				))
 			}
 		}
 
@@ -837,18 +850,16 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 		s.refreshPartyStatesExcept(ctx, affected, actorCharacterID)
 
 		for _, member := range remainingMembers {
-			if attached := s.attachedSessionByCharacterID(member.CharacterID); attached != nil {
-				_ = attached.sendSerialized(partyNoticeMessage(
-					noticeStatus,
-					party.ID,
-					"",
-					actorCharacterID,
-					actorName,
-					"",
-					"",
-					noticeMessage,
-				))
-			}
+			_ = s.sendOrCollectSocialMessage(ctx, session, command, member.CharacterID, remotePartyNoticeEventType, "party-"+noticeStatus, partyNoticeMessage(
+				noticeStatus,
+				party.ID,
+				"",
+				actorCharacterID,
+				actorName,
+				"",
+				"",
+				noticeMessage,
+			))
 		}
 
 		outbound = append(outbound, runtime.partyDeltaMessage(nil, nil))
@@ -916,31 +927,27 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 			}
 			s.refreshPartyStatesExcept(ctx, affected, actorCharacterID)
 			for _, inviteeCharacterID := range pendingInviteTargets {
-				if attached := s.attachedSessionByCharacterID(inviteeCharacterID); attached != nil {
-					_ = attached.sendSerialized(partyNoticeMessage(
-						partyNoticeStatusInviteExpired,
-						party.ID,
-						"",
-						actorCharacterID,
-						actorName,
-						"",
-						"",
-						"Party invite expired because the party dissolved.",
-					))
-				}
-			}
-			if attached := s.attachedSessionByCharacterID(parsed.targetID); attached != nil {
-				_ = attached.sendSerialized(partyNoticeMessage(
-					partyNoticeStatusMemberKicked,
+				_ = s.sendOrCollectSocialMessage(ctx, session, command, inviteeCharacterID, remotePartyNoticeEventType, "party-invite-expired", partyNoticeMessage(
+					partyNoticeStatusInviteExpired,
 					party.ID,
 					"",
 					actorCharacterID,
 					actorName,
-					parsed.targetID,
-					targetName,
-					"You were removed from the party by "+actorName+".",
+					"",
+					"",
+					"Party invite expired because the party dissolved.",
 				))
 			}
+			_ = s.sendOrCollectSocialMessage(ctx, session, command, parsed.targetID, remotePartyNoticeEventType, "party-member-kicked", partyNoticeMessage(
+				partyNoticeStatusMemberKicked,
+				party.ID,
+				"",
+				actorCharacterID,
+				actorName,
+				parsed.targetID,
+				targetName,
+				"You were removed from the party by "+actorName+".",
+			))
 			outbound = append(outbound, runtime.partyDeltaMessage(nil, nil))
 			outbound = append(outbound, partyNoticeMessage(
 				partyNoticeStatusPartyDissolved,
@@ -961,21 +968,7 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 		s.refreshPartyStatesExcept(ctx, affected, actorCharacterID)
 
 		for _, member := range updatedMembers {
-			if attached := s.attachedSessionByCharacterID(member.CharacterID); attached != nil {
-				_ = attached.sendSerialized(partyNoticeMessage(
-					partyNoticeStatusMemberKicked,
-					party.ID,
-					"",
-					actorCharacterID,
-					actorName,
-					parsed.targetID,
-					targetName,
-					targetName+" was removed from the party.",
-				))
-			}
-		}
-		if attached := s.attachedSessionByCharacterID(parsed.targetID); attached != nil {
-			_ = attached.sendSerialized(partyNoticeMessage(
+			_ = s.sendOrCollectSocialMessage(ctx, session, command, member.CharacterID, remotePartyNoticeEventType, "party-member-kicked", partyNoticeMessage(
 				partyNoticeStatusMemberKicked,
 				party.ID,
 				"",
@@ -983,9 +976,19 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 				actorName,
 				parsed.targetID,
 				targetName,
-				"You were removed from the party by "+actorName+".",
+				targetName+" was removed from the party.",
 			))
 		}
+		_ = s.sendOrCollectSocialMessage(ctx, session, command, parsed.targetID, remotePartyNoticeEventType, "party-member-kicked", partyNoticeMessage(
+			partyNoticeStatusMemberKicked,
+			party.ID,
+			"",
+			actorCharacterID,
+			actorName,
+			parsed.targetID,
+			targetName,
+			"You were removed from the party by "+actorName+".",
+		))
 
 		actorParty, actorInvites, err := s.loadCharacterPartyState(ctx, actorCharacterID, now)
 		if err != nil {

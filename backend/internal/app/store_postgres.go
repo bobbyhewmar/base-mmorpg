@@ -555,6 +555,24 @@ func (p *postgresStoreBackend) GetByIDCharacter(ctx context.Context, characterID
 	return &character, nil
 }
 
+func (p *postgresStoreBackend) GetCharacterByName(ctx context.Context, characterName string) (*Character, error) {
+	row := p.db.QueryRowContext(
+		ctx,
+		`SELECT character_id
+		 FROM characters
+		 WHERE LOWER(name) = LOWER($1)`,
+		strings.TrimSpace(characterName),
+	)
+	var characterID string
+	if err := row.Scan(&characterID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errRecordNotFound
+		}
+		return nil, err
+	}
+	return p.GetByIDCharacter(ctx, characterID)
+}
+
 func (p *postgresStoreBackend) CreateCharacter(ctx context.Context, character *Character) error {
 	characterState, _ := resourcePoolsForCharacter(character, nil)
 	_, err := p.db.ExecContext(
@@ -3933,6 +3951,10 @@ func (repo postgresCharacterRepo) CountByAccountID(ctx context.Context, accountI
 
 func (repo postgresCharacterRepo) GetByID(ctx context.Context, characterID string) (*Character, error) {
 	return repo.backend.GetByIDCharacter(ctx, characterID)
+}
+
+func (repo postgresCharacterRepo) GetByName(ctx context.Context, characterName string) (*Character, error) {
+	return repo.backend.GetCharacterByName(ctx, characterName)
 }
 
 func (repo postgresCharacterRepo) Create(ctx context.Context, character *Character) error {
