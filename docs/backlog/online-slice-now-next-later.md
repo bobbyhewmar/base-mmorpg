@@ -94,7 +94,7 @@ Remaining work:
 
 The current execution priority should follow the master prompt and the real repository state:
 
-1. validate the receipt-backed social outbox under sustained multi-instance load and operational fault injection, then extend deliberately toward presence/entity delivery without remote combat or new infrastructure
+1. validate receipt-backed whisper/region/party/clan delivery under sustained multi-instance load and operational fault injection, then extend deliberately toward presence/entity delivery without remote combat or new infrastructure
 2. keep the shipped PvP/PK transaction and attribution audit under multi-actor load, then deepen karma recovery, account/device correlation, and alerting without automatic punishment
 3. instances, siege, olympiad, and broader competitive systems only after ownership, cross-instance presence delivery, PvP/PK, and clan base remain stable
 
@@ -134,7 +134,7 @@ Status:
 
 - concluida para o slice online atual
 - hardening multi-instancia concluido para ownership: attach serializado por personagem no PostgreSQL, lease renovavel, fencing monotono, stale-owner reject antes de ack/dedup e release idempotente/condicional
-- presence cross-instance minima distingue player local, remote-online e offline; outbox PostgreSQL entrega notice de target, whisper remoto e notices de lifecycle party/clan com dedup e reidratacao autoritativa, enquanto entidade, movimento, region/party chat e combate remoto continuam pendentes
+- presence cross-instance minima distingue player local, remote-online e offline; outbox PostgreSQL entrega notice de target, whisper remoto, region chat e notices de lifecycle party/clan com dedup e reidratacao autoritativa, enquanto entidade, movimento, party chat e combate remoto continuam pendentes
 
 ### Fase F - Persistencia de Progressao Online
 
@@ -341,15 +341,16 @@ Status:
 - player death clears offensive target, queued/automatic combat, queued loot approach, active movement, flag, and cooldown state; respawn restores a clean authoritative state
 - token-gated `GET /internal/pvp/events` provides read-only attacker/victim/involved/killer/suspicious/action/result/time investigation filters
 - frontend read-model and classic HUD project only authoritative flag, counters, karma, resources, and death; a two-session Docker smoke covers basic attack, reconnect with active flag, and single-target skill outside the sanctuary
-- PostgreSQL cross-instance fanout now delivers command-correlated remote-target notice, remote whisper, and party/clan lifecycle notices; claim is destination-safe, replay/client delivery is deduplicated, social state is rehydrated before notices, drift retries/dead-letters, and no remote damage or local target success is created
+- PostgreSQL cross-instance fanout now delivers command-correlated remote-target notice, remote whisper, region chat, and party/clan lifecycle notices; claim is destination-safe, replay/client delivery is deduplicated, social state is rehydrated before notices, drift retries/dead-letters, and no remote damage or local target success is created
 - durable recipient receipts now survive logical consumer restart, serialize competing consumers, and keep stale-owner/dead-letter paths free of visual success; party/clan command mutations now share the command/outbox transaction
+- region chat now resolves active same-region ownership server-side, commits sanitized history + command outcome + one exact-owner event per remote recipient atomically, delivers local recipients only after commit, excludes other regions, and revalidates ownership/runtime region without automatic reroute
 - AoE/chain PvP, auto-approach/repeat against players, pet/summon or weighted attribution, anti-feed enforcement/correlation/alerting, richer named-zone/content volumes, karma recovery, economic penalties, wars, siege, olympiad, events, ranking, and rewards remain later slices
 
 ## Later
 
 After the online foundation becomes secure, replay-safe, and observable, the roadmap can continue into:
 
-- cross-instance entity and movement delivery plus region/party-chat broadcast using the shipped ownership registry and PostgreSQL outbox, with infrastructure expansion only if measured load requires it
+- cross-instance entity and movement delivery plus party-chat broadcast using the shipped ownership registry and PostgreSQL outbox, with infrastructure expansion only if measured load requires it
 - protocol-level client consume acknowledgements only if the residual socket-accept/receipt-commit ambiguity becomes operationally unacceptable; reroute remains a separate explicit policy decision
 - broader vendor and warehouse variants
 - PvP/PK expansion beyond the hardened single-target slice: karma recovery, economic/death penalties, alerting, richer named-zone/content policy, and weighted/non-player attribution

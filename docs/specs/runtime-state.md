@@ -477,9 +477,9 @@ The current online slice persists minimum chat history in `chat_messages` with:
 - `command_seq`
 - server `created_at`
 
-For a whisper target with an active owner on another instance, sanitized history, command outcome, and one `social.chat_message.v1` delivery intent commit atomically. The destination exact session is revalidated before delivery. A durable consumed receipt prevents the same event from reaching the socket after a logical consumer restart. A changed/offline owner releases the pending reservation, retries, and eventually dead-letters; the system does not reroute or create a local fallback. Region chat and party chat remain local-instance fanout in this slice.
+For a whisper target with an active owner on another instance, sanitized history, command outcome, and one `social.chat_message.v1` delivery intent commit atomically. Region chat uses the actor's runtime region to list active durable ownerships, persists one exact-owner event per remote recipient in that same transaction, and defers still-eligible local sockets until commit. The destination exact session is revalidated before every remote delivery; region chat also revalidates ownership and runtime region. A durable consumed receipt prevents the same event from reaching the socket after a logical consumer restart. A changed/offline owner releases the pending reservation, retries, and eventually dead-letters; the system does not reroute or create a local fallback. Party chat remains local-instance fanout in this slice.
 
-The browser keeps a bounded set of received remote social `event_id` values and does not append the same chat or notice twice. It still derives no success from ack: chat text appears only when `chat_message` arrives, and party/clan truth changes only from snapshot/delta.
+The browser keeps a bounded set of received remote social `event_id` values and does not append the same chat or notice twice. It also suppresses a repeated sender echo by authoritative chat `command_id`, so deterministic command replay cannot duplicate the local visual message. It still derives no success from ack: chat text appears only when `chat_message` arrives, and party/clan truth changes only from snapshot/delta.
 
 The runtime does not persist an offline mailbox, chat-tab UI state, or draft text. The durable outbox is a bounded live-delivery mechanism, not offline chat storage. The browser remains responsible only for rendering escaped text and focusing the compact composer; it never decides delivery scope or whisper success.
 
@@ -534,7 +534,7 @@ Predicted local-only movement does not update `known-set`. `known-set` changes o
 
 When a known player is referenced, runtime legality may additionally consult durable session ownership. A matching ready owner on this process is `local`; an unexpired owner on another `server_instance_id` is `remote`; no unexpired row is `offline`. This classification cannot add an entity to `known-set` and cannot authorize remote interaction by itself.
 
-The remote classification may route an informational target notice or a supported exact-recipient social event to the owning instance. Delivery still revalidates the target's current ownership, exact session, and ready local runtime. It cannot authorize combat, synthesize remote `known-set` state, or turn a notice into party/clan state authority.
+The remote classification may route an informational target notice or a supported exact-recipient social event to the owning instance. Region recipient enumeration is a separate active-ownership query scoped by `region_id`; it does not materialize remote runtime state. Delivery still revalidates the target's current ownership, exact session, and ready local runtime, plus matching region for regional chat. It cannot authorize combat, synthesize remote `known-set` state, or turn a notice into party/clan state authority.
 
 ## Anti-Examples
 

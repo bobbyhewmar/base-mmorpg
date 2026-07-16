@@ -101,6 +101,7 @@ Examples:
 - clan accept or decline references a live invite assigned to the actor, and accept revalidates membership plus expiry at commit time
 - chat channel is supported for the current slice
 - chat text is non-empty, within bounds, and not over the current rate limit
+- `region` chat has a non-empty authoritative current region and recipients are server-resolved from local runtime plus active durable ownership in that same region
 - actor death state does not block the current social chat slice
 - `party` chat requires current authoritative party membership
 - `whisper` requires an online target resolved by authoritative persisted character-name lookup and current ownership
@@ -130,7 +131,7 @@ For queued gameplay interactions such as loot pickup after approach, the durable
 
 For a remote-owned known player, `select_target` still commits a rejected command outcome. That outcome and its optional `presence.remote_target_notice.v1` outbox row are finalized in one PostgreSQL transaction. The event idempotency key derives from `session_id + command_seq`; identical replay reads the stored command outcome without producing again, and conflicting replay remains `sequence.conflicting_replay`. The informational notice never changes target state and is not a substitute for `delta` or snapshot authority.
 
-Remote social delivery uses the same command collector and may finalize more than one recipient event. Each key derives from `session_id + command_seq + purpose + recipient_character_id`. The command outcome and its complete event set commit together. Remote whisper also persists sanitized chat history in that transaction; failure replaces sender success with `system.persistence_failed`. Command-driven party/clan mutation, final command outcome, and all resulting remote notices now share one transaction; local fanout is deferred until commit. The earlier pending dedup reservation may survive a pre-mutation crash, but an applied mutation cannot commit without its outcome/outbox.
+Remote social delivery uses the same command collector and may finalize more than one recipient event. Each key derives from `session_id + command_seq + purpose + recipient_character_id`. The command outcome, sanitized chat history, and complete remote event set commit together for whisper and region chat; failure replaces sender success with `system.persistence_failed`. Region-chat local fanout also waits for commit and revalidates the recipient's local region before socket delivery. Command-driven party/clan mutation, final command outcome, and all resulting remote notices share one transaction. The earlier pending dedup reservation may survive a pre-mutation crash, but an applied mutation cannot commit without its outcome/outbox.
 
 If the command was accepted into the pipeline with a dedup reservation, the server finalizes the command record with:
 
@@ -165,7 +166,7 @@ For canonical-minimum clan rules, the same authoritative boundary is also respon
 - keeping the clan valid at one member until explicit `dissolve_clan`
 - leaving manual leader transfer and automatic leader transfer out of scope
 
-For `send_chat_message`, the same authoritative commit boundary is responsible for persisting minimum chat history in `chat_messages`. Delivery scope remains runtime truth derived from current region, party membership, canonical character identity, and durable ownership. A remote whisper stores chat history, command outcome, and `social.chat_message.v1` delivery intent atomically. The current slice exposes only `region`, `party`, and `whisper`; cross-instance delivery is implemented only for whisper, while region/party fanout remains local-instance. `local` remains reserved for a later distinct scope. The client never authors the final recipient set.
+For `send_chat_message`, the same authoritative commit boundary is responsible for persisting minimum chat history in `chat_messages`. Delivery scope remains server truth derived from current region, party membership, canonical character identity, and durable ownership. A remote whisper stores chat history, command outcome, and one `social.chat_message.v1` delivery intent atomically. Region chat stores the same history/outcome plus one exact-owner event per remote recipient and delivers to still-eligible local recipients only after commit. The current slice exposes only `region`, `party`, and `whisper`; party fanout remains local-instance. `local` remains reserved for a later distinct scope. The client never authors the final recipient set.
 
 For player combat, a process-local mutex may coordinate runtime projection but cannot be the correctness boundary. PostgreSQL-backed mode serializes attacker/victim mutations through deterministic row locks and computes damage, death classification, counters, deadlines, cooldown mutation, attribution, repeated-pair signal, and audit from the locked durable state. The memory adapter mirrors this in one critical section. The generic post-command progression/cooldown flush must not run after this transaction, because it could overwrite a newer multi-instance combat state.
 
@@ -406,6 +407,7 @@ The initial namespaces are:
 | `mount.not_mounted` | Character is not currently mounted |
 | `mount.dismount_required` | Companion must be dismounted before dismiss is legal |
 | `chat.channel_unknown` | Referenced chat channel is not supported in the current slice |
+| `chat.region_unavailable` | Region chat sender has no authoritative current region |
 | `chat.message_empty` | Chat text is empty after authoritative normalization |
 | `chat.message_too_long` | Chat text exceeds the current maximum size |
 | `chat.rate_limited` | Chat sender exceeded the current burst limit |

@@ -93,7 +93,7 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Presence cleanup on disconnect is verified.
 - [x] Durable ownership distinguishes a known player online on another instance from an offline or unknown player.
 - [x] `select_target` and PvP reject remote-owned players with `presence.target_remote` and never create local fallback success; a previously authoritative social target may be revalidated for a remote party/clan invite.
-- [x] PostgreSQL outbox provides monotonic ids, immutable idempotency keys, exact-instance claim leases, retry/dead-letter state, delivered-only retention, remote-target notice, remote whisper, and party/clan lifecycle notices.
+- [x] PostgreSQL outbox provides monotonic ids, immutable idempotency keys, exact-instance claim leases, retry/dead-letter state, delivered-only retention, remote-target notice, remote whisper, remote region chat, and party/clan lifecycle notices.
 - [x] Remote-target notice production is atomic with command finalization; identical replay cannot duplicate the event and conflicting replay remains rejected.
 - [x] Remote whisper history, command outcome, and delivery intent commit atomically; identical replay does not duplicate history, event, or visual delivery.
 - [x] Ownership drift uses explicit exact-session retry/dead-letter with `social.recipient_offline` or `social.recipient_stale_owner`; it does not reroute or fall back locally.
@@ -101,7 +101,7 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Durable recipient receipts serialize concurrent consumers and suppress a consumed event after logical consumer restart.
 - [x] Command-driven party/clan mutation, final command outcome, and remote outbox events commit or roll back as one PostgreSQL transaction; local fanout waits for commit.
 - [x] Ownership drift releases unconsumed receipt reservations and preserves retry/dead-letter without local success or automatic reroute.
-- [ ] Cross-instance movement, entity, region/party chat broadcast, and combat fanout remain later slices; remote-online is not generally interactable.
+- [ ] Cross-instance movement, entity, party-chat broadcast, and combat fanout remain later slices; remote-online is not generally interactable.
 
 ### Terrain and Pathfinding Reality
 
@@ -163,11 +163,12 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Leader leave transfers leadership deterministically to the oldest remaining member when 2 or more members remain; manual leader transfer remains out of scope.
 - [x] `send_chat_message` validates only the current functional channels (`region`, `party`, `whisper`), text bounds, whisper target lookup, party membership, and rate limits on the backend.
 - [x] `chat_message` fans out only to same-region sessions, online party members, or the named whisper target plus sender.
-- [x] A named whisper target online on another instance receives `social.chat_message.v1` through the outbox; text stays server-sanitized and bounded, while region/party chat remains local-instance.
+- [x] A named whisper target online on another instance receives `social.chat_message.v1` through the outbox; text stays server-sanitized and bounded.
+- [x] Region chat resolves active same-region ownership server-side, delivers local recipients only after commit, and creates one exact-owner outbox event plus durable receipt per remote recipient; other regions are excluded.
 - [x] Party/clan invite, accept, decline, leave, kick, and dissolve lifecycle feedback reaches affected remote-owned members through idempotent outbox events.
 - [x] Remote party/clan delivery rehydrates authoritative durable state into a delta before its notice; ack/notice alone cannot create membership or invite success.
-- [x] Backend runtime and browser read-model suppress duplicate remote social `event_id` values without inventing local delivery success.
-- [x] Receipt observability covers created, duplicate, and consumed without logging whisper content; stale-owner/dead-letter stay visible in social/outbox metrics.
+- [x] Backend runtime and browser read-model suppress duplicate remote social `event_id` values, and sender echoes are deduplicated by authoritative chat `command_id`, without inventing local delivery success.
+- [x] Receipt observability covers created, duplicate, and consumed without logging chat content; region-chat lifecycle additionally exposes produced, local delivered, remote enqueued/consumed, duplicate, stale-owner, and dead-letter.
 - [x] Minimum chat history persists without trusting client-supplied scope, target identity, or message outcomes.
 - [x] The HUD renders chat text in escaped form and does not execute HTML or JS from chat payloads.
 - [x] Social chat remains available while the actor is dead; combat death state does not silently block the current social slice.

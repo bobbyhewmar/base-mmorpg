@@ -28,7 +28,7 @@ This project translates those concepts into its own PostgreSQL outbox, durable s
 - retry count and summarized last error
 - optional dead-letter timestamp
 
-The exact instance destination is mandatory in this first slice. Region, session, and character are routing constraints and observability metadata, not alternative sources of authority. A future regional broadcast must materialize one delivery row per destination instance; a single row must never be consumed once and mistaken for a multi-instance broadcast.
+The exact instance destination is mandatory. Region, session, and character are routing constraints and observability metadata, not alternative sources of authority. Region chat materializes one exact-destination delivery row per remote recipient resolved from active ownership; a single row is never consumed once and mistaken for a multi-recipient or multi-instance broadcast.
 
 Payloads are limited to 64 KiB and must contain valid JSON. Logs never include the payload or sensitive credentials.
 
@@ -46,7 +46,7 @@ Disconnect-driven invite expiry has no gameplay command and uses its durable inv
 
 `{party|clan}-invite/{invite_id}/disconnect-expired/{recipient_character_id}`
 
-One command may produce multiple immutable recipient events. Finalizing `gameplay_command_records` and inserting every collected outbox row happen in one PostgreSQL transaction. Remote whisper additionally inserts its sanitized `chat_messages` history row in that transaction. If chat, event validation, insertion, or command finalization fails, the whole transaction rolls back and the sender receives `system.persistence_failed` rather than a success projection. An identical command replay reads the stored outcome and does not run the producer again. A conflicting replay remains `sequence.conflicting_replay`.
+One command may produce multiple immutable recipient events. Finalizing `gameplay_command_records`, inserting sanitized `chat_messages` history, and inserting every collected remote chat row happen in one PostgreSQL transaction. Local chat recipients are notified only after that commit. If chat, event validation, insertion, or command finalization fails, the whole transaction rolls back and the sender receives `system.persistence_failed` rather than a success projection. An identical command replay reads the stored outcome and does not run the producer or local fanout again. A conflicting replay remains `sequence.conflicting_replay`.
 
 Command-driven party and clan operations now reuse that same PostgreSQL transaction for the authoritative repository mutation, final command outcome, and every collected outbox row. The pending dedup reservation is created before the transaction, so a pre-mutation crash can leave only a recoverable pending record; it cannot leave a social mutation without its applied outcome/events. Local socket fanout and state refresh run only after commit. The memory adapter serializes the same boundary and restores a social-state/outcome/outbox snapshot on failure.
 
@@ -95,15 +95,17 @@ Remote PvP remains unsupported and continues to return `presence.target_remote`.
 
 The social fanout contract currently supports three versioned event types:
 
-- `social.chat_message.v1` for one server-owned, normalized, maximum-240-rune whisper to an online remote character
+- `social.chat_message.v1` for one server-owned, normalized, maximum-240-rune whisper or region message to one online remote character
 - `social.party_notice.v1` for invite, accept, decline, leave, kick, dissolve-by-roster-rule, and related party lifecycle feedback
 - `social.clan_notice.v1` for invite, accept, decline, leave, kick, and dissolve lifecycle feedback
 
-Whisper lookup uses canonical persisted character identity and durable ownership. An offline or unknown recipient is rejected as `chat.whisper_target_not_found`; a remote recipient creates one exact-session event rather than local fallback. Region chat and party chat retain their existing local-instance fanout in this slice.
+Whisper lookup uses canonical persisted character identity and durable ownership. An offline or unknown recipient is rejected as `chat.whisper_target_not_found`; a remote recipient creates one exact-session event rather than local fallback.
+
+Region chat requires the actor's authoritative non-empty region. The server lists active ownerships in that region, excludes the actor and current-instance recipients from the remote set, and creates one `chat-region` event per remote character/session. Ready local recipients are snapshotted from the local runtime but receive only after the history, command outcome, and complete remote event set commit. A recipient that is offline, unavailable, malformed, or outside the region does not invalidate delivery to otherwise valid recipients. Party chat remains local-instance in this slice.
 
 Party and clan commands still resolve invite identity from the actor's authoritative current target. If a previously local known target moves to a remote owner before the invite command, the backend may create the durable invite and exact-owner notice after revalidating social eligibility. Accept, decline, leave, kick, and dissolve notify every currently online affected remote member with a distinct stable purpose/recipient key.
 
-On consumption, ownership and exact target session are revalidated. Party/clan delivery loads current durable social state and emits an authoritative delta before the lifecycle notice. The payload cannot supply membership, roster, invite, or delivery success to the read-model.
+On consumption, ownership and exact target session are revalidated. Region-chat delivery additionally requires the event target region, current ownership region, and attached runtime region to match. Party/clan delivery loads current durable social state and emits an authoritative delta before the lifecycle notice. The payload cannot supply region scope, membership, roster, invite, or delivery success to the read-model.
 
 ### Ownership drift policy
 
@@ -145,6 +147,8 @@ Logs include event id, event type, destination instance, retry count, and a boun
 
 `l2bg_gameplay_event_receipts_total{category,result}` and structured `gameplay_event_receipt` logs cover `receipt_created`, `duplicate_receipt`, and `consumed`. Stale-owner and dead-letter remain classified by the social/outbox lifecycle metrics. Receipt logs contain routing ids but never whisper text or payload JSON.
 
+`l2bg_region_chat_events_total{result}` and structured `region_chat` logs cover `region_chat_produced`, `local_delivered`, `remote_enqueued`, `remote_consumed`, `duplicate`, `stale_owner`, and `dead_letter`. They contain only routing/lifecycle metadata and never message text or payload JSON.
+
 ## Memory Adapter
 
 The memory adapter shares the same semantics for deterministic tests:
@@ -158,15 +162,15 @@ The memory adapter shares the same semantics for deterministic tests:
 - atomic command outcome plus event creation under one lock
 - durable receipt reservation/consume semantics shared by multiple `Store` wrappers
 - rollback of party/clan mutation, command outcome, and outbox as one serialized test boundary
+- active-ownership listing by region with the same lease/status filtering as PostgreSQL
 
 Two `Store` wrappers may share one memory backend to simulate separate server instances without adding infrastructure.
 
 ## Non-Goals
 
 - remote damage or cross-instance combat transactions
-- region-wide broadcast delivery
 - cross-instance movement or entity replication
-- cross-instance region chat or party-chat broadcast
+- cross-instance party-chat broadcast
 - state-changing remote party/clan authority beyond the already persisted domain command
 - Redis, broker, external queue, or event sourcing
 - admin panel or manual replay UI
@@ -179,6 +183,7 @@ Two `Store` wrappers may share one memory backend to simulate separate server in
 - claim concurrency does not duplicate live delivery
 - delivered marking requires the current unexpired worker claim
 - identical command replay cannot duplicate the event
+- identical region-chat replay cannot duplicate local delivery, persisted history, remote event, durable receipt, or browser projection
 - conflicting command replay remains rejected
 - a remote notice never changes the actor's target or enables remote gameplay
 - a remote social notice never becomes party/clan state authority in the browser
