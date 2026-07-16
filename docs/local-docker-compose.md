@@ -37,7 +37,7 @@ This removes the local PostgreSQL volume created by Compose.
 
 - Check the bootstrap logs: `docker compose logs db-init`
 - Confirm the minimum tables exist:
-  `docker compose exec postgres psql -U "$L2BG_POSTGRES_USER" -d "$L2BG_POSTGRES_DB" -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename IN ('schema_bootstrap', 'accounts', 'account_credentials', 'account_sessions', 'characters', 'gameplay_sessions', 'gameplay_command_records', 'character_hotbar_loadouts', 'action_logs', 'storage_transfer_records') ORDER BY tablename;"`
+  `docker compose exec postgres psql -U "$L2BG_POSTGRES_USER" -d "$L2BG_POSTGRES_DB" -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename IN ('schema_bootstrap', 'accounts', 'account_credentials', 'account_sessions', 'characters', 'gameplay_sessions', 'gameplay_session_ownerships', 'gameplay_command_records', 'character_hotbar_loadouts', 'action_logs', 'storage_transfer_records') ORDER BY tablename;"`
 
 ## Internal Economy Audit Queries
 
@@ -82,6 +82,10 @@ Notes:
 - `L2BG_INTERNAL_AUDIT_ENABLED`: enable the internal read-only economy audit endpoints
 - `L2BG_INTERNAL_AUDIT_TOKEN`: required token for `X-Internal-Audit-Token` when internal audit is enabled
 - `L2BG_TEST_DATABASE_URL`: optional backend test override used by the Compose validation flow
+- `L2BG_SERVER_INSTANCE_ID`: stable unique id for this backend process; every concurrently running instance must use a different value
+- `L2BG_SESSION_LEASE_DURATION`: durable gameplay ownership lease duration; default `30s`
+- `L2BG_SESSION_LEASE_RENEW_INTERVAL`: idle WebSocket renewal cadence and must be shorter than the lease; default `10s`
+- `L2BG_SESSION_ATTACH_TOKEN_TTL`: rolling attach-credential deadline maintained while ownership renews; default `5m`
 - `L2BG_POSTGRES_DB`: PostgreSQL database name created automatically by the PostgreSQL image
 - `L2BG_POSTGRES_USER`: PostgreSQL user
 - `L2BG_POSTGRES_PASSWORD`: PostgreSQL password
@@ -93,4 +97,5 @@ Notes:
 - The schema bootstrap is intentionally kept out of the backend runtime and runs as a dedicated, idempotent Compose service.
 - The backend already uses PostgreSQL-backed adapters when `L2BG_DATABASE_URL` is configured and falls back to the in-memory adapter only when that variable is intentionally omitted.
 - Auth and attach rate limits still default inside the backend; the new env overrides are only needed when local automation intentionally generates more attempts than the default budget.
+- PostgreSQL-backed `gameplay_session_ownerships` is the multi-instance session authority. Do not reuse one `L2BG_SERVER_INSTANCE_ID` across live backend replicas.
 - The browser-level online E2E flow is documented in `docs/e2e-docker-online.md`.

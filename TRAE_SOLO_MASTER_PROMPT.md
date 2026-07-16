@@ -398,6 +398,7 @@ Specs principais:
 - `docs/specs/hud-skills-and-hotbars.md`
 - `docs/specs/region-presence-known-set.md`
 - `docs/specs/runtime-state.md`
+- `docs/specs/session-ownership-and-cross-instance-presence.md`
 - `docs/specs/server-terrain-geodata-pathfinding.md`
 
 Backlog:
@@ -788,6 +789,7 @@ PostgreSQL e suficiente para o alvo inicial, incluindo 2 mil jogadores ativos, d
 - updates sejam por interesse/known-set
 - transacoes sejam curtas
 - comandos conflitantes sejam serializados
+- ownership online use lease duravel e fencing monotono por personagem
 - indexes sejam corretos
 - PgBouncer seja usado em producao
 - load tests sejam feitos com o mix real
@@ -1045,7 +1047,18 @@ Riscos residuais de auth/sessao:
 - rate limit ainda e in-memory e single-instance
 - ainda nao existe endpoint HTTP explicito de logout/revocation
 - sessoes expiradas sao rejeitadas na leitura, mas ainda nao ha limpeza operacional dedicada
-- observabilidade de auth/attach ainda precisa de metricas estruturadas
+- fan-out cross-instance ainda nao existe; a foundation atual apenas classifica local, remote-online e offline
+
+Foundation multi-instancia de sessao ja resolvida:
+
+- `gameplay_session_ownerships` persiste `server_instance_id`, session, personagem, regiao, deadline de lease e fencing token monotono
+- attach concorrente serializa por personagem no PostgreSQL; a credencial e rotacionada atomicamente e so uma tentativa com o mesmo token vence
+- reconnect autenticado da mesma session na instancia owner drena dispatch serializado, avanca o fence e invalida o socket anterior; outra instancia/session nao substitui owner com lease valido
+- comandos renovam e validam o fence antes de dedup/ack; owner antigo recebe `session.stale_owner`
+- startup de uma instancia nao fecha ownership valida de outra instancia
+- release/unregister e condicional e idempotente; double unregister nao derruba gauge nem runtime
+- release preserva tombstone expirada para que o proximo acquire continue o fencing monotono do personagem
+- ownership events possuem metrica e log estruturado sem attach token
 
 ### Ja resolvido na Fase C - Deduplicacao de comandos
 
@@ -1064,7 +1077,7 @@ Riscos residuais:
 
 - teste de restart PostgreSQL depende de `L2BG_TEST_DATABASE_URL` e deve rodar em ambiente com banco de teste real
 - outcome de comando que falha durante finalizacao do dedup pode ficar pendente e precisa de observabilidade/operacao
-- reconnect sofisticado continua fora de escopo
+- reconnect sofisticado alem de reissue autenticado, rotacao de credencial e replacement fenced da mesma session continua fora de escopo
 
 ### 1. Observabilidade
 
@@ -1152,13 +1165,16 @@ Estado atual:
 - player appear/disappear
 - movement delta de outros players
 - region occupancy metrics
+- ownership persistente por personagem com `server_instance_id`, lease renovavel e fencing token
+- classificacao minima `local`, `remote-online`, `offline` e `unavailable` sem persistir known-set
+- `select_target`, PvP, party invite e clan invite falham com `presence.target_remote` quando o player conhecido esta em outra instancia
 
 Ainda falta:
 
 - region transfer
 - interest management real
-- shared XP/loot rules
-- clan/alliance social base
+- fan-out real cross-instance de entidade, movimento, chat e social
+- alliance social base
 
 ### 6. Resend e emails transacionais
 
@@ -1423,6 +1439,10 @@ Done:
 - duas sessoes veem entidades relevantes
 - movimento de outro player aparece
 - logout/close limpa presence
+- duas instancias concorrendo pelo mesmo personagem produzem um owner duravel
+- reconnect da mesma session na instancia owner drena dispatch, rotaciona a credencial, incrementa o fence e invalida o owner anterior; takeover cross-instance exige release ou expiracao
+- comando do owner antigo rejeita antes de ack/dedup
+- presence minima distingue player remoto online de offline/desconhecido sem fallback local
 
 ### Fase H - Conteudo de classe/skill/hotbar
 
@@ -1705,9 +1725,9 @@ Sempre escolher a maior prioridade que:
 
 Prioridade atual recomendada:
 
-1. karma recovery, correlacao account/device e alerting sobre attribution/anti-feed ja auditados, sem ampliar para guerras/eventos ou aplicar punicao automatica ainda
-2. volumes ricos de safe/combat zone orientados por content apenas quando o contrato de mapa/geodata exigir; o santuario logico minimo atual permanece backend-only
-3. instancias, siege, olympiad e producao somente depois da base PvP/PK permanecer estavel
+1. fan-out cross-instance medido para presence e entrega social sobre o lease/fencing PostgreSQL ja concluido, sem Redis/fila antes de necessidade comprovada
+2. karma recovery, correlacao account/device e alerting sobre attribution/anti-feed ja auditados, sem ampliar para guerras/eventos ou aplicar punicao automatica ainda
+3. instancias, siege, olympiad e producao somente depois de ownership, presence cross-instance, PvP/PK e clan permanecerem estaveis
 
 Nao pular para siege/olympiad antes de:
 
@@ -1934,6 +1954,7 @@ Usar namespaces:
 - `protocol.*`
 - `sequence.*`
 - `world.*`
+- `presence.*`
 - `combat.*`
 - `inventory.*`
 - `loot.*`
@@ -1958,6 +1979,10 @@ Exemplos existentes:
 - `character.name_unavailable`
 - `session.character_already_active`
 - `session.invalid_attach_token`
+- `session.ownership_conflict`
+- `session.stale_owner`
+- `presence.target_remote`
+- `presence.target_offline`
 - `protocol.invalid_envelope`
 - `sequence.out_of_order`
 - `world.entity_not_known`
@@ -2186,20 +2211,22 @@ Voce esta trabalhando dentro deste repositorio. Leia primeiro TRAE_SOLO_MASTER_P
 Antes de alterar qualquer arquivo, rode git status --short e inspecione o estado real do codigo com rg. Nao assuma que uma fase esta pendente so porque o texto antigo dizia isso; compare docs, testes e implementacao real.
 
 Estado atual que voce deve tratar como entregue, salvo evidencia contraria no codigo:
+- A foundation de ownership multi-instancia ja persiste um lease por personagem, `server_instance_id` e fencing monotono; attach concorrente tem um vencedor, stale owner rejeita antes de ack/dedup e release/unregister e condicional/idempotente.
+- Presence minima ja distingue local, remote-online e offline. Fan-out real entre processos ainda nao existe e `presence.target_remote` bloqueia target/PvP/party/clan locais sem fallback.
 - Fase L ja possui party canonica minima, social chat `region`/`party`/`whisper`, shared XP minimo, party-owned loot minimo e clan foundation hardened em slices autoritativos.
 - Fase M ja possui o primeiro slice PvP/PK autoritativo hardened para ataque e skill single-target, CP antes de HP, deadline de flag persistido, safe-area minima backend-only, classificacao PvP versus PK, counters/karma duraveis, row locking PostgreSQL multi-instancia, attribution de killer/assists, sinal de kill repetida, audit investigavel, morte/respawn backend-owned e replay duravel.
 - A regiao ativa atual usa `stonecross_plaza` apenas como id compativel, mas o mapa oficial foi resetado para uma area limpa 1024x1024 com `clean_plain_1024_geo_v1`, bounds `x=-512..512` e `z=-512..512`.
 - Renderer, ground raycast/picking plane, server geodata bounds, spawn/checkpoint, exits e testes precisam compartilhar esse mesmo contrato de mapa.
 - Nao reintroduza clamp hardcoded do mapa antigo, visual Stonecross, props/spawns antigos, blockers antigos, nem bounds antigos de `dawn_plaza`.
 
-Prioridade 1: karma recovery, correlacao account/device e alerting sobre attribution/anti-feed ja persistidos, sem ampliar para guerras, siege, olympiad ou eventos e sem bloquear gameplay automaticamente.
+Prioridade 1: fan-out cross-instance minimo para presence e entrega social sobre o ownership PostgreSQL atual, sem introduzir Redis/fila antes de medir necessidade e sem criar fallback local.
 - Reuse runtime autoritativo, persistencia curta e HUD classica.
 - Preserve toda autoridade de sessao, presence, party, chat, clan, shared XP, party loot, elegibilidade PvP, dano, morte e consequencias no backend.
 - Nao aceite membership, reward split, target legality, presence truth, chat delivery ou loot ownership vindo do client.
 - O santuario PvP minimo atual e policy backend-only. Se uma proxima fatia exigir volumes de content ou tocar mapa, geodata, movement ou picking, atualize renderer/picking/backend/tests juntos; caso contrario, nao mexa no mapa.
 - Nao crie microservicos ou filas sem necessidade medida.
 
-Prioridade 2: depois disso, aprofunde karma recovery e penalidades simples somente com contrato explicito e testes de reconnect/replay.
+Prioridade 2: depois disso, aprofunde karma recovery, correlacao/alerting e penalidades simples somente com contrato explicito e testes de reconnect/replay.
 - Preserve known-set, command_seq, dedup, observabilidade e persistencia auditavel.
 
 Para cada fatia:

@@ -28,6 +28,7 @@ The following data lives in authoritative runtime memory:
 - active gameplay sessions
 - connection-to-session binding
 - session-to-character binding
+- local projection of the durable ownership fence and lease deadline
 - current runtime region membership
 - current runtime position
 - current facing
@@ -83,9 +84,12 @@ The following data is durable and authoritative in PostgreSQL:
 - inventory state
 - equipment slot occupancy
 - durable session records
+- durable character-to-session ownership with `server_instance_id`, monotonic fence, region, and absolute lease deadline
 - command deduplication records
 
 The current implementation persists skill cooldown recovery state in `character_skill_cooldowns` keyed by `character_id + skill_id`.
+
+The multi-instance session foundation persists one `gameplay_session_ownerships` row per currently claimed character. `gameplay_sessions.status = attached` is lifecycle history, not sufficient online truth. Attach acquisition serializes on the character row, renewal matches the exact session, instance, and fence, and conditional release prevents an old socket from closing a newer owner. PostgreSQL time owns deadlines; startup sanitation preserves unexpired owners belonging to other instances.
 
 The hardened PvP/PK slice persists `pvp_kills`, `pk_count`, `karma`, and `pvp_flag_until` on `characters`. The flag deadline is absolute: attach/world-enter restore it only when it is still in the future, while server-time expiry clears the durable value before publishing the expiry transition. A player-combat hit locks both durable character rows in deterministic order and computes the resource transition from that locked truth. The same transaction commits attacker/victim combat resources, both flag deadlines, classification counters, attacker cooldown, lethal victim cooldown cleanup, attribution/anti-feed fields, and one `pvp_combat_events` row before success is published.
 
@@ -111,6 +115,7 @@ The current implementation persists the first chat slice in `chat_messages`, key
 
 - the current online moment
 - the current region presence graph
+- the ready runtime for characters owned by this process
 - the current `known-set`
 - the live target reference
 - the live cast in progress
@@ -131,12 +136,15 @@ The current implementation persists the first chat slice in `chat_messages`, key
 - recoverable kill attribution and suspicious repeated-pair signals derived inside the combat transaction
 - recoverable cooldown end timestamps
 - recoverable session records
+- recoverable session ownership, lease deadline, owning instance, and fencing token
 - replay-safe command records keyed by `session_id + command_seq`
 - last durable position and region checkpoint
 
 ### Explicit Non-Goal
 
 PostgreSQL is not used as a frame-by-frame authority source for movement or presence.
+
+The durable ownership registry is a coarse online-presence and fencing source, not frame-level spatial presence. It may answer whether a referenced character is local, remote-online, or offline without persisting `known-set`.
 
 ## Checkpoint Policy
 
@@ -508,6 +516,8 @@ Predicted local-only movement does not update `known-set`. `known-set` changes o
 
 `known-set` must not be stored as durable truth in PostgreSQL.
 
+When a known player is referenced, runtime legality may additionally consult durable session ownership. A matching ready owner on this process is `local`; an unexpired owner on another `server_instance_id` is `remote`; no unexpired row is `offline`. This classification cannot add an entity to `known-set` and cannot authorize remote interaction by itself.
+
 ## Anti-Examples
 
 - Persisting every movement update as a row write.
@@ -526,6 +536,9 @@ Predicted local-only movement does not update `known-set`. `known-set` changes o
 - Pet follow position is not persisted by frame.
 - Party roster presentation is not persisted by frame.
 - `known-set` is never a durable table-backed truth in the initial slice.
+- Online ownership is durable even though visibility and `known-set` remain volatile.
+- Only the exact current ownership fence may accept gameplay commands or release the session.
+- Double unregister and stale-owner release are no-ops after the current binding has changed.
 - Cooldowns are durable by end timestamp, not by countdown progression.
 - Cast state remains volatile in the initial slice.
 - Target state remains volatile in the initial slice.

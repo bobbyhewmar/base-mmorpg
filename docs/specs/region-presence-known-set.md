@@ -40,6 +40,8 @@ The initial slice uses static region definitions already aligned to the compact 
 
 The region model is not a seamless-world streaming system and does not introduce cross-shard routing.
 
+The cross-instance foundation adds a durable ownership lookup without changing this spatial model. It can distinguish a ready local player from a player with an unexpired lease on another instance, but it does not fan out remote movement or synthesize remote visibility.
+
 ## Minimum Presence Model
 
 Presence is the authoritative runtime membership of an entity inside a region context.
@@ -85,6 +87,15 @@ An entity in `known-set` is:
 Additional legality checks still apply, such as range, state, and command-specific rules.
 
 Client-side predicted movement does not expand `known-set`.
+
+For a known player, the server also resolves ownership scope at command time:
+
+- `local`: ownership and fence match a ready runtime on this instance
+- `remote`: an unexpired lease belongs to another instance
+- `offline`: no unexpired lease exists
+- `unavailable`: the durable owner is this instance but its matching ready runtime is absent
+
+Ownership scope is not `known-set` membership. It cannot make an unknown player targetable.
 
 The local player may visually start moving before authoritative path resolution, but entity relevance and command legality must continue to use authoritative runtime position and presence state.
 
@@ -149,6 +160,8 @@ If the entity is not in `known-set`, the command must be rejected with a stable 
 - command-specific combat legality passes
 
 For a player target, known-set membership does not authorize damage. The PvP path also requires live attachment in the same region, an open region policy, distinct living characters, non-matching party and clan membership, authoritative range, and the command-specific skill/resource rules in `docs/specs/pvp-pk.md`.
+
+If the known player is online on another instance, `select_target`, PvP, party invite, and clan invite reject with `presence.target_remote`. There is no local target success, remote mutation, or delivery fallback in this slice.
 
 ### Basic Attack
 
@@ -340,6 +353,7 @@ Initial correction reasons:
 
 - Each active session belongs to one primary region context at a time.
 - `known-set` is runtime-only.
+- durable session ownership classifies local, remote-online, and offline without persisting visibility.
 - Entity-referencing commands depend on `known-set`.
 - `known-set` membership is not enough by itself to make an action legal.
 - `RegionContext`, `EntityAppear`, `EntityDisappear`, and `PositionCorrection` are authoritative transport contracts.

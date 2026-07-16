@@ -47,11 +47,15 @@ The server performs transport and session checks:
 - `protocol_version` is supported
 - connection is authenticated
 - gameplay session is attached
+- the durable ownership tuple for the actor still matches `session_id + character_id + server_instance_id + fencing_token`
+- the ownership lease is still active and can be renewed by this instance
 - `command_seq` is syntactically valid
 - duplicate handling can be resolved
 - conflicting replay is not present
 
 No gameplay rule is applied during pre-validation.
+
+Ownership validation runs before dedup lookup or reservation. A stale instance cannot replay an earlier success after losing the fence and cannot reserve a new command record.
 
 ### 3. `ack` or Early `reject`
 
@@ -285,6 +289,7 @@ Use early `reject` for:
 - `protocol.unsupported_version`
 - `auth.not_authenticated`
 - `session.not_attached`
+- `session.stale_owner`
 - `sequence.invalid`
 - `sequence.conflicting_replay`
 
@@ -345,11 +350,16 @@ The initial namespaces are:
 | `protocol.unsupported_version` | `protocol_version` is not supported |
 | `auth.not_authenticated` | Connection lacks authenticated user context |
 | `session.not_attached` | No active gameplay session is attached to the connection |
+| `session.invalid_attach_token` | WebSocket attach used a consumed, rotated, unknown, or expired credential |
+| `session.ownership_conflict` | A different gameplay session attempted to replace another unexpired durable owner |
+| `session.stale_owner` | Command came from an expired or superseded session ownership fence |
 | `sequence.invalid` | `command_seq` is malformed or unusable |
 | `sequence.out_of_order` | `command_seq` does not match the expected progression |
 | `sequence.conflicting_replay` | Same `command_seq` was reused with conflicting command identity |
 | `world.entity_not_known` | Referenced entity is not in the current `known-set` |
 | `world.entity_not_interactable` | Referenced entity exists but cannot be interacted with |
+| `presence.target_remote` | Known player is online on another server instance and no cross-instance interaction path exists yet |
+| `presence.target_offline` | Previously known player no longer has active durable ownership |
 | `world.loot_out_of_reach` | A queued loot pickup finished movement but still could not reach the loot |
 | `combat.out_of_range` | Target is not within valid range |
 | `combat.cooldown_active` | Skill is still on cooldown |
@@ -518,6 +528,7 @@ No `ack` is sent.
 - Sending both `reject` and success `delta` for the same applied command.
 - Using one undifferentiated error string instead of stable `reason_code` namespaces.
 - Emitting `ack` before session attachment is verified.
+- Replaying a stored command outcome to a socket whose ownership fence is stale.
 
 ## Invariants
 
@@ -525,6 +536,7 @@ No `ack` is sent.
 - `reject` means no authoritative state mutation from that command.
 - `delta` is the success-path mutation output.
 - Early protocol or session failures do not produce `ack`.
+- Ownership loss rejects before `ack`, sequence advancement, or dedup reservation.
 - Domain legality failures may produce `ack` followed by `reject`.
 - Retry-safe replay of the same `session_id + command_seq + command_id` must not reapply side effects.
 

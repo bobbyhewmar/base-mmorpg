@@ -38,6 +38,15 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Access tokens or account sessions have real expiry handling.
 - [x] Auth and attach endpoints have minimum rate limiting.
 - [x] Sensitive values are not logged.
+- [x] Every online character has one durable ownership row with `server_instance_id`, absolute lease, and monotonic fencing token.
+- [x] Two backend instances racing the same attach credential produce one durable winner because successful acquisition rotates the credential atomically.
+- [x] Authenticated reconnect of the same active session on its current instance drains serialized dispatch, advances the fence, and invalidates the old socket; another instance or session cannot replace an unexpired owner.
+- [x] Gameplay commands renew and validate the exact owner tuple before dedup or `ack`; a superseded socket receives `session.stale_owner` without sequence or mutation.
+- [x] Lease expiry permits a fenced replacement and closes a different previous session without letting the old socket release the new owner.
+- [x] Release preserves an expired ownership tombstone so the next session continues the character's monotonic fencing sequence instead of resetting it.
+- [x] Startup sanitation preserves unexpired ownership belonging to another server instance.
+- [x] Release and unregister are conditional and idempotent, including double unregister.
+- [x] Ownership acquire, renew, replace, conflict, expiry, stale reject, and release are observable without logging attach credentials.
 
 ### Command Integrity
 
@@ -82,6 +91,9 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Other players appear and disappear in-region authoritatively.
 - [x] Other players' movement is broadcast authoritatively.
 - [x] Presence cleanup on disconnect is verified.
+- [x] Durable ownership distinguishes a known player online on another instance from an offline or unknown player.
+- [x] `select_target`, PvP, party invite, and clan invite reject remote-owned players with `presence.target_remote` and never create local fallback success.
+- [ ] Cross-instance movement, entity, chat, party, and clan fanout remains a later slice; remote-online is classified but not remotely interactable yet.
 
 ### Terrain and Pathfinding Reality
 

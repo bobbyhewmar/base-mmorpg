@@ -236,9 +236,12 @@ The backend validates:
 - account authorization
 - current session state
 - duplicate active-session conflicts
+- durable character ownership lease and current server instance
 - entry preconditions
 
 On success, the backend creates or reuses the appropriate gameplay-session record and returns the information required to continue into the online gameplay attach flow.
+
+An authenticated reconnect may receive the existing session and current rolling attach credential while its durable ownership remains active. WebSocket attach still must acquire the character fence. On the current server instance, that same session first drains serialized command dispatch, then atomically rotates the credential and advances the fence, so exactly one reconnect wins and the previous socket becomes stale. Another server instance or a different gameplay session cannot replace an unexpired owner; after release or expiry it may acquire a higher fence and conditionally close the prior session.
 
 The online gameplay attach flow is not complete until authoritative `region_context` is received.
 
@@ -258,6 +261,8 @@ Stable rejection categories for this flow should cover at least:
 - `character.invalid_name`
 - `character.name_unavailable`
 - `session.character_already_active`
+- `session.ownership_conflict`
+- `session.stale_owner`
 - `session.entry_not_allowed`
 
 ## Anti-Examples
@@ -276,6 +281,7 @@ Stable rejection categories for this flow should cover at least:
 - Race, base class, sex, hairstyle, skin type, and name legality are backend-only concerns.
 - Character creation is a request from the client, not an authoritative client action.
 - The same account may only enter the world through an accepted backend path.
+- Gameplay authority belongs only to the exact durable `session + character + server instance + fencing token` tuple.
 
 ## Acceptance Criteria
 

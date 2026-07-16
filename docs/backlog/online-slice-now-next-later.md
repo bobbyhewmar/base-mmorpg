@@ -24,6 +24,7 @@ The repository already contains these online capabilities:
 - authoritative character creation by race, base class, sex, hairstyle, hair color through canonical `hair_color`, skin type through `skin_type`, and name
 - `POST /v1/world/enter`
 - durable gameplay-session records
+- durable per-character session ownership with server instance id, renewable lease, monotonic fencing token, and conditional release
 - WebSocket attach and `region_context`
 - authoritative command envelope and command lifecycle
 - revision and region-revision handling
@@ -49,6 +50,7 @@ The repository already contains these online capabilities:
 - minimum structured observability with `/metrics`, request latency, command latency, attach counters, outbound message counters, reject counters by `reason_code`, active socket gauges, attached-session gauges, region occupancy, and persistence error counters
 - PostgreSQL-backed accounts, credentials, characters, sessions, position, region, and item state when `L2BG_DATABASE_URL` is configured
 - multiplayer player presence between sessions, including in-region player appear, movement fan-out, and disconnect cleanup
+- minimal cross-instance presence classification that distinguishes ready local, remote-online, and offline without persisting `known-set`
 - class-specific learned skills and active or passive categorization
 - authoritative skill book projection and persistent hotbar snapshot in `world/enter` and runtime deltas
 - local and online HUD hotbar rendering from authoritative loadout instead of global hardcoded skill buttons
@@ -88,9 +90,9 @@ Remaining work:
 
 The current execution priority should follow the master prompt and the real repository state:
 
-1. keep the shipped PvP/PK transaction and attribution audit under multi-actor load; deterministic PostgreSQL row locking, assist attribution, and repeated-pair signaling are now complete
-2. deepen karma recovery, account/device correlation, alerting, and richer named-zone/content policy without pulling in broad war/event systems or turning the current signal into automatic punishment
-3. instances, siege, olympiad, and broader competitive systems only after PvP/PK and clan base remain stable
+1. add measured cross-instance fanout for presence and social delivery on top of the completed PostgreSQL lease/fencing foundation, without introducing Redis or a queue until the PostgreSQL/local-runtime boundary proves insufficient
+2. keep the shipped PvP/PK transaction and attribution audit under multi-actor load, then deepen karma recovery, account/device correlation, and alerting without automatic punishment
+3. instances, siege, olympiad, and broader competitive systems only after ownership, cross-instance presence delivery, PvP/PK, and clan base remain stable
 
 ### Fase A - Consolidacao Imediata
 
@@ -127,6 +129,8 @@ Focus:
 Status:
 
 - concluida para o slice online atual
+- hardening multi-instancia concluido para ownership: attach serializado por personagem no PostgreSQL, lease renovavel, fencing monotono, stale-owner reject antes de ack/dedup e release idempotente/condicional
+- presence cross-instance minima distingue player local, remote-online e offline; fanout real entre processos ainda e a proxima expansao
 
 ### Fase F - Persistencia de Progressao Online
 
@@ -339,6 +343,7 @@ Status:
 
 After the online foundation becomes secure, replay-safe, and observable, the roadmap can continue into:
 
+- cross-instance presence/social fanout using the current durable ownership registry, with infrastructure expansion only if measured load requires it
 - broader vendor and warehouse variants
 - PvP/PK expansion beyond the hardened single-target slice: karma recovery, economic/death penalties, alerting, richer named-zone/content policy, and weighted/non-player attribution
 - deeper anti-abuse enforcement, account/device correlation, and alerting on top of the current suspicious-event audit query
@@ -390,7 +395,7 @@ The following items remain explicitly out of scope for the current consolidation
 - microservices
 - Redis in the gameplay truth path
 - event sourcing
-- reconnect sophistication
+- reconnect beyond the current lease renewal, active-session reissue, expiry takeover, and fenced cleanup contract
 - seamless-world expansion
 - per-frame persistence of movement
 - generic fallback between local and online authority

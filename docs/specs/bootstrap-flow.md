@@ -173,9 +173,11 @@ After `world/enter` succeeds:
    - session exists
    - session is attachable
    - `attach_token` is valid
-   - session is not already attached
+   - a different session does not own an unexpired character lease
+   - if this is a reconnect of the same active session on its current instance, serialized dispatch is drained and the credential can be consumed exactly once
 4. backend binds:
    - `socket -> session -> character`
+   - the newly advanced fencing token
 5. backend establishes:
    - gameplay actor
    - expected initial `command_seq`
@@ -272,7 +274,7 @@ Use at least:
 - `session.not_found`
 - `session.expired`
 - `session.invalid_attach_token`
-- `session.already_attached`
+- `session.ownership_conflict`
 - `session.not_attachable`
 
 ## Out of Scope
@@ -280,7 +282,7 @@ Use at least:
 The following remain out of scope for this document:
 
 - combat bootstrap
-- reconnect sophistication
+- reconnect beyond active-session reissue, credential rotation, same-instance fenced replacement, lease renewal, expiry takeover, and fenced cleanup
 - password recovery endpoint details
 - verification endpoint details
 - social or PvP bootstrap
@@ -292,7 +294,8 @@ The following remain out of scope for this document:
 - Registration and login remain backend-authoritative.
 - Character creation remains backend-authoritative.
 - `world/enter` creates the gameplay session.
-- `attach_session` binds the gameplay actor to the socket.
+- `world/enter` may reissue an active owned session to the same authenticated account instead of creating competing authority.
+- `attach_session` acquires the durable character lease or replaces the same session on its current instance after draining serialized dispatch, atomically rotates the credential, and binds the gameplay actor plus new fencing token to the socket.
 - `region_context` is the effective success marker for attach.
 - Command flow starts only after `region_context`.
 

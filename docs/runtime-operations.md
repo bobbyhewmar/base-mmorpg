@@ -60,6 +60,7 @@ Current metrics include:
 - `l2bg_ws_attach_attempts_total`
 - `l2bg_websocket_connections_active`
 - `l2bg_attached_sessions_active`
+- `l2bg_session_ownership_events_total{result}`
 - `l2bg_region_occupancy`
 - `l2bg_gameplay_commands_total`
 - `l2bg_gameplay_command_duration_seconds_count`
@@ -72,6 +73,7 @@ Current structured logs cover:
 
 - HTTP request completion with method, path, status, duration, and remote IP
 - WebSocket attach outcomes with result and reason code
+- durable ownership acquire, renew, replace, conflict, expiry, stale-owner reject, and release events with instance and fence context
 - gameplay command completion with command type, sequence, result, duration, and reject reason when present
 - critical persistence failures with operation and store mode
 

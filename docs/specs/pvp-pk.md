@@ -40,6 +40,8 @@ All three use the standard envelope, sequence handling, durable dedup record, `a
 A player attack is legal only when all of these are true at application time:
 
 - actor and target are distinct attached characters
+- actor owns the exact current durable session fence on this server instance
+- target has an active ownership fence backed by a ready runtime on the same server instance
 - actor and target are alive
 - target is a known `player` in the actor's current authoritative `known-set`
 - both characters are still attached to the same region
@@ -82,6 +84,8 @@ Before emitting a successful player-combat delta, the backend opens one PostgreS
 
 The process-local PvP mutex remains only as a local runtime coordination optimization. It is not the multi-instance correctness boundary. The memory adapter uses one critical section and the same mutation resolver, cooldown checks, attribution rules, and anti-feed rules as PostgreSQL.
 
+Session fencing precedes player combat. The actor lease is renewed before command dedup or `ack`; the target's exact local fence is renewed before the combat transaction. A known target owned by another instance rejects as `presence.target_remote`, because this slice deliberately has no remote combat router or fallback.
+
 The handler projects the committed state back into the two locked runtime actors and performs volatile death cleanup before publishing success. The generic post-command progression/cooldown flush is skipped for player combat, preventing a stale runtime snapshot from overwriting the newer locked transaction. Persistence failure returns `system.persistence_failed` without publishing local or runtime success.
 
 Durable command reservation still precedes domain application. The audit table additionally enforces at most one event for a non-empty `session_id + command_seq`, so an identical replay cannot duplicate damage or audit even across process boundaries; a conflicting replay remains `sequence.conflicting_replay`.
@@ -109,6 +113,7 @@ These windows are project-owned investigation constants, not balance or reward p
 | --- | --- |
 | `pvp.self_target` | Actor attempted to attack their own character |
 | `pvp.target_unavailable` | Previously known player is no longer attached |
+| `presence.target_remote` | Known player is online under another server instance and cannot be attacked through the local runtime |
 | `pvp.target_out_of_region` | Attached target is no longer in the actor's authoritative region |
 | `pvp.region_restricted` | Current region does not enable open PvP |
 | `pvp.safe_zone` | Actor or target is inside a server-authored safe area |
