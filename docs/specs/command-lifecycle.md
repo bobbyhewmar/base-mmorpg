@@ -89,7 +89,7 @@ Examples:
 - tame target is known, alive, tameable, and within authoritative tame range
 - summon or dismiss is legal for the current owned companion state
 - mount or dismount is legal for the current owned companion state
-- party invite target is the actor's current runtime player target, is present in the authoritative `known-set`, is online, and is currently eligible
+- party invite target is the actor's current runtime player target, is present in the authoritative `known-set`, has a ready local or durable remote owner, and is currently eligible
 - party invite target is not the actor itself and is not already in a party
 - the invitee does not already have a live pending invite and the inviter or party does not already have a live outbound invite
 - only the current party leader may invite or kick
@@ -103,7 +103,7 @@ Examples:
 - chat text is non-empty, within bounds, and not over the current rate limit
 - actor death state does not block the current social chat slice
 - `party` chat requires current authoritative party membership
-- `whisper` requires an online target resolved by authoritative character name lookup
+- `whisper` requires an online target resolved by authoritative persisted character-name lookup and current ownership
 - shared kill XP eligibility is resolved only from the current authoritative party, attach, region, and alive state at kill time
 - party-owned loot pickup requires the actor to remain inside the loot's eligible party subset
 - stack quantity is valid for split
@@ -129,6 +129,8 @@ For movement, the authoritative runtime update may arrive after the client has a
 For queued gameplay interactions such as loot pickup after approach, the durable mutation happens only when the authoritative runtime reaches legal range. Intermediate approach waypoints are runtime state, not inventory success.
 
 For a remote-owned known player, `select_target` still commits a rejected command outcome. That outcome and its optional `presence.remote_target_notice.v1` outbox row are finalized in one PostgreSQL transaction. The event idempotency key derives from `session_id + command_seq`; identical replay reads the stored command outcome without producing again, and conflicting replay remains `sequence.conflicting_replay`. The informational notice never changes target state and is not a substitute for `delta` or snapshot authority.
+
+Remote social delivery uses the same command collector and may finalize more than one recipient event. Each key derives from `session_id + command_seq + purpose + recipient_character_id`. The command outcome and its complete event set commit together. Remote whisper also persists sanitized chat history in that transaction; failure replaces sender success with `system.persistence_failed`. Party/clan state remains owned by its domain repository mutation, while the command outcome and all resulting remote notices share the outbox finalization transaction.
 
 If the command was accepted into the pipeline with a dedup reservation, the server finalizes the command record with:
 
@@ -163,7 +165,7 @@ For canonical-minimum clan rules, the same authoritative boundary is also respon
 - keeping the clan valid at one member until explicit `dissolve_clan`
 - leaving manual leader transfer and automatic leader transfer out of scope
 
-For `send_chat_message`, the same authoritative commit boundary is responsible for persisting minimum chat history in `chat_messages`. Delivery scope remains runtime truth derived from current region, party membership, and online whisper target lookup. The current slice exposes only `region`, `party`, and `whisper`; `local` remains reserved for a later distinct scope. The client never authors the final recipient set.
+For `send_chat_message`, the same authoritative commit boundary is responsible for persisting minimum chat history in `chat_messages`. Delivery scope remains runtime truth derived from current region, party membership, canonical character identity, and durable ownership. A remote whisper stores chat history, command outcome, and `social.chat_message.v1` delivery intent atomically. The current slice exposes only `region`, `party`, and `whisper`; cross-instance delivery is implemented only for whisper, while region/party fanout remains local-instance. `local` remains reserved for a later distinct scope. The client never authors the final recipient set.
 
 For player combat, a process-local mutex may coordinate runtime projection but cannot be the correctness boundary. PostgreSQL-backed mode serializes attacker/victim mutations through deterministic row locks and computes damage, death classification, counters, deadlines, cooldown mutation, attribution, repeated-pair signal, and audit from the locked durable state. The memory adapter mirrors this in one critical section. The generic post-command progression/cooldown flush must not run after this transaction, because it could overwrite a newer multi-instance combat state.
 
@@ -183,6 +185,8 @@ The server emits authoritative outbound messages to the issuing client and to an
 For state mutation flows, that outbound is usually `delta`.
 
 For scoped social flows, the outbound may instead be a typed notice or message such as `trade_notice`, `party_notice`, `clan_notice`, or `chat_message`.
+
+When a social recipient is remotely owned, the server writes `social.chat_message.v1`, `social.party_notice.v1`, or `social.clan_notice.v1` to the exact destination instance/session. The dispatcher revalidates ownership before delivery. Party/clan consumers rehydrate current durable state and emit its delta before the notice. Every remote social message carries the monotonic outbox `event_id`; server runtime and browser read-model use bounded duplicate suppression. Ownership drift does not reroute: it retries and eventually dead-letters with `social.recipient_offline` or `social.recipient_stale_owner`.
 
 Every successful clan mutation sends the issuing client a `delta` carrying `applies_to_command_id` and `applies_to_command_seq`. An `ack` or uncorrelated `clan_notice` may provide lifecycle feedback, but cannot mark the command applied or mutate projected clan truth.
 

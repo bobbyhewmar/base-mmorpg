@@ -4,7 +4,7 @@
 
 Freeze the minimum cross-instance gameplay fanout contract that runs on the existing PostgreSQL deployment. This slice adds no Redis, external queue, broker, remote combat, client fallback, or map change.
 
-The first shipped consumer is an informational remote-target notice. It proves durable production, instance-scoped claiming, retry, delivery, and retention without making a remote player locally interactable.
+The shipped consumers are an informational remote-target notice plus canonical remote whisper, party-notice, and clan-notice delivery. They prove durable production, instance-scoped claiming, retry, delivery, and retention without making a remote player locally interactable or introducing remote combat, movement, or entity replication.
 
 ## Conceptual Reference Boundary
 
@@ -36,11 +36,19 @@ Payloads are limited to 64 KiB and must contain valid JSON. Logs never include t
 
 An idempotency key identifies one immutable event intent. Recreating the same key with the same type, payload, and destination is a no-op that returns the existing event id. Reusing the key with different immutable content is a storage conflict.
 
-The current producer derives the key from the authoritative session and command sequence:
+Producers derive keys from the authoritative session, command sequence, purpose, and recipient. Current shapes are:
 
 `gameplay-command/{session_id}/{command_seq}/remote-target-notice`
 
-For the remote-target path, finalizing `gameplay_command_records` and inserting the outbox row happen in one PostgreSQL transaction. If event validation or insertion fails, the command outcome update rolls back. An identical command replay reads the stored outcome and does not run the producer again. A conflicting replay remains `sequence.conflicting_replay`.
+`gameplay-command/{session_id}/{command_seq}/social/{purpose}/{recipient_character_id}`
+
+Disconnect-driven invite expiry has no gameplay command and uses its durable invite identity instead:
+
+`{party|clan}-invite/{invite_id}/disconnect-expired/{recipient_character_id}`
+
+One command may produce multiple immutable recipient events. Finalizing `gameplay_command_records` and inserting every collected outbox row happen in one PostgreSQL transaction. Remote whisper additionally inserts its sanitized `chat_messages` history row in that transaction. If chat, event validation, insertion, or command finalization fails, the whole transaction rolls back and the sender receives `system.persistence_failed` rather than a success projection. An identical command replay reads the stored outcome and does not run the producer again. A conflicting replay remains `sequence.conflicting_replay`.
+
+Party and clan repositories preserve their existing domain transaction boundaries. Their command-driven remote delivery intents are finalized atomically with the command outcome after the authoritative social mutation succeeds. Disconnect-driven expiry publishes idempotently after invite deletion. Closing the crash window between those existing social repository mutations and event finalization is a separate hardening item; the browser still never treats an ack or notice as social state authority.
 
 The selected target itself remains runtime-only and is not persisted. The durable row represents only the notification intent created by the rejected remote interaction.
 
@@ -60,7 +68,7 @@ Concurrent workers cannot claim the same live row. An expired claim may be recla
 
 PostgreSQL time owns claim, delivery, retry, and dead-letter deadlines so clock skew between backend instances cannot steal or retain a claim early.
 
-Transport is at-least-once. Every delivery carries the stable monotonic `event_id`; the live runtime keeps a bounded set of successfully delivered ids, and the current notice has no gameplay mutation, so repeating it is semantically idempotent. A future state-changing consumer must persist its consumer receipt in the same transaction as its mutation before it can use this outbox.
+Transport is at-least-once. Every delivery carries the stable monotonic `event_id`. The destination runtime suppresses repeated socket delivery from a reclaimed event, and the browser read-model keeps a bounded set of remote social event ids so reconnect/retry cannot append the same message or notice twice. Party and clan state still changes only from the freshly rehydrated authoritative delta sent before the notice; a notice alone is never mutation authority. A future state-changing consumer must persist its consumer receipt in the same transaction as its mutation before it can use this outbox.
 
 ## First Event: Remote Target Notice
 
@@ -74,7 +82,25 @@ When `select_target` references a known player whose active owner is another ins
 
 The notice contains only the outbox event id, notice type, actor character id, stable reason code, and server timestamps. It is lifecycle information, not snapshot or delta authority. The browser does not derive target, presence, or combat state from it.
 
-Remote PvP remains unsupported and continues to return `presence.target_remote`. Party, clan, chat, entity, and movement fanout are not added by this first producer.
+Remote PvP remains unsupported and continues to return `presence.target_remote`.
+
+## Remote Social Events
+
+The social fanout contract currently supports three versioned event types:
+
+- `social.chat_message.v1` for one server-owned, normalized, maximum-240-rune whisper to an online remote character
+- `social.party_notice.v1` for invite, accept, decline, leave, kick, dissolve-by-roster-rule, and related party lifecycle feedback
+- `social.clan_notice.v1` for invite, accept, decline, leave, kick, and dissolve lifecycle feedback
+
+Whisper lookup uses canonical persisted character identity and durable ownership. An offline or unknown recipient is rejected as `chat.whisper_target_not_found`; a remote recipient creates one exact-session event rather than local fallback. Region chat and party chat retain their existing local-instance fanout in this slice.
+
+Party and clan commands still resolve invite identity from the actor's authoritative current target. If a previously local known target moves to a remote owner before the invite command, the backend may create the durable invite and exact-owner notice after revalidating social eligibility. Accept, decline, leave, kick, and dissolve notify every currently online affected remote member with a distinct stable purpose/recipient key.
+
+On consumption, ownership and exact target session are revalidated. Party/clan delivery loads current durable social state and emits an authoritative delta before the lifecycle notice. The payload cannot supply membership, roster, invite, or delivery success to the read-model.
+
+### Ownership drift policy
+
+Events do not reroute in this slice. If the recipient is offline, no longer owned by the destination instance, or attached under a different target session, delivery fails with stable internal code `social.recipient_offline` or `social.recipient_stale_owner`. The row follows normal retry/backoff and eventually dead-letters. This deliberately avoids guessing a new destination or duplicating a message across consecutive sessions. A future transactional rerouter may supersede the policy only with a new immutable delivery attempt and explicit consumer receipts.
 
 ## Retry, Dead Letter, And Retention
 
@@ -106,6 +132,8 @@ Defaults:
 
 Logs include event id, event type, destination instance, retry count, and a bounded failure code when applicable. They exclude payloads, attach tokens, access tokens, and account credentials.
 
+`l2bg_social_fanout_events_total{category,result}` and structured `social_fanout` logs additionally classify `chat`, `party_notice`, and `clan_notice` as produced, delivered, duplicate, stale-owner, failed, or dead-letter. Message text and the JSON payload are never logged.
+
 ## Memory Adapter
 
 The memory adapter shares the same semantics for deterministic tests:
@@ -125,7 +153,8 @@ Two `Store` wrappers may share one memory backend to simulate separate server in
 - remote damage or cross-instance combat transactions
 - region-wide broadcast delivery
 - cross-instance movement or entity replication
-- party, clan, or chat fanout
+- cross-instance region chat or party-chat broadcast
+- state-changing remote party/clan authority beyond the already persisted domain command
 - Redis, broker, external queue, or event sourcing
 - admin panel or manual replay UI
 - payload logging
@@ -139,6 +168,8 @@ Two `Store` wrappers may share one memory backend to simulate separate server in
 - identical command replay cannot duplicate the event
 - conflicting command replay remains rejected
 - a remote notice never changes the actor's target or enables remote gameplay
+- a remote social notice never becomes party/clan state authority in the browser
+- exact-session ownership drift retries and dead-letters without local fallback or implicit reroute
 - failed delivery cannot fail the gameplay server loop
 - retention removes only old delivered rows
 - PostgreSQL remains durable truth for outbox state; runtime memory is only the live dispatcher projection

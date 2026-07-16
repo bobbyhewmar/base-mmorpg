@@ -161,7 +161,7 @@ If the entity is not in `known-set`, the command must be rejected with a stable 
 
 For a player target, known-set membership does not authorize damage. The PvP path also requires live attachment in the same region, an open region policy, distinct living characters, non-matching party and clan membership, authoritative range, and the command-specific skill/resource rules in `docs/specs/pvp-pk.md`.
 
-If the known player is online on another instance, `select_target`, PvP, party invite, and clan invite reject with `presence.target_remote`. There is no local target success, remote mutation, or delivery fallback in this slice.
+If the known player is online on another instance, `select_target` and PvP reject with `presence.target_remote`. There is no local target success, remote combat mutation, or delivery fallback. A party/clan invite may continue only when its recipient came from an already authoritative player target that drifted remote; the command revalidates durable ownership and social eligibility and routes only the resulting lifecycle notice through the outbox. This never adds the remote player to `known-set`.
 
 ### Basic Attack
 

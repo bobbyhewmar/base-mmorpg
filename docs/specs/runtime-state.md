@@ -402,6 +402,8 @@ The current online slice rehydrates that state into:
 - runtime deltas and `party_notice` messages for invite, accept, decline, leave, kick, and deterministic leader transfer
 - kill-time party reward eligibility for shared XP and party-owned loot pickup
 
+Affected party members owned by another instance receive a `social.party_notice.v1` outbox event. At delivery, the owner rehydrates current durable party/invite state and sends an authoritative delta before the notice. The notice and its ack cannot mutate party projection by themselves.
+
 The browser may render an incoming invite as a dedicated countdown modal and may disable `Accept` visually when `expires_at_ms` reaches zero, but the invite is not removed until the backend updates `self_state.party_invites`.
 
 The runtime does not persist party HUD layout, member ordering by drag, or any frame-level roster repaint. Round-robin, master loot, dice distribution, clan, alliance, siege, and matchmaking remain outside this slice.
@@ -441,6 +443,8 @@ The current online slice rehydrates that state into:
 - attach-time runtime clan validation
 - runtime deltas and `clan_notice` messages for create, invite, accept, decline, leave, kick, and dissolve
 
+Affected clan members owned by another instance receive a `social.clan_notice.v1` outbox event. At delivery, the owner rehydrates current durable clan/invite state and sends an authoritative delta before the notice. The notice and its ack cannot mutate clan projection by themselves.
+
 Successful clan command deltas sent to the actor carry the originating command id and sequence. `ack` and `clan_notice` remain lifecycle feedback; only authoritative snapshot or delta data changes the browser's clan or invite projection. Clan membership survives disconnect and is rehydrated on reconnect, while pending invites are canceled when either participant disconnects.
 
 The browser may render an incoming clan invite as a dedicated countdown modal and may disable `Accept` visually when `expires_at_ms` reaches zero, but the invite is not removed until the backend updates `self_state.clan_invites`.
@@ -472,7 +476,11 @@ The current online slice persists minimum chat history in `chat_messages` with:
 - `command_seq`
 - server `created_at`
 
-The runtime does not persist offline-delivery queues, chat-tab UI state, or draft text. The browser remains responsible only for rendering escaped text and focusing the compact composer; it never decides delivery scope or whisper success.
+For a whisper target with an active owner on another instance, sanitized history, command outcome, and one `social.chat_message.v1` delivery intent commit atomically. The destination exact session is revalidated before delivery. A changed/offline owner retries and eventually dead-letters; the system does not reroute or create a local fallback. Region chat and party chat remain local-instance fanout in this slice.
+
+The browser keeps a bounded set of received remote social `event_id` values and does not append the same chat or notice twice. It still derives no success from ack: chat text appears only when `chat_message` arrives, and party/clan truth changes only from snapshot/delta.
+
+The runtime does not persist an offline mailbox, chat-tab UI state, or draft text. The durable outbox is a bounded live-delivery mechanism, not offline chat storage. The browser remains responsible only for rendering escaped text and focusing the compact composer; it never decides delivery scope or whisper success.
 
 ### Target State
 
@@ -525,7 +533,7 @@ Predicted local-only movement does not update `known-set`. `known-set` changes o
 
 When a known player is referenced, runtime legality may additionally consult durable session ownership. A matching ready owner on this process is `local`; an unexpired owner on another `server_instance_id` is `remote`; no unexpired row is `offline`. This classification cannot add an entity to `known-set` and cannot authorize remote interaction by itself.
 
-The remote classification may route an informational outbox notice to the exact owning instance. Delivery still revalidates the target's current ownership and ready local runtime. It cannot authorize combat or synthesize remote `known-set` state.
+The remote classification may route an informational target notice or a supported exact-recipient social event to the owning instance. Delivery still revalidates the target's current ownership, exact session, and ready local runtime. It cannot authorize combat, synthesize remote `known-set` state, or turn a notice into party/clan state authority.
 
 ## Anti-Examples
 
