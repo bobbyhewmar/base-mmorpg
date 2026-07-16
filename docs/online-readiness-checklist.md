@@ -98,6 +98,9 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Remote whisper history, command outcome, and delivery intent commit atomically; identical replay does not duplicate history, event, or visual delivery.
 - [x] Ownership drift uses explicit exact-session retry/dead-letter with `social.recipient_offline` or `social.recipient_stale_owner`; it does not reroute or fall back locally.
 - [x] Two independent PostgreSQL stores cannot concurrently claim the same live delivery row.
+- [x] Durable recipient receipts serialize concurrent consumers and suppress a consumed event after logical consumer restart.
+- [x] Command-driven party/clan mutation, final command outcome, and remote outbox events commit or roll back as one PostgreSQL transaction; local fanout waits for commit.
+- [x] Ownership drift releases unconsumed receipt reservations and preserves retry/dead-letter without local success or automatic reroute.
 - [ ] Cross-instance movement, entity, region/party chat broadcast, and combat fanout remain later slices; remote-online is not generally interactable.
 
 ### Terrain and Pathfinding Reality
@@ -164,6 +167,7 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Party/clan invite, accept, decline, leave, kick, and dissolve lifecycle feedback reaches affected remote-owned members through idempotent outbox events.
 - [x] Remote party/clan delivery rehydrates authoritative durable state into a delta before its notice; ack/notice alone cannot create membership or invite success.
 - [x] Backend runtime and browser read-model suppress duplicate remote social `event_id` values without inventing local delivery success.
+- [x] Receipt observability covers created, duplicate, and consumed without logging whisper content; stale-owner/dead-letter stay visible in social/outbox metrics.
 - [x] Minimum chat history persists without trusting client-supplied scope, target identity, or message outcomes.
 - [x] The HUD renders chat text in escaped form and does not execute HTML or JS from chat payloads.
 - [x] Social chat remains available while the actor is dead; combat death state does not silently block the current social slice.

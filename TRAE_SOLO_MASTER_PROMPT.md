@@ -1061,11 +1061,14 @@ Foundation multi-instancia de sessao ja resolvida:
 - release preserva tombstone expirada para que o proximo acquire continue o fencing monotono do personagem
 - ownership events possuem metrica e log estruturado sem attach token
 - `gameplay_event_outbox` persiste eventos com id monotono, idempotency key imutavel, destino exato de instancia, payload JSON limitado, claim lease, retry, delivery e dead-letter
+- `gameplay_event_receipts` persiste destinatario, instancia, delivery e consume por `event_id`; receipt consumido sobrevive a restart logico e dois consumers nao duplicam entrega
 - finalizacao do command record e producao de todos os eventos remotos acontecem na mesma transacao; whisper inclui historico sanitizado na mesma fronteira, replay identico nao duplica evento/mensagem e replay conflitante continua rejeitado
+- comandos party/clan incluem mutation autoritativa nessa mesma transacao e adiam fanout local ate o commit; expiry por disconnect permanece fallback idempotente separado e pode perder apenas o notice em crash entre delete/producao
 - poller por instancia usa `FOR UPDATE SKIP LOCKED`, revalida ownership do destinatario e nao bloqueia o pipeline principal de gameplay
 - retention remove somente eventos entregues antigos; falhos permanecem para retry ou dead-letter
 - drift de ownership nao faz reroute implicito: destinatario offline/stale segue retry/dead-letter com reason interno estavel, sem fallback local
 - runtime e read-model mantem dedup limitado por `event_id`; party/clan reidratam delta autoritativo antes do notice remoto
+- o socket nao compartilha transacao com PostgreSQL: crash depois do send e antes de `consumed_at` ainda pode redeliver apos restart simultaneo de server/page; exactly-once exigiria ack duravel do client
 
 ### Ja resolvido na Fase C - Deduplicacao de comandos
 
@@ -1177,13 +1180,14 @@ Estado atual:
 - `select_target` e PvP falham com `presence.target_remote` quando o player conhecido esta em outra instancia; party/clan podem revalidar e convidar um target selecionado autoritativamente antes do drift de ownership
 - `select_target` remoto produz um notice informativo replay-safe para a instancia owner sem mudar target local, habilitar dano ou substituir `presence.target_remote`
 - whisper remoto e notices de invite/accept/decline/leave/kick/dissolve party/clan usam o outbox com chave por command/purpose/recipient e sem sucesso local falso
+- receipts duraveis fecham redelivery apos restart do consumer, e mutation party/clan + outcome + outbox agora commitam ou rollbackam juntos
 
 Ainda falta:
 
 - region transfer
 - interest management real
 - fan-out cross-instance de entidade, movimento, region/party chat e combate
-- fechamento transacional do gap entre mutacao dos repositorios party/clan e finalizacao command/outbox, alem de reroute somente se houver contrato de receipt duravel
+- ack duravel de consume no protocolo apenas se a ambiguidade residual socket/receipt justificar; reroute continua proibido sem contrato explicito
 - alliance social base
 
 ### 6. Resend e emails transacionais
@@ -1735,7 +1739,7 @@ Sempre escolher a maior prioridade que:
 
 Prioridade atual recomendada:
 
-1. hardening sob carga do fanout social PostgreSQL ja entregue, fechamento do gap transacional party/clan -> outbox e depois expansao deliberada para presence/entity, sem combate remoto, Redis ou fila externa antes de necessidade comprovada
+1. hardening sob carga e fault injection do fanout social PostgreSQL com receipts ja entregue, depois expansao deliberada para presence/entity, sem combate remoto, Redis ou fila externa antes de necessidade comprovada
 2. karma recovery, correlacao account/device e alerting sobre attribution/anti-feed ja auditados, sem ampliar para guerras/eventos ou aplicar punicao automatica ainda
 3. instancias, siege, olympiad e producao somente depois de ownership, presence cross-instance, PvP/PK e clan permanecerem estaveis
 
@@ -2223,14 +2227,14 @@ Antes de alterar qualquer arquivo, rode git status --short e inspecione o estado
 Estado atual que voce deve tratar como entregue, salvo evidencia contraria no codigo:
 - A foundation de ownership multi-instancia ja persiste um lease por personagem, `server_instance_id` e fencing monotono; attach concorrente tem um vencedor, stale owner rejeita antes de ack/dedup e release/unregister e condicional/idempotente.
 - Presence minima ja distingue local, remote-online e offline. O fan-out entre processos entrega notice de target, whisper remoto e notices de lifecycle party/clan via outbox PostgreSQL; `presence.target_remote` continua bloqueando select/PvP e nao existe fallback local.
-- O outbox cross-instance ja possui id monotono, chave idempotente imutavel por command/purpose/recipient, producao atomica com command outcome, whisper/history atomico, claim seguro por instancia, dedup runtime/read-model, retry/dead-letter, retention de entregues e observabilidade sem payload sensivel.
+- O outbox cross-instance ja possui id monotono, chave idempotente imutavel por command/purpose/recipient, producao atomica com command outcome, whisper/history atomico, mutation party/clan na mesma transacao, claim seguro por instancia, receipts duraveis de delivery/consume, dedup runtime/read-model, retry/dead-letter, retention de entregues e observabilidade sem payload sensivel.
 - Fase L ja possui party canonica minima, social chat `region`/`party`/`whisper`, shared XP minimo, party-owned loot minimo e clan foundation hardened em slices autoritativos.
 - Fase M ja possui o primeiro slice PvP/PK autoritativo hardened para ataque e skill single-target, CP antes de HP, deadline de flag persistido, safe-area minima backend-only, classificacao PvP versus PK, counters/karma duraveis, row locking PostgreSQL multi-instancia, attribution de killer/assists, sinal de kill repetida, audit investigavel, morte/respawn backend-owned e replay duravel.
 - A regiao ativa atual usa `stonecross_plaza` apenas como id compativel, mas o mapa oficial foi resetado para uma area limpa 1024x1024 com `clean_plain_1024_geo_v1`, bounds `x=-512..512` e `z=-512..512`.
 - Renderer, ground raycast/picking plane, server geodata bounds, spawn/checkpoint, exits e testes precisam compartilhar esse mesmo contrato de mapa.
 - Nao reintroduza clamp hardcoded do mapa antigo, visual Stonecross, props/spawns antigos, blockers antigos, nem bounds antigos de `dawn_plaza`.
 
-Prioridade 1: validar o fanout social PostgreSQL sob carga multi-instancia, fechar o gap transacional entre mutacoes party/clan e seus eventos, e so depois expandir para presence/entity, preservando `presence.target_remote` para combate e sem introduzir Redis/fila externa antes de medir necessidade.
+Prioridade 1: validar o fanout social PostgreSQL com receipts sob carga multi-instancia e fault injection, e so depois expandir para presence/entity, preservando `presence.target_remote` para combate e sem introduzir Redis/fila externa antes de medir necessidade.
 - Reuse runtime autoritativo, persistencia curta e HUD classica.
 - Preserve toda autoridade de sessao, presence, party, chat, clan, shared XP, party loot, elegibilidade PvP, dano, morte e consequencias no backend.
 - Nao aceite membership, reward split, target legality, presence truth, chat delivery ou loot ownership vindo do client.

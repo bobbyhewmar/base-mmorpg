@@ -48,7 +48,9 @@ Disconnect-driven invite expiry has no gameplay command and uses its durable inv
 
 One command may produce multiple immutable recipient events. Finalizing `gameplay_command_records` and inserting every collected outbox row happen in one PostgreSQL transaction. Remote whisper additionally inserts its sanitized `chat_messages` history row in that transaction. If chat, event validation, insertion, or command finalization fails, the whole transaction rolls back and the sender receives `system.persistence_failed` rather than a success projection. An identical command replay reads the stored outcome and does not run the producer again. A conflicting replay remains `sequence.conflicting_replay`.
 
-Party and clan repositories preserve their existing domain transaction boundaries. Their command-driven remote delivery intents are finalized atomically with the command outcome after the authoritative social mutation succeeds. Disconnect-driven expiry publishes idempotently after invite deletion. Closing the crash window between those existing social repository mutations and event finalization is a separate hardening item; the browser still never treats an ack or notice as social state authority.
+Command-driven party and clan operations now reuse that same PostgreSQL transaction for the authoritative repository mutation, final command outcome, and every collected outbox row. The pending dedup reservation is created before the transaction, so a pre-mutation crash can leave only a recoverable pending record; it cannot leave a social mutation without its applied outcome/events. Local socket fanout and state refresh run only after commit. The memory adapter serializes the same boundary and restores a social-state/outcome/outbox snapshot on failure.
+
+Disconnect-driven invite expiry has no command record and remains an explicit safe fallback: deletion and event production are separate, while the immutable invite-derived idempotency key makes retry harmless. A crash after deletion and before production can lose that lifecycle notice; it cannot create membership, retain an invalid invite, duplicate a remote notice, or publish local success. Closing this non-command notice-loss window would require a dedicated expiry transaction/outbox producer in a later slice.
 
 The selected target itself remains runtime-only and is not persisted. The durable row represents only the notification intent created by the rejected remote interaction.
 
@@ -61,14 +63,19 @@ Each server process has a unique worker id under its stable `server_instance_id`
 3. uses a short transaction with `FOR UPDATE SKIP LOCKED`
 4. writes a bounded claim lease and returns the claimed rows
 5. revalidates the target's current durable ownership and matching ready local runtime
-6. delivers the supported event
-7. marks the row delivered only while the worker still owns the live claim
+6. reserves one durable recipient receipt for the event
+7. delivers the supported event
+8. marks the receipt consumed and the row delivered only while the worker still owns both live claims
 
 Concurrent workers cannot claim the same live row. An expired claim may be reclaimed.
 
 PostgreSQL time owns claim, delivery, retry, and dead-letter deadlines so clock skew between backend instances cannot steal or retain a claim early.
 
-Transport is at-least-once. Every delivery carries the stable monotonic `event_id`. The destination runtime suppresses repeated socket delivery from a reclaimed event, and the browser read-model keeps a bounded set of remote social event ids so reconnect/retry cannot append the same message or notice twice. Party and clan state still changes only from the freshly rehydrated authoritative delta sent before the notice; a notice alone is never mutation authority. A future state-changing consumer must persist its consumer receipt in the same transaction as its mutation before it can use this outbox.
+Transport is at-least-once. `gameplay_event_receipts` persists `event_id`, recipient session/character, destination instance, claim lease, `delivered_at`, and `consumed_at`. A consumed receipt survives consumer restart: redelivery of the same event skips the socket and lets the outbox finish without a second visual message. Concurrent consumers serialize on the receipt row, so only one owns delivery. Failed ownership/socket validation releases an unconsumed reservation; retry and dead-letter never become local success.
+
+Every delivery also carries the stable monotonic `event_id`, and the browser read-model keeps a bounded set of remote social event ids. Party and clan state still changes only from the freshly rehydrated authoritative delta sent before the notice; a notice alone is never mutation authority.
+
+The WebSocket and PostgreSQL cannot share one transaction. If the process dies after the socket accepts a payload but before `consumed_at` commits, the expired pending receipt may be redelivered. In-process suppression and the live browser event-id set cover ordinary retry, while a simultaneous server and page restart can still show a duplicate. Eliminating that final ambiguity requires a protocol-level client consume acknowledgement with durable server correlation; this slice does not claim transport-level exactly-once.
 
 ## First Event: Remote Target Notice
 
@@ -100,13 +107,15 @@ On consumption, ownership and exact target session are revalidated. Party/clan d
 
 ### Ownership drift policy
 
-Events do not reroute in this slice. If the recipient is offline, no longer owned by the destination instance, or attached under a different target session, delivery fails with stable internal code `social.recipient_offline` or `social.recipient_stale_owner`. The row follows normal retry/backoff and eventually dead-letters. This deliberately avoids guessing a new destination or duplicating a message across consecutive sessions. A future transactional rerouter may supersede the policy only with a new immutable delivery attempt and explicit consumer receipts.
+Events do not reroute in this slice. If the recipient is offline, no longer owned by the destination instance, or attached under a different target session, delivery fails with stable internal code `social.recipient_offline` or `social.recipient_stale_owner`. Its unconsumed receipt reservation is released, the row follows normal retry/backoff, and it eventually dead-letters without a visual success. A previously consumed receipt wins over later ownership drift and suppresses redelivery. This deliberately avoids guessing a new destination or duplicating a message across consecutive sessions.
 
 ## Retry, Dead Letter, And Retention
 
 Delivery failures store a bounded machine-oriented error summary, increment `retry_count`, release the claim, and set an exponential retry deadline. After the configured maximum, the row receives `dead_lettered_at` and is no longer claimable. A failed event never blocks server startup or the gameplay command pipeline.
 
 Retention deletes only rows whose `delivered_at` is older than the configured retention window. Pending, claimed, retrying, and dead-letter rows are never removed by delivered-event retention.
+
+Receipt rows follow their delivered outbox row through `ON DELETE CASCADE`; retention therefore removes only receipts whose successfully delivered parent is already old enough.
 
 Defaults:
 
@@ -134,6 +143,8 @@ Logs include event id, event type, destination instance, retry count, and a boun
 
 `l2bg_social_fanout_events_total{category,result}` and structured `social_fanout` logs additionally classify `chat`, `party_notice`, and `clan_notice` as produced, delivered, duplicate, stale-owner, failed, or dead-letter. Message text and the JSON payload are never logged.
 
+`l2bg_gameplay_event_receipts_total{category,result}` and structured `gameplay_event_receipt` logs cover `receipt_created`, `duplicate_receipt`, and `consumed`. Stale-owner and dead-letter remain classified by the social/outbox lifecycle metrics. Receipt logs contain routing ids but never whisper text or payload JSON.
+
 ## Memory Adapter
 
 The memory adapter shares the same semantics for deterministic tests:
@@ -145,6 +156,8 @@ The memory adapter shares the same semantics for deterministic tests:
 - retry and dead-letter state
 - delivered-only retention
 - atomic command outcome plus event creation under one lock
+- durable receipt reservation/consume semantics shared by multiple `Store` wrappers
+- rollback of party/clan mutation, command outcome, and outbox as one serialized test boundary
 
 Two `Store` wrappers may share one memory backend to simulate separate server instances without adding infrastructure.
 

@@ -84,6 +84,8 @@ For a player already present in runtime `known-set`, `select_target` and player 
 
 A social invite may use a player target that was selected authoritatively while local and subsequently changed owner. Party/clan commands revalidate the current durable remote owner, region and domain eligibility, persist the invite on the backend, and queue an exact-owner lifecycle event. They never accept a client-authored substitute recipient. Remote whisper resolves canonical character identity by name and active ownership without adding the recipient to `known-set`. Remote PvP, movement, entity replication, region chat, and party-chat broadcast remain unsupported.
 
+The destination owner also writes a durable receipt before attempting social delivery and marks it consumed after socket acceptance. If ownership drifts before consumption, the unconsumed reservation is released and the exact-destination event retries or dead-letters with `social.recipient_stale_owner`; it is never rerouted. A consumed receipt suppresses later redelivery even if ownership has since moved.
+
 ## Stable Reason Codes
 
 | Reason code | Meaning |

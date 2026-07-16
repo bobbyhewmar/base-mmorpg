@@ -53,7 +53,8 @@ The repository already contains these online capabilities:
 - minimal cross-instance presence classification that distinguishes ready local, remote-online, and offline without persisting `known-set`
 - PostgreSQL gameplay outbox with monotonic event ids, exact-instance claiming, immutable idempotency keys, retry/dead-letter state, delivered-only retention, and structured lifecycle observability
 - replay-safe remote-target notice from one instance to the current target owner while the originating command still rejects with `presence.target_remote`
-- replay-safe remote whisper plus party/clan lifecycle notices, with exact-session ownership validation, bounded server/client duplicate suppression, authoritative social-state rehydration, and explicit stale-owner retry/dead-letter
+- replay-safe remote whisper plus party/clan lifecycle notices, with exact-session ownership validation, durable delivery/consume receipts, bounded server/client duplicate suppression, authoritative social-state rehydration, and explicit stale-owner retry/dead-letter
+- command-driven party/clan mutation, command outcome, and remote outbox intents committed atomically, with local fanout deferred until commit
 - class-specific learned skills and active or passive categorization
 - authoritative skill book projection and persistent hotbar snapshot in `world/enter` and runtime deltas
 - local and online HUD hotbar rendering from authoritative loadout instead of global hardcoded skill buttons
@@ -93,7 +94,7 @@ Remaining work:
 
 The current execution priority should follow the master prompt and the real repository state:
 
-1. harden the shipped remote social outbox under sustained multi-instance load, close the remaining party/clan mutation-to-outbox crash window, and only then extend toward presence/entity delivery without remote combat or new infrastructure
+1. validate the receipt-backed social outbox under sustained multi-instance load and operational fault injection, then extend deliberately toward presence/entity delivery without remote combat or new infrastructure
 2. keep the shipped PvP/PK transaction and attribution audit under multi-actor load, then deepen karma recovery, account/device correlation, and alerting without automatic punishment
 3. instances, siege, olympiad, and broader competitive systems only after ownership, cross-instance presence delivery, PvP/PK, and clan base remain stable
 
@@ -341,6 +342,7 @@ Status:
 - token-gated `GET /internal/pvp/events` provides read-only attacker/victim/involved/killer/suspicious/action/result/time investigation filters
 - frontend read-model and classic HUD project only authoritative flag, counters, karma, resources, and death; a two-session Docker smoke covers basic attack, reconnect with active flag, and single-target skill outside the sanctuary
 - PostgreSQL cross-instance fanout now delivers command-correlated remote-target notice, remote whisper, and party/clan lifecycle notices; claim is destination-safe, replay/client delivery is deduplicated, social state is rehydrated before notices, drift retries/dead-letters, and no remote damage or local target success is created
+- durable recipient receipts now survive logical consumer restart, serialize competing consumers, and keep stale-owner/dead-letter paths free of visual success; party/clan command mutations now share the command/outbox transaction
 - AoE/chain PvP, auto-approach/repeat against players, pet/summon or weighted attribution, anti-feed enforcement/correlation/alerting, richer named-zone/content volumes, karma recovery, economic penalties, wars, siege, olympiad, events, ranking, and rewards remain later slices
 
 ## Later
@@ -348,7 +350,7 @@ Status:
 After the online foundation becomes secure, replay-safe, and observable, the roadmap can continue into:
 
 - cross-instance entity and movement delivery plus region/party-chat broadcast using the shipped ownership registry and PostgreSQL outbox, with infrastructure expansion only if measured load requires it
-- transactional closure of the existing party/clan repository mutation-to-outbox finalization window and an explicit reroute/consumer-receipt design if ownership drift losses become unacceptable
+- protocol-level client consume acknowledgements only if the residual socket-accept/receipt-commit ambiguity becomes operationally unacceptable; reroute remains a separate explicit policy decision
 - broader vendor and warehouse variants
 - PvP/PK expansion beyond the hardened single-target slice: karma recovery, economic/death penalties, alerting, richer named-zone/content policy, and weighted/non-player attribution
 - deeper anti-abuse enforcement, account/device correlation, and alerting on top of the current suspicious-event audit query

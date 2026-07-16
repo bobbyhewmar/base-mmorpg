@@ -88,12 +88,13 @@ The following data is durable and authoritative in PostgreSQL:
 - durable character-to-session ownership with `server_instance_id`, monotonic fence, region, and absolute lease deadline
 - command deduplication records
 - durable cross-instance gameplay event outbox rows, claim leases, retry state, delivery markers, and dead-letter markers
+- durable gameplay event recipient receipts with delivery and consumption timestamps
 
 The current implementation persists skill cooldown recovery state in `character_skill_cooldowns` keyed by `character_id + skill_id`.
 
 The multi-instance session foundation persists one `gameplay_session_ownerships` row per currently claimed character. `gameplay_sessions.status = attached` is lifecycle history, not sufficient online truth. Attach acquisition serializes on the character row, renewal matches the exact session, instance, and fence, and conditional release prevents an old socket from closing a newer owner. PostgreSQL time owns deadlines; startup sanitation preserves unexpired owners belonging to other instances.
 
-The minimum fanout foundation persists one exact-instance delivery intent per row in `gameplay_event_outbox`. Command-correlated production commits with the command outcome when applicable. Claim, retry, delivery, dead-letter, and retention state are durable; the worker loop and bounded live-event dedup set are runtime projections. This is an outbox, not event sourcing or frame-level presence persistence.
+The minimum fanout foundation persists one exact-instance delivery intent per row in `gameplay_event_outbox`. Command-correlated production commits with the command outcome when applicable, and command-driven party/clan mutations share that transaction. `gameplay_event_receipts` persists recipient-scoped delivery/consume truth so a completed event remains idempotent across consumer restart. Claim, retry, delivery, dead-letter, receipt, and retention state are durable; the worker loop and bounded live-event dedup set are runtime projections. This is an outbox, not event sourcing or frame-level presence persistence.
 
 The hardened PvP/PK slice persists `pvp_kills`, `pk_count`, `karma`, and `pvp_flag_until` on `characters`. The flag deadline is absolute: attach/world-enter restore it only when it is still in the future, while server-time expiry clears the durable value before publishing the expiry transition. A player-combat hit locks both durable character rows in deterministic order and computes the resource transition from that locked truth. The same transaction commits attacker/victim combat resources, both flag deadlines, classification counters, attacker cooldown, lethal victim cooldown cleanup, attribution/anti-feed fields, and one `pvp_combat_events` row before success is published.
 
@@ -476,7 +477,7 @@ The current online slice persists minimum chat history in `chat_messages` with:
 - `command_seq`
 - server `created_at`
 
-For a whisper target with an active owner on another instance, sanitized history, command outcome, and one `social.chat_message.v1` delivery intent commit atomically. The destination exact session is revalidated before delivery. A changed/offline owner retries and eventually dead-letters; the system does not reroute or create a local fallback. Region chat and party chat remain local-instance fanout in this slice.
+For a whisper target with an active owner on another instance, sanitized history, command outcome, and one `social.chat_message.v1` delivery intent commit atomically. The destination exact session is revalidated before delivery. A durable consumed receipt prevents the same event from reaching the socket after a logical consumer restart. A changed/offline owner releases the pending reservation, retries, and eventually dead-letters; the system does not reroute or create a local fallback. Region chat and party chat remain local-instance fanout in this slice.
 
 The browser keeps a bounded set of received remote social `event_id` values and does not append the same chat or notice twice. It still derives no success from ack: chat text appears only when `chat_message` arrives, and party/clan truth changes only from snapshot/delta.
 
