@@ -3835,7 +3835,7 @@ func (p *postgresStoreBackend) GetActiveSessionForCharacter(ctx context.Context,
 }
 
 func (p *postgresStoreBackend) truncateAllTables(ctx context.Context) error {
-	_, err := p.db.ExecContext(ctx, `TRUNCATE TABLE gameplay_command_records, gameplay_session_ownerships, clan_invites, clan_members, clans, party_invites, party_members, parties, chat_messages, account_sessions, gameplay_sessions, pvp_combat_events, action_logs, storage_transfer_records, character_hotbar_loadouts, character_skill_cooldowns, character_items, character_quests, character_pets, characters, account_credentials, accounts RESTART IDENTITY CASCADE`)
+	_, err := p.db.ExecContext(ctx, `TRUNCATE TABLE gameplay_event_outbox, gameplay_command_records, gameplay_session_ownerships, clan_invites, clan_members, clans, party_invites, party_members, parties, chat_messages, account_sessions, gameplay_sessions, pvp_combat_events, action_logs, storage_transfer_records, character_hotbar_loadouts, character_skill_cooldowns, character_items, character_quests, character_pets, characters, account_credentials, accounts RESTART IDENTITY CASCADE`)
 	return err
 }
 

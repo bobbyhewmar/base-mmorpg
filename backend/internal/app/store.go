@@ -63,6 +63,19 @@ type GameplayCommandRecordRepository interface {
 	UpdateOutcome(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any) error
 }
 
+type GameplayEventRepository interface {
+	Create(ctx context.Context, event *GameplayEvent) (bool, error)
+	GetByIdempotencyKey(ctx context.Context, idempotencyKey string) (*GameplayEvent, error)
+	Claim(ctx context.Context, serverInstanceID string, claimOwnerID string, now time.Time, claimLease time.Duration, limit int) ([]GameplayEvent, error)
+	MarkDelivered(ctx context.Context, eventID int64, claimOwnerID string, deliveredAt time.Time) (bool, error)
+	MarkFailed(ctx context.Context, eventID int64, claimOwnerID string, failedAt time.Time, retryDelay time.Duration, maxRetries int, lastError string) (GameplayEventFailure, error)
+	DeleteDeliveredBefore(ctx context.Context, cutoff time.Time, limit int) (int, error)
+}
+
+type gameplayCommandEventWriter interface {
+	FinalizeGameplayCommandWithEvent(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, event *GameplayEvent) (bool, error)
+}
+
 type CharacterRepository interface {
 	ListByAccountID(ctx context.Context, accountID string) ([]Character, error)
 	CountByAccountID(ctx context.Context, accountID string) (int, error)
@@ -220,9 +233,11 @@ type Store struct {
 	GameplaySessions   GameplaySessionRepository
 	AccountSessions    AccountSessionRepository
 	GameplayCommands   GameplayCommandRecordRepository
+	GameplayEvents     GameplayEventRepository
 	registration       authRegistrationWriter
 	loginLookup        authLookupReader
 	characterSeed      characterBootstrapWriter
+	commandEventWriter gameplayCommandEventWriter
 	closeFn            func() error
 }
 
@@ -263,11 +278,20 @@ func NewStore(databaseURL string) (*Store, error) {
 		GameplaySessions:   postgresGameplaySessionRepo{backend: backend},
 		AccountSessions:    postgresAccountSessionRepo{backend: backend},
 		GameplayCommands:   postgresGameplayCommandRecordRepo{backend: backend},
+		GameplayEvents:     postgresGameplayEventRepo{backend: backend},
 		registration:       backend,
 		loginLookup:        backend,
 		characterSeed:      backend,
+		commandEventWriter: backend,
 		closeFn:            db.Close,
 	}, nil
+}
+
+func (s *Store) FinalizeGameplayCommandWithEvent(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, event *GameplayEvent) (bool, error) {
+	if s == nil || s.commandEventWriter == nil {
+		return false, errors.New("atomic gameplay command event writer is unavailable")
+	}
+	return s.commandEventWriter.FinalizeGameplayCommandWithEvent(ctx, sessionID, commandSeq, status, outboundMessages, event)
 }
 
 func (s *Store) Close() error {

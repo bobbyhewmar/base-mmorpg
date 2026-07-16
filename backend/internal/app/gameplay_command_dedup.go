@@ -92,6 +92,7 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 	})
 
 	var outboundMessages []map[string]any
+	var gameplayEvent *GameplayEvent
 	playerCombatCommand := false
 	if command.Type == "pick_up_loot" {
 		outboundMessages = runtime.processLootPickup(auditCtx, s.store, command)
@@ -118,7 +119,7 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 	} else if command.Type == "equip_item" || command.Type == "unequip_item" || command.Type == "split_item_stack" || command.Type == "merge_item_stacks" || command.Type == "use_item" {
 		outboundMessages = runtime.processItemCommand(auditCtx, s.store, command)
 	} else if command.Type == "select_target" {
-		outboundMessages = s.processTargetCommand(auditCtx, runtime, command)
+		outboundMessages, gameplayEvent = s.processTargetCommand(auditCtx, session, runtime, command)
 	} else {
 		outboundMessages = runtime.processCommand(command)
 	}
@@ -127,9 +128,19 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 
 	if shouldPersist {
 		status := gameplayCommandRecordStatusFromOutbound(outboundMessages)
-		if err := s.store.GameplayCommands.UpdateOutcome(ctx, session.ID, command.CommandSeq, status, outboundMessages); err != nil {
-			s.recordStoreError("gameplay_commands.update_outcome", err)
-			log.Printf("gameplay command dedup finalize failed session=%s seq=%d: %v", session.ID, command.CommandSeq, err)
+		var finalizeErr error
+		if gameplayEvent != nil {
+			var created bool
+			created, finalizeErr = s.store.FinalizeGameplayCommandWithEvent(ctx, session.ID, command.CommandSeq, status, outboundMessages, gameplayEvent)
+			if finalizeErr == nil && created {
+				s.recordGameplayEvent("produced", gameplayEvent, "")
+			}
+		} else {
+			finalizeErr = s.store.GameplayCommands.UpdateOutcome(ctx, session.ID, command.CommandSeq, status, outboundMessages)
+		}
+		if finalizeErr != nil {
+			s.recordStoreError("gameplay_commands.update_outcome", finalizeErr)
+			log.Printf("gameplay command dedup finalize failed session=%s seq=%d: %v", session.ID, command.CommandSeq, finalizeErr)
 		}
 	}
 

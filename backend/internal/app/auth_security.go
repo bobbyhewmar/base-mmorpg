@@ -16,12 +16,19 @@ import (
 )
 
 const (
-	passwordAlgorithmSHA256          = "sha256"
-	passwordAlgorithmBcryptV1        = "bcrypt_v1"
-	defaultAccessTokenTTL            = 2 * time.Hour
-	defaultSessionLeaseDuration      = 30 * time.Second
-	defaultSessionLeaseRenewInterval = 10 * time.Second
-	defaultSessionAttachTokenTTL     = 5 * time.Minute
+	passwordAlgorithmSHA256             = "sha256"
+	passwordAlgorithmBcryptV1           = "bcrypt_v1"
+	defaultAccessTokenTTL               = 2 * time.Hour
+	defaultSessionLeaseDuration         = 30 * time.Second
+	defaultSessionLeaseRenewInterval    = 10 * time.Second
+	defaultSessionAttachTokenTTL        = 5 * time.Minute
+	defaultGameplayEventPollInterval    = 250 * time.Millisecond
+	defaultGameplayEventClaimLease      = 5 * time.Second
+	defaultGameplayEventRetryDelay      = 500 * time.Millisecond
+	defaultGameplayEventRetention       = 24 * time.Hour
+	defaultGameplayEventCleanupInterval = 10 * time.Minute
+	defaultGameplayEventBatchSize       = 32
+	defaultGameplayEventMaxRetries      = 5
 )
 
 type RateLimitConfig struct {
@@ -30,16 +37,23 @@ type RateLimitConfig struct {
 }
 
 type ServerConfig struct {
-	AllowedOrigins            []string
-	AccessTokenTTL            time.Duration
-	AuthRateLimit             RateLimitConfig
-	AttachRateLimit           RateLimitConfig
-	InternalAuditEnabled      bool
-	InternalAuditToken        string
-	ServerInstanceID          string
-	SessionLeaseDuration      time.Duration
-	SessionLeaseRenewInterval time.Duration
-	SessionAttachTokenTTL     time.Duration
+	AllowedOrigins               []string
+	AccessTokenTTL               time.Duration
+	AuthRateLimit                RateLimitConfig
+	AttachRateLimit              RateLimitConfig
+	InternalAuditEnabled         bool
+	InternalAuditToken           string
+	ServerInstanceID             string
+	SessionLeaseDuration         time.Duration
+	SessionLeaseRenewInterval    time.Duration
+	SessionAttachTokenTTL        time.Duration
+	GameplayEventPollInterval    time.Duration
+	GameplayEventClaimLease      time.Duration
+	GameplayEventRetryDelay      time.Duration
+	GameplayEventRetention       time.Duration
+	GameplayEventCleanupInterval time.Duration
+	GameplayEventBatchSize       int
+	GameplayEventMaxRetries      int
 }
 
 type fixedWindowRateLimiter struct {
@@ -65,9 +79,16 @@ func defaultServerConfig() ServerConfig {
 			MaxAttempts: 16,
 			Window:      time.Minute,
 		},
-		SessionLeaseDuration:      defaultSessionLeaseDuration,
-		SessionLeaseRenewInterval: defaultSessionLeaseRenewInterval,
-		SessionAttachTokenTTL:     defaultSessionAttachTokenTTL,
+		SessionLeaseDuration:         defaultSessionLeaseDuration,
+		SessionLeaseRenewInterval:    defaultSessionLeaseRenewInterval,
+		SessionAttachTokenTTL:        defaultSessionAttachTokenTTL,
+		GameplayEventPollInterval:    defaultGameplayEventPollInterval,
+		GameplayEventClaimLease:      defaultGameplayEventClaimLease,
+		GameplayEventRetryDelay:      defaultGameplayEventRetryDelay,
+		GameplayEventRetention:       defaultGameplayEventRetention,
+		GameplayEventCleanupInterval: defaultGameplayEventCleanupInterval,
+		GameplayEventBatchSize:       defaultGameplayEventBatchSize,
+		GameplayEventMaxRetries:      defaultGameplayEventMaxRetries,
 	}
 }
 
@@ -93,6 +114,27 @@ func normalizeServerConfig(config ServerConfig) ServerConfig {
 	}
 	if config.SessionAttachTokenTTL <= 0 {
 		config.SessionAttachTokenTTL = defaults.SessionAttachTokenTTL
+	}
+	if config.GameplayEventPollInterval <= 0 {
+		config.GameplayEventPollInterval = defaults.GameplayEventPollInterval
+	}
+	if config.GameplayEventClaimLease <= 0 {
+		config.GameplayEventClaimLease = defaults.GameplayEventClaimLease
+	}
+	if config.GameplayEventRetryDelay <= 0 {
+		config.GameplayEventRetryDelay = defaults.GameplayEventRetryDelay
+	}
+	if config.GameplayEventRetention <= 0 {
+		config.GameplayEventRetention = defaults.GameplayEventRetention
+	}
+	if config.GameplayEventCleanupInterval <= 0 {
+		config.GameplayEventCleanupInterval = defaults.GameplayEventCleanupInterval
+	}
+	if config.GameplayEventBatchSize <= 0 {
+		config.GameplayEventBatchSize = defaults.GameplayEventBatchSize
+	}
+	if config.GameplayEventMaxRetries <= 0 {
+		config.GameplayEventMaxRetries = defaults.GameplayEventMaxRetries
 	}
 	config.ServerInstanceID = strings.TrimSpace(config.ServerInstanceID)
 	config.AllowedOrigins = normalizeAllowedOrigins(config.AllowedOrigins)

@@ -1,6 +1,9 @@
 package app
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type AccountState string
 
@@ -45,6 +48,31 @@ type GameplayCommandRecord struct {
 	CommandType      string
 	Status           GameplayCommandRecordStatus
 	OutboundMessages []map[string]any
+}
+
+type GameplayEvent struct {
+	ID                     int64
+	IdempotencyKey         string
+	Type                   string
+	Payload                json.RawMessage
+	TargetServerInstanceID string
+	TargetRegionID         string
+	TargetSessionID        string
+	TargetCharacterID      string
+	CreatedAt              time.Time
+	AvailableAt            time.Time
+	ClaimedAt              time.Time
+	ClaimOwnerID           string
+	ClaimDeadlineAt        time.Time
+	DeliveredAt            time.Time
+	DeadLetteredAt         time.Time
+	RetryCount             int
+	LastError              string
+}
+
+type GameplayEventFailure struct {
+	RetryCount   int
+	DeadLettered bool
 }
 
 type Character struct {

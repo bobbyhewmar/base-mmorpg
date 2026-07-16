@@ -457,6 +457,96 @@ CREATE TABLE IF NOT EXISTS gameplay_command_records (
 
 CREATE INDEX IF NOT EXISTS idx_gameplay_command_records_session_id ON gameplay_command_records(session_id);
 
+CREATE TABLE IF NOT EXISTS gameplay_event_outbox (
+  event_id BIGSERIAL PRIMARY KEY,
+  idempotency_key TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  payload_json JSONB NOT NULL,
+  target_server_instance_id TEXT NOT NULL,
+  target_region_id TEXT NULL,
+  target_session_id TEXT NULL,
+  target_character_id TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  claimed_at TIMESTAMPTZ NULL,
+  claim_owner_id TEXT NULL,
+  claim_deadline_at TIMESTAMPTZ NULL,
+  delivered_at TIMESTAMPTZ NULL,
+  dead_lettered_at TIMESTAMPTZ NULL,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NULL,
+  CONSTRAINT chk_gameplay_event_outbox_retry_count CHECK (retry_count >= 0),
+  CONSTRAINT chk_gameplay_event_outbox_identity CHECK (
+    BTRIM(idempotency_key) <> ''
+    AND BTRIM(event_type) <> ''
+    AND BTRIM(target_server_instance_id) <> ''
+  ),
+  CONSTRAINT chk_gameplay_event_outbox_terminal_shape CHECK (
+    delivered_at IS NULL OR dead_lettered_at IS NULL
+  ),
+  CONSTRAINT chk_gameplay_event_outbox_claim_shape CHECK (
+    (claim_owner_id IS NULL AND claim_deadline_at IS NULL)
+    OR (claim_owner_id IS NOT NULL AND claim_deadline_at IS NOT NULL)
+  )
+);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'gameplay_event_outbox'
+      AND constraint_name = 'chk_gameplay_event_outbox_retry_count'
+  ) THEN
+    ALTER TABLE gameplay_event_outbox
+      ADD CONSTRAINT chk_gameplay_event_outbox_retry_count CHECK (retry_count >= 0);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'gameplay_event_outbox'
+      AND constraint_name = 'chk_gameplay_event_outbox_identity'
+  ) THEN
+    ALTER TABLE gameplay_event_outbox
+      ADD CONSTRAINT chk_gameplay_event_outbox_identity CHECK (
+        BTRIM(idempotency_key) <> ''
+        AND BTRIM(event_type) <> ''
+        AND BTRIM(target_server_instance_id) <> ''
+      );
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'gameplay_event_outbox'
+      AND constraint_name = 'chk_gameplay_event_outbox_terminal_shape'
+  ) THEN
+    ALTER TABLE gameplay_event_outbox
+      ADD CONSTRAINT chk_gameplay_event_outbox_terminal_shape CHECK (
+        delivered_at IS NULL OR dead_lettered_at IS NULL
+      );
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'gameplay_event_outbox'
+      AND constraint_name = 'chk_gameplay_event_outbox_claim_shape'
+  ) THEN
+    ALTER TABLE gameplay_event_outbox
+      ADD CONSTRAINT chk_gameplay_event_outbox_claim_shape CHECK (
+        (claim_owner_id IS NULL AND claim_deadline_at IS NULL)
+        OR (claim_owner_id IS NOT NULL AND claim_deadline_at IS NOT NULL)
+      );
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gameplay_event_outbox_idempotency_key
+  ON gameplay_event_outbox(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_gameplay_event_outbox_claim
+  ON gameplay_event_outbox(target_server_instance_id, available_at, event_id)
+  WHERE delivered_at IS NULL AND dead_lettered_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_gameplay_event_outbox_delivered_at
+  ON gameplay_event_outbox(delivered_at)
+  WHERE delivered_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_gameplay_event_outbox_target_character
+  ON gameplay_event_outbox(target_character_id, event_id)
+  WHERE target_character_id IS NOT NULL;
+
 INSERT INTO schema_bootstrap (bootstrap_key)
 VALUES ('baseline_v1')
 ON CONFLICT (bootstrap_key) DO UPDATE

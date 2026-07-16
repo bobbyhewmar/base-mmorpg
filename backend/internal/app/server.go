@@ -21,21 +21,25 @@ import (
 )
 
 type Server struct {
-	addr          string
-	publicWSURL   string
-	mux           *http.ServeMux
-	attachedMu    sync.Mutex
-	partyMu       sync.Mutex
-	clanMu        sync.Mutex
-	pvpMu         sync.Mutex
-	store         *Store
-	config        ServerConfig
-	corsOrigins   map[string]struct{}
-	authLimiter   *fixedWindowRateLimiter
-	attachLimiter *fixedWindowRateLimiter
-	attached      map[string]*attachedSession
-	pendingTrades map[string]*playerTradeOffer
-	observer      *observer
+	addr                  string
+	publicWSURL           string
+	mux                   *http.ServeMux
+	attachedMu            sync.Mutex
+	partyMu               sync.Mutex
+	clanMu                sync.Mutex
+	pvpMu                 sync.Mutex
+	store                 *Store
+	config                ServerConfig
+	corsOrigins           map[string]struct{}
+	authLimiter           *fixedWindowRateLimiter
+	attachLimiter         *fixedWindowRateLimiter
+	attached              map[string]*attachedSession
+	pendingTrades         map[string]*playerTradeOffer
+	observer              *observer
+	gameplayEventMu       sync.Mutex
+	gameplayEventSeen     map[int64]struct{}
+	gameplayEventOrder    []int64
+	gameplayEventWorkerID string
 }
 
 type attachedSession struct {
@@ -137,23 +141,28 @@ func NewServerWithConfig(addr string, publicWSURL string, store *Store, config S
 		corsOrigins[origin] = struct{}{}
 	}
 	s := &Server{
-		addr:          addr,
-		publicWSURL:   publicWSURL,
-		mux:           http.NewServeMux(),
-		store:         store,
-		config:        config,
-		corsOrigins:   corsOrigins,
-		authLimiter:   newFixedWindowRateLimiter(config.AuthRateLimit),
-		attachLimiter: newFixedWindowRateLimiter(config.AttachRateLimit),
-		attached:      map[string]*attachedSession{},
-		pendingTrades: map[string]*playerTradeOffer{},
-		observer:      newObserver(),
+		addr:                  addr,
+		publicWSURL:           publicWSURL,
+		mux:                   http.NewServeMux(),
+		store:                 store,
+		config:                config,
+		corsOrigins:           corsOrigins,
+		authLimiter:           newFixedWindowRateLimiter(config.AuthRateLimit),
+		attachLimiter:         newFixedWindowRateLimiter(config.AttachRateLimit),
+		attached:              map[string]*attachedSession{},
+		pendingTrades:         map[string]*playerTradeOffer{},
+		observer:              newObserver(),
+		gameplayEventSeen:     map[int64]struct{}{},
+		gameplayEventWorkerID: config.ServerInstanceID + "/" + randomID("outbox-worker"),
 	}
 	s.routes()
 	return s
 }
 
 func (s *Server) Start() error {
+	dispatcherContext, cancelDispatcher := context.WithCancel(context.Background())
+	defer cancelDispatcher()
+	s.startGameplayEventDispatcher(dispatcherContext)
 	log.Printf("backend stub listening on %s", s.addr)
 	s.observer.log("info", "server_start", map[string]any{
 		"addr":               s.addr,

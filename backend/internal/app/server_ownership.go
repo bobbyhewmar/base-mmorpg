@@ -108,37 +108,45 @@ func (s *Server) resolveCharacterPresence(ctx context.Context, characterID strin
 	return characterPresenceLocal, local, ownership, nil
 }
 
-func (s *Server) processTargetCommand(ctx context.Context, runtime *attachedRuntime, command commandEnvelope) []map[string]any {
+func (s *Server) processTargetCommand(ctx context.Context, session *Session, runtime *attachedRuntime, command commandEnvelope) ([]map[string]any, *GameplayEvent) {
 	if runtime == nil {
-		return []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "internal.unexpected_error", "Target pipeline is unavailable.")}
+		return []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "internal.unexpected_error", "Target pipeline is unavailable.")}, nil
 	}
 	if command.Type != "select_target" {
-		return runtime.processCommand(command)
+		return runtime.processCommand(command), nil
 	}
 	var payload struct {
 		TargetID string `json:"target_id"`
 	}
 	if err := json.Unmarshal(command.Payload, &payload); err != nil || payload.TargetID == "" {
-		return runtime.processCommand(command)
+		return runtime.processCommand(command), nil
 	}
 	runtime.mu.Lock()
 	entity, known := runtime.knownEntities[payload.TargetID]
 	runtime.mu.Unlock()
 	if !known || entity.EntityType != "player" {
-		return runtime.processCommand(command)
+		return runtime.processCommand(command), nil
 	}
 
-	scope, _, _, err := s.resolveCharacterPresence(ctx, payload.TargetID)
+	scope, _, ownership, err := s.resolveCharacterPresence(ctx, payload.TargetID)
 	if err != nil {
-		return runtime.rejectPlayerTargetForPresence(command, "system.persistence_failed", "Unable to resolve authoritative player presence.")
+		return runtime.rejectPlayerTargetForPresence(command, "system.persistence_failed", "Unable to resolve authoritative player presence."), nil
 	}
 	switch scope {
 	case characterPresenceRemote:
-		return runtime.rejectPlayerTargetForPresence(command, "presence.target_remote", "Referenced player is online on another server instance and is not locally interactable.")
+		outbound := runtime.rejectPlayerTargetForPresence(command, "presence.target_remote", "Referenced player is online on another server instance and is not locally interactable.")
+		if extractRejectReason(outbound) != "presence.target_remote" {
+			return outbound, nil
+		}
+		event, buildErr := buildRemoteTargetNoticeEvent(session, runtime.characterID, payload.TargetID, s.config.ServerInstanceID, ownership, command)
+		if buildErr != nil {
+			return outbound, nil
+		}
+		return outbound, event
 	case characterPresenceOffline, characterPresenceUnavailable:
-		return runtime.rejectPlayerTargetForPresence(command, "presence.target_offline", "Referenced player is no longer online in the authoritative presence registry.")
+		return runtime.rejectPlayerTargetForPresence(command, "presence.target_offline", "Referenced player is no longer online in the authoritative presence registry."), nil
 	default:
-		return runtime.processCommand(command)
+		return runtime.processCommand(command), nil
 	}
 }
 

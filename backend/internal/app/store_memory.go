@@ -10,41 +10,45 @@ import (
 )
 
 type memoryStoreBackend struct {
-	mu                 sync.Mutex
-	accounts           map[string]*Account
-	accountByLogin     map[string]string
-	credentials        map[string]*CredentialRecord
-	accountSessions    map[string]*AccountSession
-	commandRecords     map[string]*GameplayCommandRecord
-	characters         map[string]*Character
-	characterCooldowns map[string][]CharacterSkillCooldown
-	characterHotbars   map[string]CharacterHotbarState
-	characterPets      map[string][]CharacterPet
-	characterQuests    map[string][]CharacterQuestState
-	parties            map[string]*Party
-	partyMembers       map[string][]PartyMember
-	partyByCharacter   map[string]string
-	partyInvites       map[string]*PartyInvite
-	clans              map[string]*Clan
-	clanMembers        map[string][]ClanMember
-	clanByCharacter    map[string]string
-	clanInvites        map[string]*ClanInvite
-	clanByName         map[string]string
-	chatMessages       map[string][]ChatMessageRecord
-	characterItems     map[string][]CharacterItem
-	storageTransfers   map[string][]StorageTransferRecord
-	actionLogs         map[string][]ActionLogRecord
-	pvpCombatEvents    []PvPCombatEvent
-	claimedLoot        map[string]struct{}
-	nameIndex          map[string]string
-	sessions           map[string]*Session
-	sessionOwnerships  map[string]*SessionOwnership
+	mu                  sync.Mutex
+	accounts            map[string]*Account
+	accountByLogin      map[string]string
+	credentials         map[string]*CredentialRecord
+	accountSessions     map[string]*AccountSession
+	commandRecords      map[string]*GameplayCommandRecord
+	gameplayEvents      map[int64]*GameplayEvent
+	gameplayEventByKey  map[string]int64
+	nextGameplayEventID int64
+	characters          map[string]*Character
+	characterCooldowns  map[string][]CharacterSkillCooldown
+	characterHotbars    map[string]CharacterHotbarState
+	characterPets       map[string][]CharacterPet
+	characterQuests     map[string][]CharacterQuestState
+	parties             map[string]*Party
+	partyMembers        map[string][]PartyMember
+	partyByCharacter    map[string]string
+	partyInvites        map[string]*PartyInvite
+	clans               map[string]*Clan
+	clanMembers         map[string][]ClanMember
+	clanByCharacter     map[string]string
+	clanInvites         map[string]*ClanInvite
+	clanByName          map[string]string
+	chatMessages        map[string][]ChatMessageRecord
+	characterItems      map[string][]CharacterItem
+	storageTransfers    map[string][]StorageTransferRecord
+	actionLogs          map[string][]ActionLogRecord
+	pvpCombatEvents     []PvPCombatEvent
+	claimedLoot         map[string]struct{}
+	nameIndex           map[string]string
+	sessions            map[string]*Session
+	sessionOwnerships   map[string]*SessionOwnership
 }
 
 type memoryAccountRepo struct{ backend *memoryStoreBackend }
 type memoryCredentialRepo struct{ backend *memoryStoreBackend }
 type memoryAccountSessionRepo struct{ backend *memoryStoreBackend }
 type memoryGameplayCommandRecordRepo struct{ backend *memoryStoreBackend }
+type memoryGameplayEventRepo struct{ backend *memoryStoreBackend }
 type memoryCharacterRepo struct{ backend *memoryStoreBackend }
 type memoryCharacterCooldownRepo struct{ backend *memoryStoreBackend }
 type memoryCharacterHotbarRepo struct{ backend *memoryStoreBackend }
@@ -60,12 +64,18 @@ type memoryPvPCombatEventRepo struct{ backend *memoryStoreBackend }
 type memoryGameplaySessionRepo struct{ backend *memoryStoreBackend }
 
 func newMemoryStore() *Store {
-	backend := &memoryStoreBackend{
+	return newMemoryStoreWithBackend(newMemoryStoreBackend())
+}
+
+func newMemoryStoreBackend() *memoryStoreBackend {
+	return &memoryStoreBackend{
 		accounts:           map[string]*Account{},
 		accountByLogin:     map[string]string{},
 		credentials:        map[string]*CredentialRecord{},
 		accountSessions:    map[string]*AccountSession{},
 		commandRecords:     map[string]*GameplayCommandRecord{},
+		gameplayEvents:     map[int64]*GameplayEvent{},
+		gameplayEventByKey: map[string]int64{},
 		characters:         map[string]*Character{},
 		characterCooldowns: map[string][]CharacterSkillCooldown{},
 		characterHotbars:   map[string]CharacterHotbarState{},
@@ -89,12 +99,19 @@ func newMemoryStore() *Store {
 		sessions:           map[string]*Session{},
 		sessionOwnerships:  map[string]*SessionOwnership{},
 	}
+}
+
+func newMemoryStoreWithBackend(backend *memoryStoreBackend) *Store {
+	if backend == nil {
+		backend = newMemoryStoreBackend()
+	}
 	return &Store{
 		Mode:               "memory",
 		Accounts:           memoryAccountRepo{backend: backend},
 		Credentials:        memoryCredentialRepo{backend: backend},
 		AccountSessions:    memoryAccountSessionRepo{backend: backend},
 		GameplayCommands:   memoryGameplayCommandRecordRepo{backend: backend},
+		GameplayEvents:     memoryGameplayEventRepo{backend: backend},
 		Characters:         memoryCharacterRepo{backend: backend},
 		CharacterCooldowns: memoryCharacterCooldownRepo{backend: backend},
 		CharacterHotbars:   memoryCharacterHotbarRepo{backend: backend},
@@ -111,6 +128,7 @@ func newMemoryStore() *Store {
 		registration:       backend,
 		loginLookup:        backend,
 		characterSeed:      backend,
+		commandEventWriter: backend,
 	}
 }
 

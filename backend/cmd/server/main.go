@@ -49,6 +49,13 @@ func main() {
 		log.Fatal("L2BG_SESSION_LEASE_RENEW_INTERVAL must be shorter than L2BG_SESSION_LEASE_DURATION")
 	}
 	sessionAttachTokenTTL := durationEnv("L2BG_SESSION_ATTACH_TOKEN_TTL", 5*time.Minute)
+	gameplayEventPollInterval := durationEnv("L2BG_GAMEPLAY_EVENT_POLL_INTERVAL", 250*time.Millisecond)
+	gameplayEventClaimLease := durationEnv("L2BG_GAMEPLAY_EVENT_CLAIM_LEASE", 5*time.Second)
+	gameplayEventRetryDelay := durationEnv("L2BG_GAMEPLAY_EVENT_RETRY_DELAY", 500*time.Millisecond)
+	gameplayEventRetention := durationEnv("L2BG_GAMEPLAY_EVENT_RETENTION", 24*time.Hour)
+	gameplayEventCleanupInterval := durationEnv("L2BG_GAMEPLAY_EVENT_CLEANUP_INTERVAL", 10*time.Minute)
+	gameplayEventBatchSize := positiveIntEnv("L2BG_GAMEPLAY_EVENT_BATCH_SIZE", 32)
+	gameplayEventMaxRetries := positiveIntEnv("L2BG_GAMEPLAY_EVENT_MAX_RETRIES", 5)
 	store, err := app.NewStore(databaseURL)
 	if err != nil {
 		log.Fatal(err)
@@ -60,20 +67,39 @@ func main() {
 	}
 
 	server := app.NewServerWithConfig(addr, publicWSURL, store, app.ServerConfig{
-		AllowedOrigins:            allowedOrigins,
-		AccessTokenTTL:            accessTokenTTL,
-		AuthRateLimit:             authRateLimit,
-		AttachRateLimit:           attachRateLimit,
-		InternalAuditEnabled:      internalAuditEnabled,
-		InternalAuditToken:        internalAuditToken,
-		ServerInstanceID:          serverInstanceID,
-		SessionLeaseDuration:      sessionLeaseDuration,
-		SessionLeaseRenewInterval: sessionLeaseRenewInterval,
-		SessionAttachTokenTTL:     sessionAttachTokenTTL,
+		AllowedOrigins:               allowedOrigins,
+		AccessTokenTTL:               accessTokenTTL,
+		AuthRateLimit:                authRateLimit,
+		AttachRateLimit:              attachRateLimit,
+		InternalAuditEnabled:         internalAuditEnabled,
+		InternalAuditToken:           internalAuditToken,
+		ServerInstanceID:             serverInstanceID,
+		SessionLeaseDuration:         sessionLeaseDuration,
+		SessionLeaseRenewInterval:    sessionLeaseRenewInterval,
+		SessionAttachTokenTTL:        sessionAttachTokenTTL,
+		GameplayEventPollInterval:    gameplayEventPollInterval,
+		GameplayEventClaimLease:      gameplayEventClaimLease,
+		GameplayEventRetryDelay:      gameplayEventRetryDelay,
+		GameplayEventRetention:       gameplayEventRetention,
+		GameplayEventCleanupInterval: gameplayEventCleanupInterval,
+		GameplayEventBatchSize:       gameplayEventBatchSize,
+		GameplayEventMaxRetries:      gameplayEventMaxRetries,
 	})
 	if err := server.Start(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func positiveIntEnv(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		log.Fatalf("invalid %s: %q", key, raw)
+	}
+	return value
 }
 
 func durationEnv(key string, fallback time.Duration) time.Duration {
