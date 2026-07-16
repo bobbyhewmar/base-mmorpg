@@ -109,11 +109,11 @@ Region chat requires the actor's authoritative non-empty region. The server list
 
 Party and clan commands still resolve invite identity from the actor's authoritative current target. If a previously local known target moves to a remote owner before the invite command, the backend may create the durable invite and exact-owner notice after revalidating social eligibility. Accept, decline, leave, kick, and dissolve notify every currently online affected remote member with a distinct stable purpose/recipient key.
 
-On consumption, ownership and exact target session are revalidated. Region-chat delivery additionally requires the event target region, current ownership region, and attached runtime region to match. Party/clan delivery loads current durable social state and emits an authoritative delta before the lifecycle notice. The payload cannot supply region scope, membership, roster, invite, or delivery success to the read-model.
+On consumption, ownership and the exact target instance, session, character, and fencing token captured at production are revalidated. Region-chat delivery additionally requires the event target region, current ownership region, and attached runtime region to match. Party/clan delivery loads current durable social state and emits an authoritative delta before the lifecycle notice. The payload cannot supply region scope, membership, roster, invite, or delivery success to the read-model.
 
 ### Ownership drift policy
 
-Events do not reroute in this slice. If the recipient is offline, no longer owned by the destination instance, or attached under a different target session, delivery fails with stable internal code `social.recipient_offline` or `social.recipient_stale_owner`. Its unconsumed receipt reservation is released, the row follows normal retry/backoff, and it eventually dead-letters without a visual success. A previously consumed receipt wins over later ownership drift and suppresses redelivery. This deliberately avoids guessing a new destination or duplicating a message across consecutive sessions.
+Events do not reroute in this slice. If the recipient is offline, no longer owned by the destination instance, attached under a different target session, or attached under the same durable session id with a newer fencing token, delivery fails with stable internal code `social.recipient_offline` or `social.recipient_stale_owner`. Its unconsumed receipt reservation is released, the row follows normal retry/backoff, and it eventually dead-letters without a visual success. A previously consumed receipt wins over later ownership drift and suppresses redelivery. This deliberately avoids guessing a new destination or duplicating a message across consecutive ownership epochs.
 
 ## Retry, Dead Letter, And Retention
 
@@ -155,6 +155,8 @@ Logs include event id, event type, destination instance, retry count, and a boun
 
 `l2bg_region_projection_events_total{result}` and structured `region_player_projection` logs cover production, consumption, duplicate/stale suppression, expiry, despawn, failure, and dead-letter without logging payload JSON, display name, position, or visual target.
 
+Regional projection publication also exposes bounded queue/coalescing pressure counters and gauges. Delivery exposes event-age sum, count, and maximum gauges so a two-instance run can report average and maximum outbox delay without logging payloads. The canonical operational scenario is `docs/operations/multi-backend-fanout-validation.md`.
+
 ## Memory Adapter
 
 The memory adapter shares the same semantics for deterministic tests:
@@ -194,7 +196,7 @@ Two `Store` wrappers may share one memory backend to simulate separate server in
 - conflicting command replay remains rejected
 - a remote notice never changes the actor's target or enables remote gameplay
 - a remote social notice never becomes party/clan state authority in the browser
-- exact-session ownership drift retries and dead-letters without local fallback or implicit reroute
+- exact-session-and-fence ownership drift retries and dead-letters without local fallback or implicit reroute
 - failed delivery cannot fail the gameplay server loop
 - retention removes only old delivered rows
 - PostgreSQL remains durable truth for outbox state; runtime memory is only the live dispatcher projection

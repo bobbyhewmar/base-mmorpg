@@ -54,6 +54,7 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Identical replay returns the stored outcome without duplicating side effects.
 - [x] Conflicting replay is rejected explicitly.
 - [x] Dedup survives restart in PostgreSQL-backed mode.
+- [x] Reconnect of a reused durable session receives backend-derived `next_command_seq` and does not restart the sequence namespace locally.
 
 ### Runtime Observability
 
@@ -96,7 +97,7 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] PostgreSQL outbox provides monotonic ids, immutable idempotency keys, exact-instance claim leases, retry/dead-letter state, delivered-only retention, remote-target notice, remote whisper/region chat, party/clan lifecycle notices, and exact-recipient regional player projections.
 - [x] Remote-target notice production is atomic with command finalization; identical replay cannot duplicate the event and conflicting replay remains rejected.
 - [x] Remote whisper history, command outcome, and delivery intent commit atomically; identical replay does not duplicate history, event, or visual delivery.
-- [x] Ownership drift uses explicit exact-session retry/dead-letter with `social.recipient_offline` or `social.recipient_stale_owner`; it does not reroute or fall back locally.
+- [x] Ownership drift uses explicit exact-session-and-fence retry/dead-letter with `social.recipient_offline` or `social.recipient_stale_owner`; reusing the same session id under a newer fence does not cross takeover, reroute, or fall back locally.
 - [x] Two independent PostgreSQL stores cannot concurrently claim the same live delivery row.
 - [x] Durable recipient receipts serialize concurrent consumers and suppress a consumed event after logical consumer restart.
 - [x] Command-driven party/clan mutation, final command outcome, and remote outbox events commit or roll back as one PostgreSQL transaction; local fanout waits for commit.
@@ -104,6 +105,9 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Same-region remote-owned players receive exact-recipient `presence.region_player_projection.v1` upsert/despawn events with durable receipts, source ownership revalidation, and fence/version ordering.
 - [x] Regional projection redelivery and older events cannot duplicate, overwrite, or resurrect a newer entity; TTL removes stale visuals while retaining an ordering tombstone.
 - [x] The browser reuses bounded other-player interpolation and does not set target or command success from projection appearance; backend selection/PvP remain `presence.target_remote`.
+- [x] A separate Docker Compose `multi-backend` profile validates two real backend processes, distinct ownership, bidirectional projection and region chat without changing the default development services.
+- [x] The multi-backend scenario stops/restarts one backend, verifies retry/dead-letter, receipt behavior, TTL/despawn, tombstone protection, stale-owner suppression, reconnect fencing, and recovery.
+- [x] Projection publication has a bounded queue plus bounded latest-per-source coalescing, explicit pressure/drop telemetry, and delivery-delay sum/count/max metrics exercised by a reproducible movement burst.
 - [ ] Party-chat broadcast, remote combat, remote entity authority, and mob/NPC/loot/pet replication remain later slices.
 
 ### Terrain and Pathfinding Reality

@@ -57,6 +57,8 @@ No gameplay rule is applied during pre-validation.
 
 Ownership validation runs before dedup lookup or reservation. A stale instance cannot replay an earlier success after losing the fence and cannot reserve a new command record.
 
+On attach/reconnect, the backend derives `next_command_seq = max(durable command_seq for session) + 1` and includes it in the authoritative `region_context`. The browser initializes its next envelope sequence from that value. This preserves the durable replay namespace when the same gameplay session is reattached; resetting locally to one would be a conflicting replay, not a valid reconnect strategy.
+
 ### 3. `ack` or Early `reject`
 
 If pre-validation succeeds, the server sends `ack`.

@@ -18,6 +18,7 @@ The studied reference reinforced four generic responsibilities: region entry int
 - `session_id`
 - `character_id`
 - region
+- recipient ownership `fencing_token`
 
 The payload contains only projection/routing data:
 
@@ -49,13 +50,13 @@ The owner captures a projection snapshot when the player:
 - disconnects/unregisters
 - remains stationary long enough for the two-second heartbeat
 
-Publication is placed on a bounded in-process queue and persisted by the existing dispatcher, so PostgreSQL writes do not block command or movement application. Queue pressure is observable; a later heartbeat repairs a missed upsert and TTL repairs a missed despawn. Default heartbeat is two seconds and default projection TTL is six seconds.
+Publication is placed on a bounded in-process queue and persisted by a dedicated publisher, so PostgreSQL writes do not block command or movement application or the delivery dispatcher. When the primary queue is full, a bounded latest-per-source buffer coalesces superseded not-yet-persisted snapshots. When both bounds are exhausted, the new request is dropped with explicit pressure telemetry. A later heartbeat repairs a missed upsert and TTL repairs a missed despawn. Default heartbeat is two seconds and default projection TTL is six seconds.
 
 For a region transition, the producer advances the same source version sequence, emits a despawn for the previous region, then an upsert for the new authoritative region. The current world has no player-facing region-transfer command yet, but ownership renewal and the projection producer share this transition contract.
 
 ## Consumption and Ordering
 
-The destination instance claims only its own outbox rows and reserves the existing durable receipt before delivery. Consumption revalidates the exact recipient ownership and runtime region. Ownership drift remains `social.recipient_stale_owner`, with the existing retry/dead-letter policy and no automatic reroute.
+The destination instance claims only its own outbox rows and reserves the existing durable receipt before delivery. Consumption revalidates the exact recipient instance, session, character, captured fencing token, and runtime region. A reused durable session id under a newer fence is still ownership drift, not the original recipient. Drift remains `social.recipient_stale_owner`, with the existing retry/dead-letter policy and no automatic reroute.
 
 An upsert also revalidates the source ownership tuple and region. If that owner expired or changed before delivery, the event is consumed as stale projection data and cannot make the player reappear. A despawn may arrive after source release; the destination accepts it subject to fence/version ordering.
 
@@ -98,13 +99,22 @@ The browser consumes only server `entity_appear`, delta, and `entity_disappear`.
 - `failed`
 - `dead_letter`
 
+The publisher and delivery path additionally expose:
+
+- `l2bg_region_projection_queue_events_total{result}` for enqueue, dequeue, coalescing, and bounded drop
+- queue depth, configured capacity, and coalesced-buffer depth gauges
+- delivery delay sum, count, and maximum gauges derived from durable event creation time
+
 Logs contain routing ids, fence, version, action, lifecycle result, and bounded reason code. They never include payload JSON, position, display name, target, auth data, or chat content.
+
+The reproducible two-instance fault/load procedure and measured local baseline are documented in `docs/operations/multi-backend-fanout-validation.md`.
 
 ## Invariants
 
 - only a fenced owner publishes a player projection
 - only exact same-region remote ownerships receive a row
 - exact-recipient receipts make transport redelivery safe across consumer restart
+- exact-recipient validation includes the captured recipient fence; session-id reuse cannot cross takeover
 - old or duplicate versions never duplicate an entity or overwrite newer visual state
 - despawn and TTL remove stale visuals and preserve an ordering tombstone
 - projected presence never becomes command, movement, PvP, trade, pickup, or AI authority

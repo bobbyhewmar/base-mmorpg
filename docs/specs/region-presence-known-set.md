@@ -205,6 +205,7 @@ Example:
   "kind": "region_context",
   "region_id": "stonecross_plaza",
   "region_revision": 21,
+  "next_command_seq": 37,
   "geodata_version": "clean_plain_1024_geo_v1",
   "self_position": {
     "x": -8,
@@ -232,6 +233,7 @@ Example:
 | `kind` | Must be `region_context` |
 | `region_id` | Current authoritative region |
 | `region_revision` | Monotonic region revision for the session view |
+| `next_command_seq` | Next backend-derived durable command sequence for this attached session |
 | `geodata_version` | Authoritative terrain/geodata version used for movement reconciliation |
 | `self_position` | Authoritative self coordinate in the region |
 | `known_entities` | Initial entity set relevant to the session |

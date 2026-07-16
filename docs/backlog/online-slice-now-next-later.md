@@ -53,8 +53,10 @@ The repository already contains these online capabilities:
 - minimal cross-instance presence classification that distinguishes ready local, remote-online, and offline without persisting `known-set`
 - PostgreSQL gameplay outbox with monotonic event ids, exact-instance claiming, immutable idempotency keys, retry/dead-letter state, delivered-only retention, and structured lifecycle observability
 - replay-safe remote-target notice from one instance to the current target owner while the originating command still rejects with `presence.target_remote`
-- replay-safe remote whisper plus party/clan lifecycle notices, with exact-session ownership validation, durable delivery/consume receipts, bounded server/client duplicate suppression, authoritative social-state rehydration, and explicit stale-owner retry/dead-letter
-- exact-recipient same-region player visual projections through the PostgreSQL outbox, with source/recipient ownership revalidation, monotonic fence/version ordering, heartbeat snapshots, despawn, TTL, and existing browser interpolation
+- replay-safe remote whisper plus party/clan lifecycle notices, with exact-session-and-fence ownership validation, durable delivery/consume receipts, bounded server/client duplicate suppression, authoritative social-state rehydration, and explicit stale-owner retry/dead-letter
+- exact-recipient same-region player visual projections through the PostgreSQL outbox, with source/recipient ownership revalidation, monotonic fence/version ordering, heartbeat snapshots, bounded/coalescing publication, despawn, TTL, delivery-pressure metrics, and existing browser interpolation
+- a separate two-backend Docker Compose profile and Playwright fault/load scenario covering bidirectional projection/region chat, stop/restart, retries, receipts, stale owner, tombstone non-resurrection, TTL, recovery, and measured outbox delay/volume
+- backend-derived `next_command_seq` hydration preserves the durable replay namespace when reconnect reuses an existing gameplay session
 - command-driven party/clan mutation, command outcome, and remote outbox intents committed atomically, with local fanout deferred until commit
 - class-specific learned skills and active or passive categorization
 - authoritative skill book projection and persistent hotbar snapshot in `world/enter` and runtime deltas
@@ -95,7 +97,7 @@ Remaining work:
 
 The current execution priority should follow the master prompt and the real repository state:
 
-1. validate receipt-backed social and regional player-projection delivery under sustained multi-instance load and operational fault injection, then deepen interest management without remote combat or new infrastructure
+1. bound and safely supersede obsolete undelivered regional projection snapshots exposed by the measured fault backlog, then deepen interest management without remote combat or new infrastructure
 2. keep the shipped PvP/PK transaction and attribution audit under multi-actor load, then deepen karma recovery, account/device correlation, and alerting without automatic punishment
 3. instances, siege, olympiad, and broader competitive systems only after ownership, cross-instance presence delivery, PvP/PK, and clan base remain stable
 
@@ -346,13 +348,17 @@ Status:
 - durable recipient receipts now survive logical consumer restart, serialize competing consumers, and keep stale-owner/dead-letter paths free of visual success; party/clan command mutations now share the command/outbox transaction
 - region chat now resolves active same-region ownership server-side, commits sanitized history + command outcome + one exact-owner event per remote recipient atomically, delivers local recipients only after commit, excludes other regions, and revalidates ownership/runtime region without automatic reroute
 - regional player projection now publishes exact-recipient `upsert`/`despawn` events on attach, movement/state change, heartbeat, region change, and unregister; consumers keep projection-only known-set entities ordered by fence/version and expire stale visuals by TTL
+- a dedicated bounded projection publisher now coalesces latest per source under pressure and exposes queue depth/capacity/coalesced/drop plus delivery-delay sum/count/max metrics
+- the real two-backend Compose profile and Playwright scenario validate bidirectional projection/region chat, separate ownership, stop/restart, retry/dead-letter, receipts, TTL/despawn, stale tombstone rejection, reconnect fencing, and recovery under a movement burst
+- remote social/projection delivery captures the recipient fence as well as session/instance/character, so the same durable session id under a newer fence cannot receive an event from the previous ownership epoch
+- reconnect now hydrates backend-derived `next_command_seq`, preserving durable command dedup across the reused session instead of creating a false conflicting replay
 - AoE/chain PvP, auto-approach/repeat against players, pet/summon or weighted attribution, anti-feed enforcement/correlation/alerting, richer named-zone/content volumes, karma recovery, economic penalties, wars, siege, olympiad, events, ranking, and rewards remain later slices
 
 ## Later
 
 After the online foundation becomes secure, replay-safe, and observable, the roadmap can continue into:
 
-- hardening/fault injection for shipped cross-instance social plus player-projection delivery, then finer interest management and party-chat broadcast, with infrastructure expansion only if measured load requires it
+- safe supersession/compaction for obsolete undelivered player-projection rows exposed by fault backlog, then finer interest management and party-chat broadcast, with infrastructure expansion only if measured load requires it
 - protocol-level client consume acknowledgements only if the residual socket-accept/receipt-commit ambiguity becomes operationally unacceptable; reroute remains a separate explicit policy decision
 - broader vendor and warehouse variants
 - PvP/PK expansion beyond the hardened single-target slice: karma recovery, economic/death penalties, alerting, richer named-zone/content policy, and weighted/non-player attribution
