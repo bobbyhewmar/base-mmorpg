@@ -171,12 +171,17 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Successful hostile damage starts or refreshes an authoritative 30-second PvP deadline persisted as an absolute timestamp; reconnect/logical restart restore a still-active flag, and server-time expiry clears it durably before snapshot/delta projection.
 - [x] Death-time classification increments durable `pvp_kills` for an exposed or karma-positive victim, or durable `pk_count` plus 100 karma for an unflagged karma-neutral victim.
 - [x] Attacker and victim combat resources, exposure deadlines, PvP/PK consequences, and one detailed combat audit event commit atomically before success is published; lethal commits clear victim cooldown persistence.
+- [x] PostgreSQL serializes each player-combat mutation with deterministic row locks on both combatants; the process-local mutex is no longer the multi-instance correctness boundary.
+- [x] Damage, MP, attacker cooldown, death/classification, flags, counters, karma, lethal cooldown cleanup, attribution, anti-feed signal, and audit are computed from locked durable truth in one transaction.
+- [x] The memory adapter mirrors the persistent mutation semantics in one critical section, including durable cooldown checks, attribution, and repeated-pair detection.
 - [x] Identical replay does not reapply damage, death, PK, karma, MP, or cooldown; conflicting replay rejects explicitly.
+- [x] A 30-second recent-hit ledger produces a primary killer plus distinct assists without crossing the victim's previous death boundary.
+- [x] A second same-killer/same-victim kill inside 10 minutes is persisted as `suspicious` with `repeated_kill_count`, without blocking gameplay or changing rewards.
 - [x] Backend and read-model tests cover player selection without damage, basic attack, skill, invalid/unknown/self target, target out of region, same party, same clan, restricted region, safe zone, out of range, dead target, disconnect, death cleanup, respawn, durable flag hydration/expiry, PK/PvP classification, audit, and replay.
 - [x] Docker Compose browser smoke covers two attached users outside the spawn sanctuary through authoritative player selection, basic attack, active-flag reconnect hydration, single-target skill, flag projection, and victim resource projection.
-- [x] `GET /internal/pvp/events` reuses the disabled-by-default internal audit token, supports pagination/time and actor/victim/action/result filters, and exposes no mutation surface.
+- [x] `GET /internal/pvp/events` reuses the disabled-by-default internal audit token, supports pagination/time plus attacker/victim/involved/killer/suspicious/action/result filters, and exposes no mutation surface.
 - [x] The HUD projects only backend-provided PvP flag, PvP kills, PK count, karma, CP, HP, and dead state.
-- [x] AoE/chain PvP, player auto-approach/repeat, pets/summons, assists, clan/alliance wars, siege, olympiad, events, rankings, rewards, richer named-zone/content volumes, karma decay, and complex penalties remain explicitly deferred.
+- [x] AoE/chain PvP, player auto-approach/repeat, pets/summons, contribution weighting, anti-feed enforcement, clan/alliance wars, siege, olympiad, events, rankings, rewards, richer named-zone/content volumes, karma decay, and complex penalties remain explicitly deferred.
 
 ## Notes
 

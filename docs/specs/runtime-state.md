@@ -79,6 +79,7 @@ The following data is durable and authoritative in PostgreSQL:
 - durable clan name, leader, membership, and pending invites
 - minimum durable chat history and chat-command audit metadata
 - durable player-combat audit events with command correlation
+- durable player-combat killer/assist attribution and repeated-pair investigation signals
 - inventory state
 - equipment slot occupancy
 - durable session records
@@ -86,7 +87,9 @@ The following data is durable and authoritative in PostgreSQL:
 
 The current implementation persists skill cooldown recovery state in `character_skill_cooldowns` keyed by `character_id + skill_id`.
 
-The hardened PvP/PK slice persists `pvp_kills`, `pk_count`, `karma`, and `pvp_flag_until` on `characters`. The flag deadline is absolute: attach/world-enter restore it only when it is still in the future, while server-time expiry clears the durable value before publishing the expiry transition. A player-combat hit commits attacker and victim combat resource state, both flag deadlines, classification counters, and a `pvp_combat_events` row in one storage transaction; lethal commits also clear the victim's durable cooldown rows before the success delta is published.
+The hardened PvP/PK slice persists `pvp_kills`, `pk_count`, `karma`, and `pvp_flag_until` on `characters`. The flag deadline is absolute: attach/world-enter restore it only when it is still in the future, while server-time expiry clears the durable value before publishing the expiry transition. A player-combat hit locks both durable character rows in deterministic order and computes the resource transition from that locked truth. The same transaction commits attacker/victim combat resources, both flag deadlines, classification counters, attacker cooldown, lethal victim cooldown cleanup, attribution/anti-feed fields, and one `pvp_combat_events` row before success is published.
+
+The audit ledger is also the minimum durable recent-attacker source. Kill attribution uses applied hits from the previous 30 seconds but stops at the victim's prior death event. Repeated attacker/victim kills in 10 minutes are marked for investigation without changing gameplay. These investigation fields are not runtime authority and are never authored by the browser.
 
 The current implementation persists the first pet or mount slice in `character_pets` keyed by `pet_instance_id`, with `character_id`, `pet_template_id`, summon state, mount state, and timestamps.
 
@@ -125,6 +128,7 @@ The current implementation persists the first chat slice in `chat_messages`, key
 - recoverable clan roster plus pending invites
 - recoverable minimum chat history for audit and investigation flows
 - recoverable PvP/PK combat audit history for investigation flows
+- recoverable kill attribution and suspicious repeated-pair signals derived inside the combat transaction
 - recoverable cooldown end timestamps
 - recoverable session records
 - replay-safe command records keyed by `session_id + command_seq`

@@ -88,8 +88,8 @@ Remaining work:
 
 The current execution priority should follow the master prompt and the real repository state:
 
-1. harden the shipped first PvP/PK slice under concurrent multi-actor load; its durable exposure, minimum safe-area policy, death cleanup, and investigation audit are now complete
-2. deepen anti-feed, assist/attribution, karma recovery, alerting, and richer named-zone/content policy without pulling in broad war/event systems
+1. keep the shipped PvP/PK transaction and attribution audit under multi-actor load; deterministic PostgreSQL row locking, assist attribution, and repeated-pair signaling are now complete
+2. deepen karma recovery, account/device correlation, alerting, and richer named-zone/content policy without pulling in broad war/event systems or turning the current signal into automatic punishment
 3. instances, siege, olympiad, and broader competitive systems only after PvP/PK and clan base remain stable
 
 ### Fase A - Consolidacao Imediata
@@ -326,18 +326,22 @@ Status:
 - successful hostile hits start or refresh a durable absolute 30-second PvP deadline; reconnect/logical restart preserve it while valid and authoritative expiry clears it without client fallback
 - `stonecross_plaza` and compatibility region `dawn_plaza` now have a server-only spawn sanctuary policy (`x=-12..-4`, `z=-4..4`); unknown regions fail closed, without changing map, renderer, picking, geodata, bounds, spawn, checkpoints, or assets
 - attacker and victim combat resources, exposure deadlines, PvP/PK counters, and detailed `pvp_combat_events` audit commit atomically before success; identical replay cannot reapply side effects or duplicate audit and conflicting replay remains explicit
+- PostgreSQL now locks both combatant rows in deterministic character-id order and computes damage, MP, cooldown, death/classification, flags, counters, karma, attribution, repeated-pair signal, and audit from locked durable truth; the local mutex is only runtime coordination
+- the memory adapter mirrors the same serialized mutation contract, while player combat skips the generic post-command flush that could otherwise overwrite a newer multi-instance state
+- applied hits form a 30-second durable attribution ledger; a lethal event stores the final attacker as killer plus distinct recent assists, stopping at the victim's previous death boundary
+- a repeated killer/victim kill inside 10 minutes stores `suspicious=true` and an inclusive `repeated_kill_count`; it is investigation-only and does not block damage or alter rewards
 - player death clears offensive target, queued/automatic combat, queued loot approach, active movement, flag, and cooldown state; respawn restores a clean authoritative state
-- token-gated `GET /internal/pvp/events` provides read-only actor/victim/action/result/time investigation filters
+- token-gated `GET /internal/pvp/events` provides read-only attacker/victim/involved/killer/suspicious/action/result/time investigation filters
 - frontend read-model and classic HUD project only authoritative flag, counters, karma, resources, and death; a two-session Docker smoke covers basic attack, reconnect with active flag, and single-target skill outside the sanctuary
-- AoE/chain PvP, auto-approach/repeat against players, pet/summon attribution, assists, anti-feed, richer named-zone/content volumes, karma recovery, economic penalties, wars, siege, olympiad, events, ranking, and rewards remain later slices
+- AoE/chain PvP, auto-approach/repeat against players, pet/summon or weighted attribution, anti-feed enforcement/correlation/alerting, richer named-zone/content volumes, karma recovery, economic penalties, wars, siege, olympiad, events, ranking, and rewards remain later slices
 
 ## Later
 
 After the online foundation becomes secure, replay-safe, and observable, the roadmap can continue into:
 
 - broader vendor and warehouse variants
-- PvP/PK expansion beyond the hardened single-target slice: assists/attribution, anti-feed, karma recovery, economic/death penalties, alerting, and richer named-zone/content policy
-- deeper anti-abuse automation, correlation, and alerting on top of the current audit queries
+- PvP/PK expansion beyond the hardened single-target slice: karma recovery, economic/death penalties, alerting, richer named-zone/content policy, and weighted/non-player attribution
+- deeper anti-abuse enforcement, account/device correlation, and alerting on top of the current suspicious-event audit query
 - instances and competitive endgame systems
 
 ## Current Online Slice Checklist

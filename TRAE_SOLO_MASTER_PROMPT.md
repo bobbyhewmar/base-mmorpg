@@ -1631,8 +1631,8 @@ Tarefas:
 4. [concluido no slice minimo] classificacao de kill PvP versus PK no instante da morte
 5. [parcial] `pvp_kills`, `pk_count` e karma fixo persistentes; decay, recovery e penalidades economicas seguem futuras
 6. [concluido no hardening minimo] morte e respawn simples backend-owned com limpeza de target ofensivo, ataques queued/auto, loot approach, movement, flag e cooldown; perdas de XP/item e outras penalties seguem futuras
-7. [pendente] anti-feed, assist/attribution, protecao por level e automacao anti-grief
-8. [concluido no hardening minimo] cada hit/kill persiste `pvp_combat_events` atomicamente com actor/victim/action/skill/dano CP+HP/result/flag/counters/karma delta e metadata de comando; query interna read-only reutiliza token de audit
+7. [parcial] assist/attribution por hits aplicados em 30s e sinal `suspicious` para kill repetida do mesmo par em 10min estao concluidos; protecao por level, correlacao account/device, bloqueio e automacao anti-grief seguem futuras
+8. [concluido no hardening concorrente] cada hit/kill trava attacker e victim em ordem deterministica no PostgreSQL e persiste dano/MP/cooldown/death/flag/counters/karma/attribution/anti-feed/audit como unidade; query interna read-only reutiliza token de audit e filtra killer/victim/suspicious/action/result/time
 
 Done:
 
@@ -1641,6 +1641,9 @@ Done:
 - `basic_attack` e skill single-target contra player passam por lifecycle/dedup duravel e nao reaplicam side effects no replay
 - dano consome CP antes de HP; morte, classificacao, cooldown clear e respawn sao backend-owned
 - PK tem consequencia minima duravel por `pk_count + karma`; kill de alvo exposto ou karma-positive conta como PvP
+- lock process-local e apenas coordenacao de runtime; a garantia multi-instancia vem de transacao PostgreSQL com row lock dos dois combatentes e calculo sobre verdade duravel recarregada
+- hits recentes compoem ledger duravel de attribution: ultimo golpe letal define killer, attackers distintos em 30s viram assists e a morte anterior da vitima corta a janela
+- segunda kill do mesmo killer/victim em 10min marca `suspicious` e `repeated_kill_count` no audit, sem bloquear gameplay nem alterar rewards
 - policy de regiao desconhecida falha fechada e santuario logico de spawn bloqueia actor ou target com `pvp.safe_zone`; isso nao altera renderer, mapa, picking, geodata, bounds, spawn ou checkpoint
 - siege, olympiad, clan/alliance war, eventos, ranking, reward e penalidade economica complexa continuam fora
 
@@ -1702,7 +1705,7 @@ Sempre escolher a maior prioridade que:
 
 Prioridade atual recomendada:
 
-1. assist/attribution, anti-feed, karma recovery e alerting sobre o PvP/PK hardened, sem ampliar para guerras/eventos
+1. karma recovery, correlacao account/device e alerting sobre attribution/anti-feed ja auditados, sem ampliar para guerras/eventos ou aplicar punicao automatica ainda
 2. volumes ricos de safe/combat zone orientados por content apenas quando o contrato de mapa/geodata exigir; o santuario logico minimo atual permanece backend-only
 3. instancias, siege, olympiad e producao somente depois da base PvP/PK permanecer estavel
 
@@ -2184,12 +2187,12 @@ Antes de alterar qualquer arquivo, rode git status --short e inspecione o estado
 
 Estado atual que voce deve tratar como entregue, salvo evidencia contraria no codigo:
 - Fase L ja possui party canonica minima, social chat `region`/`party`/`whisper`, shared XP minimo, party-owned loot minimo e clan foundation hardened em slices autoritativos.
-- Fase M ja possui o primeiro slice PvP/PK autoritativo hardened para ataque e skill single-target, CP antes de HP, deadline de flag persistido, safe-area minima backend-only, classificacao PvP versus PK, counters/karma duraveis, audit investigavel, morte/respawn backend-owned e replay duravel.
+- Fase M ja possui o primeiro slice PvP/PK autoritativo hardened para ataque e skill single-target, CP antes de HP, deadline de flag persistido, safe-area minima backend-only, classificacao PvP versus PK, counters/karma duraveis, row locking PostgreSQL multi-instancia, attribution de killer/assists, sinal de kill repetida, audit investigavel, morte/respawn backend-owned e replay duravel.
 - A regiao ativa atual usa `stonecross_plaza` apenas como id compativel, mas o mapa oficial foi resetado para uma area limpa 1024x1024 com `clean_plain_1024_geo_v1`, bounds `x=-512..512` e `z=-512..512`.
 - Renderer, ground raycast/picking plane, server geodata bounds, spawn/checkpoint, exits e testes precisam compartilhar esse mesmo contrato de mapa.
 - Nao reintroduza clamp hardcoded do mapa antigo, visual Stonecross, props/spawns antigos, blockers antigos, nem bounds antigos de `dawn_plaza`.
 
-Prioridade 1: attribution/assist, anti-feed, karma recovery e alerting sobre o primeiro slice PvP/PK hardened, sem ampliar para guerras, siege, olympiad ou eventos.
+Prioridade 1: karma recovery, correlacao account/device e alerting sobre attribution/anti-feed ja persistidos, sem ampliar para guerras, siege, olympiad ou eventos e sem bloquear gameplay automaticamente.
 - Reuse runtime autoritativo, persistencia curta e HUD classica.
 - Preserve toda autoridade de sessao, presence, party, chat, clan, shared XP, party loot, elegibilidade PvP, dano, morte e consequencias no backend.
 - Nao aceite membership, reward split, target legality, presence truth, chat delivery ou loot ownership vindo do client.

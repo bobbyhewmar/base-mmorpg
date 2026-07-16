@@ -71,7 +71,7 @@ Examples:
 - `select_target` may select a known `player` for social interaction and HUD projection, but that selection alone never authorizes player damage or enables PvP/PK
 - `basic_attack` or `use_skill` against a known player enters the server-owned PvP eligibility path; the browser cannot turn selection, ack, animation, or cooldown presentation into damage
 - player combat revalidates live attachment, same-region membership, safe-area/region policy, party/clan relation, life state, range, skill, MP, and cooldown before any mutation
-- a successful player hit atomically checkpoints both characters' combat resources, the absolute exposure deadlines, durable PvP/PK consequences, and one combat audit event before emitting the correlated actor delta
+- a successful player hit locks both durable character rows in deterministic order and atomically checkpoints combat resources, exposure deadlines, attacker cooldown, lethal victim cleanup, PvP/PK consequences, attribution/anti-feed fields, and one combat audit event before emitting the correlated actor delta
 - target is in range
 - movement destination can be resolved through server-owned terrain/geodata
 - movement route does not cross static blockers
@@ -158,6 +158,8 @@ For canonical-minimum clan rules, the same authoritative boundary is also respon
 - leaving manual leader transfer and automatic leader transfer out of scope
 
 For `send_chat_message`, the same authoritative commit boundary is responsible for persisting minimum chat history in `chat_messages`. Delivery scope remains runtime truth derived from current region, party membership, and online whisper target lookup. The current slice exposes only `region`, `party`, and `whisper`; `local` remains reserved for a later distinct scope. The client never authors the final recipient set.
+
+For player combat, a process-local mutex may coordinate runtime projection but cannot be the correctness boundary. PostgreSQL-backed mode serializes attacker/victim mutations through deterministic row locks and computes damage, death classification, counters, deadlines, cooldown mutation, attribution, repeated-pair signal, and audit from the locked durable state. The memory adapter mirrors this in one critical section. The generic post-command progression/cooldown flush must not run after this transaction, because it could overwrite a newer multi-instance combat state.
 
 For shared party rewards, the same authoritative kill boundary is responsible for:
 

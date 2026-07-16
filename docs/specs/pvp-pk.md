@@ -18,6 +18,9 @@ The reference source was used only to extract responsibilities and lifecycle con
 - killing a PvP-exposed or karma-positive victim is a PvP kill; killing an unflagged, karma-neutral victim is a PK
 - PK consequences and the absolute exposure deadline are durable; the runtime only projects whether that deadline is currently active
 - death classification and consequences occur before the existing backend-owned respawn transition
+- concurrent combat against either participant must serialize on persistent character authority rather than relying on a process-local mutex
+- recent applied-hit history can be reused as a short durable attribution ledger, bounded by time and the victim's latest death boundary
+- repeated killer/victim pairs are an investigation signal independent from gameplay blocking or rewards
 - event, duel, siege, olympiad, war, summon attribution, rewards, economic drops, and advanced karma reduction are separate policy layers
 
 No source code, schema, packet shape, asset, or proprietary identifier is part of this contract.
@@ -75,11 +78,30 @@ The fixed duration and fixed karma increment are project-owned minimum constants
 
 ## Persistence and Fanout
 
-Before emitting a successful player-combat delta, the backend atomically persists both combat resource states, both exposure deadlines, the attacker's updated PvP/PK/karma counters, and one `pvp_combat_events` audit row. A lethal transaction also clears the victim's durable cooldown rows. Persistence failure returns `system.persistence_failed` without publishing local or runtime success.
+Before emitting a successful player-combat delta, the backend opens one PostgreSQL transaction, locks the attacker and victim character rows in deterministic character-id order, and reloads their durable CP, HP, MP, flag, PvP/PK, and karma state. Damage, MP payment, attacker cooldown start, both combat resource states, both exposure deadlines, death classification, PvP/PK/karma counters, lethal victim cooldown cleanup, attribution, anti-feed signal, and one `pvp_combat_events` row are then committed as one unit. The PostgreSQL transaction clock owns the deadline and audit timestamp so application-instance clock skew does not decide ordering.
 
-Each audit row records attacker and victim character/account identity, action and optional skill, applied CP and HP damage, hit/PvP-kill/PK-kill result, exposure state before and after, PvP-kill/PK-count before and after, karma before/after/delta, timestamp, and command metadata. `GET /internal/pvp/events` is read-only, paginated, filterable, disabled by default, and protected by the same `X-Internal-Audit-Token` contract used by the existing internal audit surface.
+The process-local PvP mutex remains only as a local runtime coordination optimization. It is not the multi-instance correctness boundary. The memory adapter uses one critical section and the same mutation resolver, cooldown checks, attribution rules, and anti-feed rules as PostgreSQL.
+
+The handler projects the committed state back into the two locked runtime actors and performs volatile death cleanup before publishing success. The generic post-command progression/cooldown flush is skipped for player combat, preventing a stale runtime snapshot from overwriting the newer locked transaction. Persistence failure returns `system.persistence_failed` without publishing local or runtime success.
+
+Durable command reservation still precedes domain application. The audit table additionally enforces at most one event for a non-empty `session_id + command_seq`, so an identical replay cannot duplicate damage or audit even across process boundaries; a conflicting replay remains `sequence.conflicting_replay`.
+
+Each audit row records attacker and victim character/account identity, action and optional skill, applied CP and HP damage, hit/PvP-kill/PK-kill result, exposure state before and after, PvP-kill/PK-count before and after, karma before/after/delta, timestamp, command metadata, primary killer, assist character ids, suspicious state, and repeated-kill count. `GET /internal/pvp/events` is read-only, paginated, disabled by default, and protected by the same `X-Internal-Audit-Token` contract used by the existing internal audit surface. It supports attacker, victim, involved character, killer, suspicious, action/action-type, result, time-window, limit, and offset filters.
 
 The actor receives a correlated delta with their authoritative resources, cooldown, target, flag, counters, and a target entity patch. The victim receives their self delta through the authoritative runtime tick, and other sessions receive the updated player presence. The browser only projects these snapshots and deltas.
+
+## Attribution and Anti-Feed Signal
+
+- every applied player hit remains a durable attribution candidate for 30 seconds
+- on a lethal hit, the current attacker is the primary killer
+- assists are distinct prior attackers who applied positive damage to that victim inside the window, ordered by most recent hit and excluding the killer
+- attribution never crosses the victim's previous `pvp_kill` or `pk_kill` boundary, so hits from a previous life cannot assist a later death
+- on every kill, the backend counts prior kills by the same killer/victim pair during the preceding 10 minutes
+- `repeated_kill_count` includes the current kill; the first is `1`, and the second or later is marked `suspicious=true`
+- suspicious events do not reject commands, change damage, change classification, or grant/remove rewards in this slice
+- no client field can nominate killer, assists, repeated count, or suspicious state
+
+These windows are project-owned investigation constants, not balance or reward promises.
 
 ## Stable Reason Codes
 
@@ -107,7 +129,7 @@ The actor receives a correlated delta with their authoritative resources, cooldo
 - richer named-zone/content volumes beyond the minimum server-only spawn sanctuary policy
 - AoE or chain PvP
 - automatic player chase and repeated auto-attack
-- pets, summons, assists, last-hit arbitration across damage sources, and kill attribution extensions
+- pets, summons, contribution weighting, party-based attribution, and non-player damage-source attribution
 - clan war, alliance war, duel, siege, olympiad, events, and competitive matchmaking
 - karma decay and complex economic or death penalties
-- PvP rewards, leaderboards, anti-feed scoring, and complete anti-grief automation
+- PvP rewards, leaderboards, anti-feed blocking/scoring, account/device correlation, alert automation, and complete anti-grief enforcement
