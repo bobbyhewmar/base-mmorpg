@@ -54,8 +54,9 @@ func deferSocialSideEffect(ctx context.Context, effect func()) bool {
 }
 
 type remoteSocialDeliveryPayload struct {
-	RecipientCharacterID string         `json:"recipient_character_id"`
-	Message              map[string]any `json:"message"`
+	RecipientCharacterID  string         `json:"recipient_character_id"`
+	RecipientFencingToken int64          `json:"recipient_fencing_token"`
+	Message               map[string]any `json:"message"`
 }
 
 func withGameplayEventCollector(ctx context.Context, collector *gameplayEventCollector) context.Context {
@@ -96,7 +97,7 @@ func buildRemoteSocialDeliveryEvent(
 	if session == nil || ownership == nil || command.CommandSeq <= 0 || recipientCharacterID == "" || message == nil {
 		return nil, errors.New("incomplete remote social delivery")
 	}
-	if ownership.CharacterID != recipientCharacterID || ownership.ServerInstanceID == "" || ownership.SessionID == "" {
+	if ownership.CharacterID != recipientCharacterID || ownership.ServerInstanceID == "" || ownership.SessionID == "" || ownership.FencingToken <= 0 {
 		return nil, errors.New("invalid remote social recipient ownership")
 	}
 	purpose = strings.Trim(strings.ToLower(strings.Join(strings.Fields(purpose), "-")), "-")
@@ -104,8 +105,9 @@ func buildRemoteSocialDeliveryEvent(
 		return nil, errors.New("remote social delivery purpose is required")
 	}
 	payload, err := json.Marshal(remoteSocialDeliveryPayload{
-		RecipientCharacterID: recipientCharacterID,
-		Message:              message,
+		RecipientCharacterID:  recipientCharacterID,
+		RecipientFencingToken: ownership.FencingToken,
+		Message:               message,
 	})
 	if err != nil {
 		return nil, err
@@ -189,12 +191,13 @@ func (s *Server) sendOrProduceLifecycleSocialMessage(
 		}
 		return nil
 	case characterPresenceRemote:
-		if ownership == nil || ownership.CharacterID != recipientCharacterID || ownership.ServerInstanceID == "" || ownership.SessionID == "" {
+		if ownership == nil || ownership.CharacterID != recipientCharacterID || ownership.ServerInstanceID == "" || ownership.SessionID == "" || ownership.FencingToken <= 0 {
 			return errors.New("social.recipient_stale_owner")
 		}
 		payload, marshalErr := json.Marshal(remoteSocialDeliveryPayload{
-			RecipientCharacterID: recipientCharacterID,
-			Message:              message,
+			RecipientCharacterID:  recipientCharacterID,
+			RecipientFencingToken: ownership.FencingToken,
+			Message:               message,
 		})
 		if marshalErr != nil {
 			return marshalErr
@@ -259,7 +262,7 @@ func decodeRemoteSocialDelivery(event *GameplayEvent, expectedKind string) (*rem
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return nil, errors.New("social.invalid_payload")
 	}
-	if payload.RecipientCharacterID == "" || payload.RecipientCharacterID != event.TargetCharacterID || payload.Message == nil {
+	if payload.RecipientCharacterID == "" || payload.RecipientCharacterID != event.TargetCharacterID || payload.RecipientFencingToken <= 0 || payload.Message == nil {
 		return nil, errors.New("social.invalid_payload")
 	}
 	kind, _ := payload.Message["kind"].(string)
@@ -269,7 +272,7 @@ func decodeRemoteSocialDelivery(event *GameplayEvent, expectedKind string) (*rem
 	return &payload, nil
 }
 
-func (s *Server) resolveRemoteSocialRecipient(ctx context.Context, event *GameplayEvent) (*attachedSession, *SessionOwnership, error) {
+func (s *Server) resolveRemoteSocialRecipient(ctx context.Context, event *GameplayEvent, recipientFencingToken int64) (*attachedSession, *SessionOwnership, error) {
 	scope, attached, ownership, err := s.resolveCharacterPresence(ctx, event.TargetCharacterID)
 	if err != nil {
 		return nil, nil, errors.New("social.presence_unavailable")
@@ -280,7 +283,7 @@ func (s *Server) resolveRemoteSocialRecipient(ctx context.Context, event *Gamepl
 	if scope != characterPresenceLocal || attached == nil || ownership == nil {
 		return nil, nil, errors.New("social.recipient_stale_owner")
 	}
-	if event.TargetSessionID == "" || attached.sessionID != event.TargetSessionID || ownership.SessionID != event.TargetSessionID {
+	if event.TargetSessionID == "" || recipientFencingToken <= 0 || attached.sessionID != event.TargetSessionID || ownership.SessionID != event.TargetSessionID || attached.fencingToken != recipientFencingToken || ownership.FencingToken != recipientFencingToken {
 		return nil, nil, errors.New("social.recipient_stale_owner")
 	}
 	return attached, ownership, nil
@@ -310,7 +313,7 @@ func (s *Server) deliverRemoteChatMessage(ctx context.Context, event *GameplayEv
 	default:
 		return errors.New("social.invalid_payload")
 	}
-	attached, ownership, err := s.resolveRemoteSocialRecipient(ctx, event)
+	attached, ownership, err := s.resolveRemoteSocialRecipient(ctx, event, payload.RecipientFencingToken)
 	if err != nil {
 		return err
 	}
@@ -329,7 +332,7 @@ func (s *Server) deliverRemotePartyNotice(ctx context.Context, event *GameplayEv
 	if err != nil {
 		return err
 	}
-	attached, _, err := s.resolveRemoteSocialRecipient(ctx, event)
+	attached, _, err := s.resolveRemoteSocialRecipient(ctx, event, payload.RecipientFencingToken)
 	if err != nil {
 		return err
 	}
@@ -351,7 +354,7 @@ func (s *Server) deliverRemoteClanNotice(ctx context.Context, event *GameplayEve
 	if err != nil {
 		return err
 	}
-	attached, _, err := s.resolveRemoteSocialRecipient(ctx, event)
+	attached, _, err := s.resolveRemoteSocialRecipient(ctx, event, payload.RecipientFencingToken)
 	if err != nil {
 		return err
 	}

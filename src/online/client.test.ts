@@ -73,6 +73,7 @@ const regionContext = (regionId: string) => ({
   region_revision: 1,
   region_id: regionId,
   geodata_version: 'clean_plain_1024_geo_v1',
+  next_command_seq: 1,
   self_position: { x: -8, z: 0 },
   known_entities: [],
 });

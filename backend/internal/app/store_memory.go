@@ -307,6 +307,19 @@ func (repo memoryGameplayCommandRecordRepo) GetBySessionAndSeq(_ context.Context
 	return cloneGameplayCommandRecord(record), nil
 }
 
+func (repo memoryGameplayCommandRecordRepo) NextSeq(_ context.Context, sessionID string) (int, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	next := 1
+	for _, record := range repo.backend.commandRecords {
+		if record.SessionID == sessionID && record.CommandSeq >= next {
+			next = record.CommandSeq + 1
+		}
+	}
+	return next, nil
+}
+
 func (repo memoryGameplayCommandRecordRepo) UpdateOutcome(_ context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any) error {
 	repo.backend.mu.Lock()
 	defer repo.backend.mu.Unlock()

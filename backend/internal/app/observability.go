@@ -77,6 +77,21 @@ func (o *observer) addGauge(name string, help string, labels map[string]string, 
 	sample.value += delta
 }
 
+func (o *observer) maxGauge(name string, help string, labels map[string]string, value float64) {
+	if o == nil {
+		return
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	family := o.ensureMetricFamily(name, help, "gauge")
+	sample := family.ensureSample(labels)
+	if value > sample.value {
+		sample.value = value
+	}
+}
+
 func (o *observer) observeDurationSeconds(baseName string, help string, labels map[string]string, duration time.Duration) {
 	seconds := duration.Seconds()
 	o.incCounter(baseName+"_sum", help+" sum.", labels, seconds)

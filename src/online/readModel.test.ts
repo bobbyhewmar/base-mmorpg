@@ -23,6 +23,7 @@ const regionContext: RegionContextMessage = {
   region_revision: 1,
   region_id: 'stonecross_plaza',
   geodata_version: 'clean_plain_1024_geo_v1',
+  next_command_seq: 1,
   self_position: { x: -8, z: 0 },
   known_entities: [
     {
@@ -115,6 +116,20 @@ const advanceProjectionFrames = (model: OnlineReadModel, totalMs: number, stepMs
 describe('online read model', () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('continues command sequence from the authoritative attach snapshot', () => {
+    const model = new OnlineReadModel({ ...regionContext, next_command_seq: 9 }, character, initialItemState);
+    const command = model.createSendChatMessage('region', 'after reconnect');
+    expect(command?.command_seq).toBe(9);
+    expect(model.getStateInfo().nextCommandSeq).toBe(10);
+  });
+
+  it('does not regress command sequence when an older region context is redelivered', () => {
+    const model = new OnlineReadModel({ ...regionContext, next_command_seq: 9 }, character, initialItemState);
+    expect(model.createSendChatMessage('region', 'first')?.command_seq).toBe(9);
+    model.applyMessage({ ...regionContext, next_command_seq: 9 });
+    expect(model.createSendChatMessage('region', 'second')?.command_seq).toBe(10);
   });
 
   it('applies delta only when revision advances monotonically', () => {

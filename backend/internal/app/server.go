@@ -41,6 +41,9 @@ type Server struct {
 	gameplayEventOrder    []int64
 	gameplayEventWorkerID string
 	regionProjectionQueue chan regionProjectionPublishRequest
+	regionProjectionMu    sync.Mutex
+	regionProjectionSpill map[string]regionProjectionPublishRequest
+	regionProjectionLimit int
 }
 
 type attachedSession struct {
@@ -159,8 +162,11 @@ func NewServerWithConfig(addr string, publicWSURL string, store *Store, config S
 		observer:              newObserver(),
 		gameplayEventSeen:     map[int64]struct{}{},
 		gameplayEventWorkerID: config.ServerInstanceID + "/" + randomID("outbox-worker"),
-		regionProjectionQueue: make(chan regionProjectionPublishRequest, regionProjectionQueueSize),
+		regionProjectionQueue: make(chan regionProjectionPublishRequest, config.RegionProjectionQueueSize),
+		regionProjectionSpill: map[string]regionProjectionPublishRequest{},
+		regionProjectionLimit: max(config.RegionProjectionQueueSize*4, 8),
 	}
+	s.recordRegionProjectionQueueState()
 	s.routes()
 	return s
 }
@@ -169,6 +175,7 @@ func (s *Server) Start() error {
 	dispatcherContext, cancelDispatcher := context.WithCancel(context.Background())
 	defer cancelDispatcher()
 	s.startGameplayEventDispatcher(dispatcherContext)
+	s.startRegionProjectionPublisher(dispatcherContext)
 	log.Printf("backend stub listening on %s", s.addr)
 	s.observer.log("info", "server_start", map[string]any{
 		"addr":               s.addr,
@@ -1017,6 +1024,15 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close(websocket.StatusInternalError, "attach runtime load failed")
 		return
 	}
+	nextCommandSeq, err := s.store.GameplayCommands.NextSeq(r.Context(), session.ID)
+	if err != nil {
+		s.closeAttachedSession(session.ID, session.FencingToken)
+		s.writeWSReject(ctx, conn, "", 0, "system.persistence_failed", "Unable to restore gameplay command sequence.")
+		s.recordAttachAttempt("rejected", "system.persistence_failed", session.ID, character.ID)
+		_ = conn.Close(websocket.StatusInternalError, "attach command sequence load failed")
+		return
+	}
+	runtime.setExpectedCommandSeq(nextCommandSeq)
 	s.recordAttachAttempt("accepted", "none", session.ID, character.ID)
 	defer s.finalizeOwnedAttachedSession(session, runtime)
 	loopCtx, cancelLoop := context.WithCancel(r.Context())

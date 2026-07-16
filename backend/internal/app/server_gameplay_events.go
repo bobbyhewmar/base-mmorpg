@@ -19,10 +19,11 @@ type remoteTargetNoticePayload struct {
 	TargetCharacterID      string `json:"target_character_id"`
 	SourceServerInstanceID string `json:"source_server_instance_id"`
 	ReasonCode             string `json:"reason_code"`
+	TargetFencingToken     int64  `json:"target_fencing_token"`
 }
 
 func buildRemoteTargetNoticeEvent(session *Session, actorCharacterID string, targetCharacterID string, sourceServerInstanceID string, ownership *SessionOwnership, command commandEnvelope) (*GameplayEvent, error) {
-	if session == nil || ownership == nil || actorCharacterID == "" || targetCharacterID == "" || command.CommandSeq <= 0 {
+	if session == nil || ownership == nil || ownership.FencingToken <= 0 || actorCharacterID == "" || targetCharacterID == "" || command.CommandSeq <= 0 {
 		return nil, errors.New("incomplete remote target notice")
 	}
 	payload, err := json.Marshal(remoteTargetNoticePayload{
@@ -30,6 +31,7 @@ func buildRemoteTargetNoticeEvent(session *Session, actorCharacterID string, tar
 		TargetCharacterID:      targetCharacterID,
 		SourceServerInstanceID: sourceServerInstanceID,
 		ReasonCode:             "presence.target_remote",
+		TargetFencingToken:     ownership.FencingToken,
 	})
 	if err != nil {
 		return nil, err
@@ -61,8 +63,6 @@ func (s *Server) startGameplayEventDispatcher(ctx context.Context) {
 				return
 			case <-pollTicker.C:
 				s.dispatchGameplayEventsOnce(ctx, s.gameplayEventWorkerID)
-			case request := <-s.regionProjectionQueue:
-				s.publishRegionProjectionRequest(ctx, request)
 			case <-cleanupTicker.C:
 				s.cleanupDeliveredGameplayEvents(ctx, time.Now())
 			}
@@ -93,7 +93,8 @@ func (s *Server) dispatchGameplayEventsOnce(ctx context.Context, workerID string
 			s.failGameplayEvent(ctx, workerID, event, deliveryErr)
 			continue
 		}
-		delivered, markErr := s.store.GameplayEvents.MarkDelivered(ctx, event.ID, workerID, time.Now())
+		deliveredAt := time.Now()
+		delivered, markErr := s.store.GameplayEvents.MarkDelivered(ctx, event.ID, workerID, deliveredAt)
 		if markErr != nil {
 			s.recordStoreError("gameplay_events.mark_delivered", markErr)
 			s.recordGameplayEvent("failed", event, "mark_delivered_failed")
@@ -105,6 +106,14 @@ func (s *Server) dispatchGameplayEventsOnce(ctx context.Context, workerID string
 		}
 		s.recordGameplayEvent("delivered", event, "")
 		s.recordSocialFanoutEvent("delivered", event, "")
+		if isRegionPlayerProjectionEvent(event) && !event.CreatedAt.IsZero() {
+			delay := deliveredAt.Sub(event.CreatedAt)
+			if delay < 0 {
+				delay = 0
+			}
+			s.observer.observeDurationSeconds("l2bg_region_projection_delivery_delay_seconds", "Cross-instance regional projection outbox delivery delay in seconds.", nil, delay)
+			s.observer.maxGauge("l2bg_region_projection_delivery_delay_seconds_max", "Maximum observed cross-instance regional projection outbox delivery delay in seconds.", nil, delay.Seconds())
+		}
 	}
 	return len(events)
 }
@@ -195,7 +204,7 @@ func (s *Server) deliverRemoteTargetNotice(ctx context.Context, event *GameplayE
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return errors.New("invalid_payload")
 	}
-	if payload.ActorCharacterID == "" || payload.TargetCharacterID == "" || payload.TargetCharacterID != event.TargetCharacterID || payload.ReasonCode != "presence.target_remote" {
+	if payload.ActorCharacterID == "" || payload.TargetCharacterID == "" || payload.TargetCharacterID != event.TargetCharacterID || payload.ReasonCode != "presence.target_remote" || payload.TargetFencingToken <= 0 {
 		return errors.New("invalid_payload")
 	}
 	scope, attached, ownership, err := s.resolveCharacterPresence(ctx, event.TargetCharacterID)
@@ -205,7 +214,7 @@ func (s *Server) deliverRemoteTargetNotice(ctx context.Context, event *GameplayE
 	if scope != characterPresenceLocal || attached == nil || ownership == nil {
 		return errors.New("target_not_local")
 	}
-	if event.TargetSessionID != "" && (attached.sessionID != event.TargetSessionID || ownership.SessionID != event.TargetSessionID) {
+	if event.TargetSessionID != "" && (attached.sessionID != event.TargetSessionID || ownership.SessionID != event.TargetSessionID || attached.fencingToken != payload.TargetFencingToken || ownership.FencingToken != payload.TargetFencingToken) {
 		return errors.New("target_session_changed")
 	}
 	notice := map[string]any{

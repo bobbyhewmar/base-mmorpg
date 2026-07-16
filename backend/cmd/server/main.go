@@ -56,6 +56,12 @@ func main() {
 	gameplayEventCleanupInterval := durationEnv("L2BG_GAMEPLAY_EVENT_CLEANUP_INTERVAL", 10*time.Minute)
 	gameplayEventBatchSize := positiveIntEnv("L2BG_GAMEPLAY_EVENT_BATCH_SIZE", 32)
 	gameplayEventMaxRetries := positiveIntEnv("L2BG_GAMEPLAY_EVENT_MAX_RETRIES", 5)
+	regionProjectionTTL := durationEnv("L2BG_REGION_PROJECTION_TTL", 6*time.Second)
+	regionProjectionHeartbeat := durationEnv("L2BG_REGION_PROJECTION_HEARTBEAT", 2*time.Second)
+	if regionProjectionHeartbeat >= regionProjectionTTL {
+		log.Fatal("L2BG_REGION_PROJECTION_HEARTBEAT must be shorter than L2BG_REGION_PROJECTION_TTL")
+	}
+	regionProjectionQueueSize := positiveIntEnv("L2BG_REGION_PROJECTION_QUEUE_SIZE", 256)
 	store, err := app.NewStore(databaseURL)
 	if err != nil {
 		log.Fatal(err)
@@ -84,6 +90,9 @@ func main() {
 		GameplayEventCleanupInterval: gameplayEventCleanupInterval,
 		GameplayEventBatchSize:       gameplayEventBatchSize,
 		GameplayEventMaxRetries:      gameplayEventMaxRetries,
+		RegionProjectionTTL:          regionProjectionTTL,
+		RegionProjectionHeartbeat:    regionProjectionHeartbeat,
+		RegionProjectionQueueSize:    regionProjectionQueueSize,
 	})
 	if err := server.Start(); err != nil {
 		log.Fatal(err)

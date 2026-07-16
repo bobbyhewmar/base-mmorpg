@@ -423,7 +423,11 @@ func TestRemoteClanDisconnectExpiryNoticeIsIdempotent(t *testing.T) {
 func TestRemoteRegionChatDeadLettersStableStaleOwner(t *testing.T) {
 	fixture := newCrossInstanceSocialFixture(t, "social_stale")
 	notice := chatMessagePayload("", 0, chatChannelRegion, fixture.actorCharacter.ID, fixture.actorCharacter.Name, "", "", "dawn_plaza", "ownership drift", time.Now().UTC())
-	payload, err := json.Marshal(remoteSocialDeliveryPayload{RecipientCharacterID: fixture.targetCharacter.ID, Message: notice})
+	payload, err := json.Marshal(remoteSocialDeliveryPayload{
+		RecipientCharacterID:  fixture.targetCharacter.ID,
+		RecipientFencingToken: fixture.target.session.FencingToken,
+		Message:               notice,
+	})
 	if err != nil {
 		t.Fatalf("json.Marshal() error=%v", err)
 	}
@@ -459,6 +463,50 @@ func TestRemoteRegionChatDeadLettersStableStaleOwner(t *testing.T) {
 	}
 	if receipt, receiptErr := fixture.storeB.GameplayReceipts.GetByEventID(context.Background(), event.ID); !errors.Is(receiptErr, errRecordNotFound) || receipt != nil {
 		t.Fatalf("dead-letter retained an unconsumed receipt: receipt=%+v error=%v", receipt, receiptErr)
+	}
+}
+
+func TestRemoteRegionChatRejectsReusedSessionWithNewFence(t *testing.T) {
+	fixture := newCrossInstanceSocialFixture(t, "social_same_session_new_fence")
+	oldFence := fixture.target.session.FencingToken
+	notice := chatMessagePayload("", 0, chatChannelRegion, fixture.actorCharacter.ID, fixture.actorCharacter.Name, "", "", "dawn_plaza", "must not cross takeover", time.Now().UTC())
+	payload, err := json.Marshal(remoteSocialDeliveryPayload{
+		RecipientCharacterID:  fixture.targetCharacter.ID,
+		RecipientFencingToken: oldFence,
+		Message:               notice,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error=%v", err)
+	}
+	event := &GameplayEvent{
+		IdempotencyKey:         "social-same-session-new-fence",
+		Type:                   remoteChatMessageEventType,
+		Payload:                payload,
+		TargetServerInstanceID: "instance-b",
+		TargetRegionID:         "dawn_plaza",
+		TargetSessionID:        fixture.target.session.ID,
+		TargetCharacterID:      fixture.targetCharacter.ID,
+	}
+	if created, createErr := fixture.storeA.GameplayEvents.Create(context.Background(), event); createErr != nil || !created {
+		t.Fatalf("GameplayEvents.Create() created=%v err=%v", created, createErr)
+	}
+
+	fixture.backend.mu.Lock()
+	fixture.backend.sessionOwnerships[fixture.targetCharacter.ID].FencingToken = oldFence + 1
+	fixture.backend.mu.Unlock()
+	attached := fixture.serverB.attachedSessionBySessionID(fixture.target.session.ID)
+	attached.fencingToken = oldFence + 1
+	fixture.serverB.config.GameplayEventMaxRetries = 1
+
+	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/same-session-new-fence"); claimed != 1 {
+		t.Fatalf("stale fence event claimed=%d", claimed)
+	}
+	persisted, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), event.IdempotencyKey)
+	if err != nil || persisted.DeadLetteredAt.IsZero() || persisted.LastError != "social.recipient_stale_owner" {
+		t.Fatalf("stale fence event=%+v err=%v", persisted, err)
+	}
+	if countMessageKind(fixture.targetMessageSnapshot(), chatMessageKind) != 0 {
+		t.Fatalf("new fence received stale remote chat: %+v", fixture.targetMessageSnapshot())
 	}
 }
 

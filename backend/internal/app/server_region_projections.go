@@ -15,7 +15,6 @@ const (
 	regionPlayerProjectionEventType = "presence.region_player_projection.v1"
 	regionProjectionActionUpsert    = "upsert"
 	regionProjectionActionDespawn   = "despawn"
-	regionProjectionQueueSize       = 256
 	regionProjectionDisappear       = "remote_projection_despawn"
 	regionProjectionExpired         = "remote_projection_expired"
 )
@@ -40,6 +39,7 @@ type regionPlayerProjectionPayload struct {
 	SourceServerInstanceID string        `json:"source_server_instance_id"`
 	FencingToken           int64         `json:"fencing_token"`
 	Version                int64         `json:"version"`
+	RecipientFencingToken  int64         `json:"recipient_fencing_token"`
 }
 
 type regionProjectionPublishRequest struct {
@@ -155,12 +155,134 @@ func (s *Server) enqueueRegionPlayerProjection(attached *attachedSession, action
 		return
 	}
 	for _, request := range attached.nextRegionProjectionRequests(action, now) {
-		select {
-		case s.regionProjectionQueue <- request:
-		default:
-			s.recordRegionProjectionEvent("failed", nil, &request.Payload, "publisher_queue_full")
+		s.enqueueRegionProjectionRequest(request)
+	}
+}
+
+func (s *Server) enqueueRegionProjectionRequest(request regionProjectionPublishRequest) {
+	if s == nil || s.regionProjectionQueue == nil {
+		return
+	}
+	if s.coalescePendingRegionProjection(request) {
+		s.recordRegionProjectionQueueEvent("coalesced", &request.Payload)
+		return
+	}
+	select {
+	case s.regionProjectionQueue <- request:
+		s.recordRegionProjectionQueueEvent("enqueued", &request.Payload)
+	default:
+		if s.coalesceRegionProjection(request) {
+			s.recordRegionProjectionQueueEvent("coalesced", &request.Payload)
+		} else {
+			s.recordRegionProjectionQueueEvent("dropped", &request.Payload)
 		}
 	}
+}
+
+func (s *Server) coalescePendingRegionProjection(request regionProjectionPublishRequest) bool {
+	if s == nil {
+		return false
+	}
+	key := regionProjectionPressureKey(request.Payload)
+	s.regionProjectionMu.Lock()
+	defer s.regionProjectionMu.Unlock()
+	existing, exists := s.regionProjectionSpill[key]
+	if !exists {
+		return false
+	}
+	if request.Payload.Version > existing.Payload.Version {
+		s.regionProjectionSpill[key] = request
+	}
+	return true
+}
+
+func (s *Server) startRegionProjectionPublisher(ctx context.Context) {
+	if s == nil || s.regionProjectionQueue == nil {
+		return
+	}
+	go func() {
+		drainTicker := time.NewTicker(10 * time.Millisecond)
+		defer drainTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case request := <-s.regionProjectionQueue:
+				s.recordRegionProjectionQueueEvent("dequeued", &request.Payload)
+				s.publishRegionProjectionRequest(ctx, request)
+			case <-drainTicker.C:
+				if request, ok := s.takeCoalescedRegionProjection(); ok {
+					s.recordRegionProjectionQueueEvent("dequeued", &request.Payload)
+					s.publishRegionProjectionRequest(ctx, request)
+				}
+			}
+		}
+	}()
+}
+
+func regionProjectionPressureKey(payload regionPlayerProjectionPayload) string {
+	return fmt.Sprintf("%s/%d/%s", payload.CharacterID, payload.FencingToken, payload.RegionID)
+}
+
+func (s *Server) coalesceRegionProjection(request regionProjectionPublishRequest) bool {
+	if s == nil {
+		return false
+	}
+	key := regionProjectionPressureKey(request.Payload)
+	s.regionProjectionMu.Lock()
+	defer s.regionProjectionMu.Unlock()
+	if existing, exists := s.regionProjectionSpill[key]; exists {
+		if request.Payload.Version > existing.Payload.Version {
+			s.regionProjectionSpill[key] = request
+		}
+		return true
+	}
+	if len(s.regionProjectionSpill) >= s.regionProjectionLimit {
+		return false
+	}
+	s.regionProjectionSpill[key] = request
+	return true
+}
+
+func (s *Server) takeCoalescedRegionProjection() (regionProjectionPublishRequest, bool) {
+	if s == nil {
+		return regionProjectionPublishRequest{}, false
+	}
+	s.regionProjectionMu.Lock()
+	defer s.regionProjectionMu.Unlock()
+	for key, request := range s.regionProjectionSpill {
+		delete(s.regionProjectionSpill, key)
+		return request, true
+	}
+	return regionProjectionPublishRequest{}, false
+}
+
+func (s *Server) recordRegionProjectionQueueState() {
+	if s == nil || s.observer == nil || s.regionProjectionQueue == nil {
+		return
+	}
+	s.regionProjectionMu.Lock()
+	spillDepth := len(s.regionProjectionSpill)
+	s.regionProjectionMu.Unlock()
+	s.observer.setGauge("l2bg_region_projection_queue_depth", "Current in-process regional projection publication queue depth.", nil, float64(len(s.regionProjectionQueue)))
+	s.observer.setGauge("l2bg_region_projection_queue_capacity", "Configured in-process regional projection publication queue capacity.", nil, float64(cap(s.regionProjectionQueue)))
+	s.observer.setGauge("l2bg_region_projection_queue_coalesced_depth", "Current bounded regional projection coalescing spill depth.", nil, float64(spillDepth))
+}
+
+func (s *Server) recordRegionProjectionQueueEvent(result string, payload *regionPlayerProjectionPayload) {
+	if s == nil || s.observer == nil {
+		return
+	}
+	s.observer.incCounter("l2bg_region_projection_queue_events_total", "Total regional projection publication queue events by result.", map[string]string{"result": result}, 1)
+	s.recordRegionProjectionQueueState()
+	if result != "coalesced" && result != "dropped" {
+		return
+	}
+	s.recordRegionProjectionEvent("projection_queue_pressure", nil, payload, "publisher_queue_full")
+	s.observer.log("warn", "region_projection_queue_pressure", map[string]any{
+		"result":             result,
+		"server_instance_id": s.config.ServerInstanceID,
+	})
 }
 
 func (s *Server) publishAttachedRegionProjectionNow(ctx context.Context, attached *attachedSession, action string, now time.Time) int {
@@ -186,11 +308,6 @@ func (s *Server) publishRegionProjectionRequest(ctx context.Context, request reg
 		s.recordRegionProjectionEvent("failed", nil, &payload, "presence_unavailable")
 		return 0
 	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		s.recordRegionProjectionEvent("failed", nil, &payload, "invalid_payload")
-		return 0
-	}
 	produced := 0
 	for index := range ownerships {
 		recipient := &ownerships[index]
@@ -198,6 +315,13 @@ func (s *Server) publishRegionProjectionRequest(ctx context.Context, request reg
 			continue
 		}
 		if recipient.CharacterID == payload.CharacterID || recipient.ServerInstanceID == s.config.ServerInstanceID {
+			continue
+		}
+		recipientPayload := payload
+		recipientPayload.RecipientFencingToken = recipient.FencingToken
+		encoded, marshalErr := json.Marshal(recipientPayload)
+		if marshalErr != nil {
+			s.recordRegionProjectionEvent("failed", nil, &recipientPayload, "invalid_payload")
 			continue
 		}
 		event := &GameplayEvent{
@@ -409,7 +533,7 @@ func (s *Server) deliverRegionPlayerProjection(ctx context.Context, event *Gamep
 	if scope != characterPresenceLocal || attached == nil || ownership == nil || attached.runtime == nil {
 		return errors.New("social.recipient_stale_owner")
 	}
-	if ownership.SessionID != event.TargetSessionID || ownership.ServerInstanceID != event.TargetServerInstanceID || attached.fencingToken != ownership.FencingToken || attached.runtime.regionIDValue() != event.TargetRegionID {
+	if payload.RecipientFencingToken <= 0 || ownership.SessionID != event.TargetSessionID || ownership.ServerInstanceID != event.TargetServerInstanceID || attached.fencingToken != ownership.FencingToken || attached.fencingToken != payload.RecipientFencingToken || ownership.FencingToken != payload.RecipientFencingToken || attached.runtime.regionIDValue() != event.TargetRegionID {
 		return errors.New("social.recipient_stale_owner")
 	}
 	if payload.Action == regionProjectionActionUpsert {

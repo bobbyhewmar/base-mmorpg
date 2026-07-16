@@ -60,6 +60,7 @@ type AccountSessionRepository interface {
 type GameplayCommandRecordRepository interface {
 	CreatePending(ctx context.Context, record *GameplayCommandRecord) error
 	GetBySessionAndSeq(ctx context.Context, sessionID string, commandSeq int) (*GameplayCommandRecord, error)
+	NextSeq(ctx context.Context, sessionID string) (int, error)
 	UpdateOutcome(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any) error
 }
 

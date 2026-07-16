@@ -14,7 +14,7 @@ func gameplayEventForTest(key string, targetInstance string) *GameplayEvent {
 	return &GameplayEvent{
 		IdempotencyKey:         key,
 		Type:                   remoteTargetNoticeEventType,
-		Payload:                json.RawMessage(`{"actor_character_id":"actor","target_character_id":"target","source_server_instance_id":"source","reason_code":"presence.target_remote"}`),
+		Payload:                json.RawMessage(`{"actor_character_id":"actor","target_character_id":"target","source_server_instance_id":"source","reason_code":"presence.target_remote","target_fencing_token":1}`),
 		TargetServerInstanceID: targetInstance,
 		TargetCharacterID:      "target",
 	}

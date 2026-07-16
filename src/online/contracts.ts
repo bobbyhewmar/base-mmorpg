@@ -827,6 +827,7 @@ export interface RegionContextMessage extends ServerMessageBase {
   region_revision: number;
   region_id: string;
   geodata_version: string;
+  next_command_seq: number;
   self_position: {
     x: number;
     z: number;

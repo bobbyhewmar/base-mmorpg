@@ -111,7 +111,7 @@ export interface PendingCommand {
   reasonCode?: string;
 }
 
-export type DesyncState = 'none' | 'revision_gap' | 'region_revision_gap';
+export type DesyncState = 'none' | 'revision_gap' | 'region_revision_gap' | 'invalid_snapshot';
 
 type OnlineEntityState = {
   entityId: string;
@@ -433,6 +433,10 @@ export class OnlineReadModel {
     this.character = character;
     this.regionId = regionContext.region_id;
     this.geodataVersion = regionContext.geodata_version;
+    if (!Number.isInteger(regionContext.next_command_seq) || regionContext.next_command_seq <= 0) {
+      throw new Error('Online read model requires an authoritative next command sequence.');
+    }
+    this.nextCommandSeq = regionContext.next_command_seq;
     this.authoritativePlayerPosition = { ...regionContext.self_position };
     this.projectedPlayerPosition = { ...regionContext.self_position };
     this.lastRegionRevision = regionContext.region_revision;
@@ -2459,6 +2463,12 @@ export class OnlineReadModel {
     if (message.region_revision < this.lastRegionRevision) {
       return { changed: false };
     }
+    if (!Number.isInteger(message.next_command_seq) || message.next_command_seq <= 0) {
+      this.desyncState = 'invalid_snapshot';
+      this.pushLog('Region context carried an invalid command sequence. Command flow is blocked.', 'danger');
+      return { changed: true };
+    }
+    this.nextCommandSeq = Math.max(this.nextCommandSeq, message.next_command_seq);
     this.lastRegionRevision = message.region_revision;
     this.regionId = message.region_id;
     this.geodataVersion = message.geodata_version;

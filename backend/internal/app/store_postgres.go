@@ -418,6 +418,23 @@ func (p *postgresStoreBackend) GetGameplayCommandRecordBySessionAndSeq(ctx conte
 	return record, nil
 }
 
+func (p *postgresStoreBackend) NextGameplayCommandSeq(ctx context.Context, sessionID string) (int, error) {
+	var next int
+	if err := p.db.QueryRowContext(
+		ctx,
+		`SELECT COALESCE(MAX(command_seq), 0) + 1
+		 FROM gameplay_command_records
+		 WHERE session_id = $1`,
+		sessionID,
+	).Scan(&next); err != nil {
+		return 0, err
+	}
+	if next <= 0 {
+		return 0, errors.New("invalid next gameplay command sequence")
+	}
+	return next, nil
+}
+
 func (p *postgresStoreBackend) UpdateGameplayCommandRecordOutcome(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any) error {
 	outcomeJSON, err := json.Marshal(outboundMessages)
 	if err != nil {
@@ -3958,6 +3975,10 @@ func (repo postgresGameplayCommandRecordRepo) CreatePending(ctx context.Context,
 
 func (repo postgresGameplayCommandRecordRepo) GetBySessionAndSeq(ctx context.Context, sessionID string, commandSeq int) (*GameplayCommandRecord, error) {
 	return repo.backend.GetGameplayCommandRecordBySessionAndSeq(ctx, sessionID, commandSeq)
+}
+
+func (repo postgresGameplayCommandRecordRepo) NextSeq(ctx context.Context, sessionID string) (int, error) {
+	return repo.backend.NextGameplayCommandSeq(ctx, sessionID)
 }
 
 func (repo postgresGameplayCommandRecordRepo) UpdateOutcome(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any) error {

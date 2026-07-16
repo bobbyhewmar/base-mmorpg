@@ -62,6 +62,7 @@ func TestRegionPlayerProjectionCrossesInstancesAndRemainsProjectionOnly(t *testi
 	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_events_total{result="projection_produced"} 1`)
 	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_events_total{result="duplicate"} 1`)
 	assertMetricLine(t, fixture.serverB.observer.renderPrometheus(), `l2bg_region_projection_events_total{result="projection_consumed"} 1`)
+	assertMetricLine(t, fixture.serverB.observer.renderPrometheus(), `l2bg_region_projection_delivery_delay_seconds_count 1`)
 
 	fixture.actor.runtime.mu.Lock()
 	fixture.actor.runtime.position = runtimePoint{X: 12, Z: -7}
@@ -144,6 +145,65 @@ func TestRegionPlayerProjectionBuildsOrderedRegionTransition(t *testing.T) {
 	if transition[1].Payload.Action != regionProjectionActionUpsert || transition[1].Payload.RegionID != "gate_road" || transition[1].Payload.Version != 3 {
 		t.Fatalf("region transition upsert=%+v", transition[1].Payload)
 	}
+}
+
+func TestRegionProjectionQueuePressureCoalescesLatestStateWithinBound(t *testing.T) {
+	server := NewServerWithConfig(":0", "", newMemoryStore(), ServerConfig{
+		ServerInstanceID:          "queue-pressure-instance",
+		RegionProjectionQueueSize: 1,
+	})
+	request := regionProjectionPublishRequest{Payload: regionPlayerProjectionPayload{
+		Action:                 regionProjectionActionUpsert,
+		CharacterID:            "queue-character",
+		DisplayName:            "Queue Character",
+		RegionID:               "dawn_plaza",
+		SourceSessionID:        "queue-session",
+		SourceServerInstanceID: "queue-pressure-instance",
+		FencingToken:           1,
+		Version:                1,
+	}}
+
+	server.enqueueRegionProjectionRequest(request)
+	request.Payload.Version = 2
+	server.enqueueRegionProjectionRequest(request)
+	request.Payload.Version = 3
+	server.enqueueRegionProjectionRequest(request)
+
+	if len(server.regionProjectionQueue) != 1 {
+		t.Fatalf("queue depth=%d", len(server.regionProjectionQueue))
+	}
+	coalesced, ok := server.takeCoalescedRegionProjection()
+	if !ok || coalesced.Payload.Version != 3 {
+		t.Fatalf("coalesced request=%+v ok=%v", coalesced, ok)
+	}
+	metrics := server.observer.renderPrometheus()
+	assertMetricLine(t, metrics, `l2bg_region_projection_queue_events_total{result="enqueued"} 1`)
+	assertMetricLine(t, metrics, `l2bg_region_projection_queue_events_total{result="coalesced"} 2`)
+	assertMetricLine(t, metrics, `l2bg_region_projection_events_total{result="projection_queue_pressure"} 2`)
+}
+
+func TestRegionProjectionQueuePressureDropsOnlyBeyondBoundedSpill(t *testing.T) {
+	server := NewServerWithConfig(":0", "", newMemoryStore(), ServerConfig{
+		ServerInstanceID:          "queue-drop-instance",
+		RegionProjectionQueueSize: 1,
+	})
+	server.enqueueRegionProjectionRequest(regionProjectionPublishRequest{Payload: regionPlayerProjectionPayload{
+		CharacterID: "queue-head",
+		RegionID:    "dawn_plaza",
+		Version:     1,
+	}})
+	for index := 0; index <= server.regionProjectionLimit; index++ {
+		server.enqueueRegionProjectionRequest(regionProjectionPublishRequest{Payload: regionPlayerProjectionPayload{
+			CharacterID: fmt.Sprintf("spill-%d", index),
+			RegionID:    "dawn_plaza",
+			Version:     1,
+		}})
+	}
+
+	if len(server.regionProjectionSpill) != server.regionProjectionLimit {
+		t.Fatalf("spill depth=%d limit=%d", len(server.regionProjectionSpill), server.regionProjectionLimit)
+	}
+	assertMetricLine(t, server.observer.renderPrometheus(), `l2bg_region_projection_queue_events_total{result="dropped"} 1`)
 }
 
 func TestRegionPlayerProjectionStaleRecipientDeadLettersWithoutVisualSuccess(t *testing.T) {
@@ -265,6 +325,7 @@ func requestsPayloadForProjectionTest(t *testing.T, fixture *crossInstanceSocial
 	payload.SourceServerInstanceID = "instance-a"
 	payload.FencingToken = fixture.actor.session.FencingToken
 	payload.Version = version
+	payload.RecipientFencingToken = fixture.target.session.FencingToken
 	return payload
 }
 

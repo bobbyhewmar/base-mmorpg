@@ -522,14 +522,24 @@ func (runtime *attachedRuntime) regionContextMessage() map[string]any {
 	}
 
 	return map[string]any{
-		"kind":            "region_context",
-		"emitted_at_ms":   time.Now().UnixMilli(),
-		"region_revision": runtime.regionRevision,
-		"region_id":       runtime.regionID,
-		"geodata_version": runtime.currentGeodataVersionLocked(),
-		"self_position":   runtime.position,
-		"known_entities":  entities,
+		"kind":             "region_context",
+		"emitted_at_ms":    time.Now().UnixMilli(),
+		"region_revision":  runtime.regionRevision,
+		"region_id":        runtime.regionID,
+		"geodata_version":  runtime.currentGeodataVersionLocked(),
+		"next_command_seq": runtime.expectedCommandSeq,
+		"self_position":    runtime.position,
+		"known_entities":   entities,
 	}
+}
+
+func (runtime *attachedRuntime) setExpectedCommandSeq(next int) {
+	if runtime == nil || next <= 0 {
+		return
+	}
+	runtime.mu.Lock()
+	runtime.expectedCommandSeq = next
+	runtime.mu.Unlock()
 }
 
 func (runtime *attachedRuntime) processCommand(command commandEnvelope) []map[string]any {

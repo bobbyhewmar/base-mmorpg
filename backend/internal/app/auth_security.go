@@ -31,6 +31,7 @@ const (
 	defaultGameplayEventMaxRetries      = 5
 	defaultRegionProjectionTTL          = 6 * time.Second
 	defaultRegionProjectionHeartbeat    = 2 * time.Second
+	defaultRegionProjectionQueueSize    = 256
 )
 
 type RateLimitConfig struct {
@@ -58,6 +59,7 @@ type ServerConfig struct {
 	GameplayEventMaxRetries      int
 	RegionProjectionTTL          time.Duration
 	RegionProjectionHeartbeat    time.Duration
+	RegionProjectionQueueSize    int
 }
 
 type fixedWindowRateLimiter struct {
@@ -95,6 +97,7 @@ func defaultServerConfig() ServerConfig {
 		GameplayEventMaxRetries:      defaultGameplayEventMaxRetries,
 		RegionProjectionTTL:          defaultRegionProjectionTTL,
 		RegionProjectionHeartbeat:    defaultRegionProjectionHeartbeat,
+		RegionProjectionQueueSize:    defaultRegionProjectionQueueSize,
 	}
 }
 
@@ -150,6 +153,9 @@ func normalizeServerConfig(config ServerConfig) ServerConfig {
 		if config.RegionProjectionHeartbeat <= 0 {
 			config.RegionProjectionHeartbeat = time.Millisecond
 		}
+	}
+	if config.RegionProjectionQueueSize <= 0 {
+		config.RegionProjectionQueueSize = defaults.RegionProjectionQueueSize
 	}
 	config.ServerInstanceID = strings.TrimSpace(config.ServerInstanceID)
 	config.AllowedOrigins = normalizeAllowedOrigins(config.AllowedOrigins)
