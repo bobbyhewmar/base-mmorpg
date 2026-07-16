@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -138,11 +139,22 @@ func TestRemoteWhisperCrossesInstancesAndReplayDoesNotDuplicate(t *testing.T) {
 	if remoteMessage == nil || int64(remoteEventID) != event.ID || remoteMessage["text"] != "meet without <script>" {
 		t.Fatalf("remote whisper delivery=%+v", targetMessages)
 	}
-	if err := fixture.serverB.deliverGameplayEvent(context.Background(), event); err != nil {
+	if err := fixture.serverB.deliverGameplayEvent(context.Background(), event, "instance-b/duplicate-worker"); err != nil {
 		t.Fatalf("duplicate remote whisper delivery error=%v", err)
 	}
 	if countMessageKind(fixture.targetMessageSnapshot(), chatMessageKind) != 1 {
 		t.Fatalf("duplicate remote whisper was rendered twice: %+v", fixture.targetMessageSnapshot())
+	}
+	receipt, err := fixture.storeB.GameplayReceipts.GetByEventID(context.Background(), event.ID)
+	if err != nil || receipt.ConsumedAt.IsZero() || receipt.DeliveredAt.IsZero() || receipt.ServerInstanceID != "instance-b" {
+		t.Fatalf("remote whisper receipt=%+v error=%v", receipt, err)
+	}
+	restartedConsumer := NewServerWithConfig(":0", "", fixture.storeB, ServerConfig{ServerInstanceID: "instance-b"})
+	if err := restartedConsumer.deliverGameplayEvent(context.Background(), event, "instance-b/restarted-worker"); err != nil {
+		t.Fatalf("logical restart redelivery error=%v", err)
+	}
+	if countMessageKind(fixture.targetMessageSnapshot(), chatMessageKind) != 1 {
+		t.Fatalf("logical restart duplicated remote whisper: %+v", fixture.targetMessageSnapshot())
 	}
 }
 
@@ -153,6 +165,10 @@ func TestRemotePartyInviteAndAcceptDeliverAuthoritativeState(t *testing.T) {
 	if extractRejectReason(inviteOutbound) != "" {
 		t.Fatalf("remote party invite=%+v", inviteOutbound)
 	}
+	replayedInvite := dispatchPartyCommand(t, fixture.serverA, fixture.actor, "remote_party_invite", 1, "invite_party_member", map[string]any{})
+	if marshalOutcomeJSON(t, cloneOutboundMessages(inviteOutbound)) != marshalOutcomeJSON(t, replayedInvite) || fixture.backend.nextGameplayEventID != 1 {
+		t.Fatalf("remote party invite replay=%+v event_count=%d", replayedInvite, fixture.backend.nextGameplayEventID)
+	}
 	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/party-invite-worker"); claimed != 1 {
 		t.Fatalf("remote party invite claimed=%d", claimed)
 	}
@@ -160,6 +176,9 @@ func TestRemotePartyInviteAndAcceptDeliverAuthoritativeState(t *testing.T) {
 	inviteNotice := findPartyNotice(targetMessages, partyNoticeStatusInviteReceived)
 	if inviteNotice == nil || inviteNotice["event_id"] == nil || findOutboundMessage(targetMessages, "delta") == nil {
 		t.Fatalf("remote party invite delivery=%+v", targetMessages)
+	}
+	if receipt, receiptErr := fixture.storeB.GameplayReceipts.GetByEventID(context.Background(), 1); receiptErr != nil || receipt.ConsumedAt.IsZero() {
+		t.Fatalf("remote party invite receipt=%+v error=%v", receipt, receiptErr)
 	}
 	inviteID, _ := inviteNotice["invite_id"].(string)
 	fixture.resetMessages()
@@ -212,6 +231,10 @@ func TestRemoteClanInviteAcceptAndKickDeliverAuthoritativeState(t *testing.T) {
 	if extractRejectReason(inviteOutbound) != "" {
 		t.Fatalf("remote clan invite=%+v", inviteOutbound)
 	}
+	replayedInvite := dispatchPartyCommand(t, fixture.serverA, fixture.actor, "remote_clan_invite", 2, "invite_clan_member", map[string]any{})
+	if marshalOutcomeJSON(t, cloneOutboundMessages(inviteOutbound)) != marshalOutcomeJSON(t, replayedInvite) || fixture.backend.nextGameplayEventID != 1 {
+		t.Fatalf("remote clan invite replay=%+v event_count=%d", replayedInvite, fixture.backend.nextGameplayEventID)
+	}
 	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/clan-invite-worker"); claimed != 1 {
 		t.Fatalf("remote clan invite claimed=%d", claimed)
 	}
@@ -219,6 +242,9 @@ func TestRemoteClanInviteAcceptAndKickDeliverAuthoritativeState(t *testing.T) {
 	inviteNotice := findClanNotice(targetMessages, clanNoticeStatusInviteReceived)
 	if inviteNotice == nil || inviteNotice["event_id"] == nil || findOutboundMessage(targetMessages, "delta") == nil {
 		t.Fatalf("remote clan invite delivery=%+v", targetMessages)
+	}
+	if receipt, receiptErr := fixture.storeB.GameplayReceipts.GetByEventID(context.Background(), 1); receiptErr != nil || receipt.ConsumedAt.IsZero() {
+		t.Fatalf("remote clan invite receipt=%+v error=%v", receipt, receiptErr)
 	}
 	inviteID, _ := inviteNotice["invite_id"].(string)
 	fixture.resetMessages()
@@ -310,6 +336,9 @@ func TestRemoteSocialDeliveryDeadLettersStableStaleOwner(t *testing.T) {
 	}
 	if countMessageKind(fixture.targetMessageSnapshot(), chatMessageKind) != 0 {
 		t.Fatalf("stale owner received remote chat: %+v", fixture.targetMessageSnapshot())
+	}
+	if receipt, receiptErr := fixture.storeB.GameplayReceipts.GetByEventID(context.Background(), event.ID); !errors.Is(receiptErr, errRecordNotFound) || receipt != nil {
+		t.Fatalf("dead-letter retained an unconsumed receipt: receipt=%+v error=%v", receipt, receiptErr)
 	}
 }
 

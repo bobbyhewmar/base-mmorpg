@@ -72,6 +72,13 @@ type GameplayEventRepository interface {
 	DeleteDeliveredBefore(ctx context.Context, cutoff time.Time, limit int) (int, error)
 }
 
+type GameplayEventReceiptRepository interface {
+	Reserve(ctx context.Context, receipt GameplayEventReceipt, claimOwnerID string, now time.Time, claimLease time.Duration) (GameplayEventReceiptReservation, error)
+	MarkConsumed(ctx context.Context, eventID int64, claimOwnerID string, consumedAt time.Time) (bool, error)
+	Release(ctx context.Context, eventID int64, claimOwnerID string) error
+	GetByEventID(ctx context.Context, eventID int64) (*GameplayEventReceipt, error)
+}
+
 type gameplayCommandEventWriter interface {
 	FinalizeGameplayCommandWithEvent(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, event *GameplayEvent) (bool, error)
 	FinalizeGameplayCommandWithEvents(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, events []*GameplayEvent) (int, error)
@@ -237,11 +244,20 @@ type Store struct {
 	AccountSessions    AccountSessionRepository
 	GameplayCommands   GameplayCommandRecordRepository
 	GameplayEvents     GameplayEventRepository
+	GameplayReceipts   GameplayEventReceiptRepository
 	registration       authRegistrationWriter
 	loginLookup        authLookupReader
 	characterSeed      characterBootstrapWriter
 	commandEventWriter gameplayCommandEventWriter
+	socialTransactions socialCommandTransactionRunner
 	closeFn            func() error
+}
+
+func (s *Store) RunSocialCommandTransaction(ctx context.Context, run func(context.Context) error) error {
+	if s == nil || s.socialTransactions == nil {
+		return errors.New("social command transaction runner is unavailable")
+	}
+	return s.socialTransactions.RunSocialCommandTransaction(ctx, run)
 }
 
 func NewStore(databaseURL string) (*Store, error) {
@@ -282,10 +298,12 @@ func NewStore(databaseURL string) (*Store, error) {
 		AccountSessions:    postgresAccountSessionRepo{backend: backend},
 		GameplayCommands:   postgresGameplayCommandRecordRepo{backend: backend},
 		GameplayEvents:     postgresGameplayEventRepo{backend: backend},
+		GameplayReceipts:   postgresGameplayEventReceiptRepo{backend: backend},
 		registration:       backend,
 		loginLookup:        backend,
 		characterSeed:      backend,
 		commandEventWriter: backend,
+		socialTransactions: backend,
 		closeFn:            db.Close,
 	}, nil
 }

@@ -219,6 +219,10 @@ func (s *Server) sendClanStateRefresh(ctx context.Context, characterID string) {
 }
 
 func (s *Server) refreshClanStates(ctx context.Context, characterIDs []string) {
+	deferredCharacterIDs := append([]string(nil), characterIDs...)
+	if deferSocialSideEffect(ctx, func() { s.refreshClanStates(context.Background(), deferredCharacterIDs) }) {
+		return
+	}
 	seen := map[string]struct{}{}
 	for _, characterID := range characterIDs {
 		if characterID == "" {
@@ -548,12 +552,17 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 			actorName+" invited you to join "+clan.Name+".",
 		)
 		if targetAttached != nil {
-			_ = targetAttached.dispatchAll(func(targetRuntime *attachedRuntime) []map[string]any {
-				return []map[string]any{
-					targetRuntime.clanDeltaMessage(targetClan, targetInvites),
-					targetNotice,
-				}
-			})
+			dispatch := func() {
+				_ = targetAttached.dispatchAll(func(targetRuntime *attachedRuntime) []map[string]any {
+					return []map[string]any{
+						targetRuntime.clanDeltaMessage(targetClan, targetInvites),
+						targetNotice,
+					}
+				})
+			}
+			if !deferSocialSideEffect(ctx, dispatch) {
+				dispatch()
+			}
 		} else if targetOwnership != nil {
 			if err := s.collectRemoteSocialDelivery(ctx, session, command, targetOwnership, inviteTargetID, remoteClanNoticeEventType, "clan-invite-received", targetNotice); err != nil {
 				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote clan invitation."))

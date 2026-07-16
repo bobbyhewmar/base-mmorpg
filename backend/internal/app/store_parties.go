@@ -307,7 +307,7 @@ func (repo memoryPartyRepo) ExpireInvites(_ context.Context, now time.Time) erro
 }
 
 func (p *postgresStoreBackend) GetPartyByID(ctx context.Context, partyID string) (*Party, error) {
-	row := p.db.QueryRowContext(
+	row := postgresExecutorFromContext(ctx, p.db).QueryRowContext(
 		ctx,
 		`SELECT party_id, leader_character_id, created_at, updated_at
 		 FROM parties
@@ -325,7 +325,7 @@ func (p *postgresStoreBackend) GetPartyByID(ctx context.Context, partyID string)
 }
 
 func (p *postgresStoreBackend) GetPartyByCharacterID(ctx context.Context, characterID string) (*Party, error) {
-	row := p.db.QueryRowContext(
+	row := postgresExecutorFromContext(ctx, p.db).QueryRowContext(
 		ctx,
 		`SELECT p.party_id, p.leader_character_id, p.created_at, p.updated_at
 		 FROM parties p
@@ -344,7 +344,7 @@ func (p *postgresStoreBackend) GetPartyByCharacterID(ctx context.Context, charac
 }
 
 func (p *postgresStoreBackend) ListPartyMembers(ctx context.Context, partyID string) ([]PartyMember, error) {
-	rows, err := p.db.QueryContext(
+	rows, err := postgresExecutorFromContext(ctx, p.db).QueryContext(
 		ctx,
 		`SELECT party_id, character_id, joined_at, created_at, updated_at
 		 FROM party_members
@@ -375,44 +375,40 @@ func (p *postgresStoreBackend) ListPartyMembers(ctx context.Context, partyID str
 }
 
 func (p *postgresStoreBackend) CreateParty(ctx context.Context, party *Party, leader PartyMember) error {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.ExecContext(
-		ctx,
-		`INSERT INTO parties (party_id, leader_character_id, created_at, updated_at)
+	return p.RunSocialCommandTransaction(ctx, func(txCtx context.Context) error {
+		executor := postgresExecutorFromContext(txCtx, p.db)
+		if _, err := executor.ExecContext(
+			txCtx,
+			`INSERT INTO parties (party_id, leader_character_id, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4)`,
-		party.ID,
-		party.LeaderCharacterID,
-		party.CreatedAt,
-		party.UpdatedAt,
-	); err != nil {
-		return mapPostgresError(err)
-	}
-
-	if leader.CharacterID != "" {
-		if _, err := tx.ExecContext(
-			ctx,
-			`INSERT INTO party_members (party_id, character_id, joined_at, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, $5)`,
-			leader.PartyID,
-			leader.CharacterID,
-			leader.JoinedAt,
-			leader.CreatedAt,
-			leader.UpdatedAt,
+			party.ID,
+			party.LeaderCharacterID,
+			party.CreatedAt,
+			party.UpdatedAt,
 		); err != nil {
 			return mapPostgresError(err)
 		}
-	}
 
-	return tx.Commit()
+		if leader.CharacterID != "" {
+			if _, err := executor.ExecContext(
+				txCtx,
+				`INSERT INTO party_members (party_id, character_id, joined_at, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5)`,
+				leader.PartyID,
+				leader.CharacterID,
+				leader.JoinedAt,
+				leader.CreatedAt,
+				leader.UpdatedAt,
+			); err != nil {
+				return mapPostgresError(err)
+			}
+		}
+		return nil
+	})
 }
 
 func (p *postgresStoreBackend) AddPartyMember(ctx context.Context, member *PartyMember) error {
-	_, err := p.db.ExecContext(
+	_, err := postgresExecutorFromContext(ctx, p.db).ExecContext(
 		ctx,
 		`INSERT INTO party_members (party_id, character_id, joined_at, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5)`,
@@ -426,7 +422,7 @@ func (p *postgresStoreBackend) AddPartyMember(ctx context.Context, member *Party
 }
 
 func (p *postgresStoreBackend) RemovePartyMember(ctx context.Context, partyID string, characterID string) error {
-	result, err := p.db.ExecContext(
+	result, err := postgresExecutorFromContext(ctx, p.db).ExecContext(
 		ctx,
 		`DELETE FROM party_members
 		 WHERE party_id = $1
@@ -448,7 +444,7 @@ func (p *postgresStoreBackend) RemovePartyMember(ctx context.Context, partyID st
 }
 
 func (p *postgresStoreBackend) UpdatePartyLeader(ctx context.Context, partyID string, leaderCharacterID string) error {
-	result, err := p.db.ExecContext(
+	result, err := postgresExecutorFromContext(ctx, p.db).ExecContext(
 		ctx,
 		`UPDATE parties
 		 SET leader_character_id = $2,
@@ -471,7 +467,7 @@ func (p *postgresStoreBackend) UpdatePartyLeader(ctx context.Context, partyID st
 }
 
 func (p *postgresStoreBackend) DeleteParty(ctx context.Context, partyID string) error {
-	result, err := p.db.ExecContext(ctx, `DELETE FROM parties WHERE party_id = $1`, partyID)
+	result, err := postgresExecutorFromContext(ctx, p.db).ExecContext(ctx, `DELETE FROM parties WHERE party_id = $1`, partyID)
 	if err != nil {
 		return err
 	}
@@ -486,7 +482,7 @@ func (p *postgresStoreBackend) DeleteParty(ctx context.Context, partyID string) 
 }
 
 func (p *postgresStoreBackend) listPartyInvites(ctx context.Context, query string, arg any, now time.Time) ([]PartyInvite, error) {
-	rows, err := p.db.QueryContext(ctx, query, arg, now)
+	rows, err := postgresExecutorFromContext(ctx, p.db).QueryContext(ctx, query, arg, now)
 	if err != nil {
 		return nil, err
 	}
@@ -549,7 +545,7 @@ func (p *postgresStoreBackend) ListPendingPartyInvitesByParty(ctx context.Contex
 }
 
 func (p *postgresStoreBackend) GetPartyInviteByID(ctx context.Context, inviteID string) (*PartyInvite, error) {
-	row := p.db.QueryRowContext(
+	row := postgresExecutorFromContext(ctx, p.db).QueryRowContext(
 		ctx,
 		`SELECT invite_id, party_id, inviter_character_id, invitee_character_id, expires_at, created_at, updated_at
 		 FROM party_invites
@@ -567,7 +563,7 @@ func (p *postgresStoreBackend) GetPartyInviteByID(ctx context.Context, inviteID 
 }
 
 func (p *postgresStoreBackend) CreatePartyInvite(ctx context.Context, invite *PartyInvite) error {
-	_, err := p.db.ExecContext(
+	_, err := postgresExecutorFromContext(ctx, p.db).ExecContext(
 		ctx,
 		`INSERT INTO party_invites (invite_id, party_id, inviter_character_id, invitee_character_id, expires_at, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -583,7 +579,7 @@ func (p *postgresStoreBackend) CreatePartyInvite(ctx context.Context, invite *Pa
 }
 
 func (p *postgresStoreBackend) DeletePartyInvite(ctx context.Context, inviteID string) error {
-	result, err := p.db.ExecContext(ctx, `DELETE FROM party_invites WHERE invite_id = $1`, inviteID)
+	result, err := postgresExecutorFromContext(ctx, p.db).ExecContext(ctx, `DELETE FROM party_invites WHERE invite_id = $1`, inviteID)
 	if err != nil {
 		return err
 	}
@@ -598,12 +594,12 @@ func (p *postgresStoreBackend) DeletePartyInvite(ctx context.Context, inviteID s
 }
 
 func (p *postgresStoreBackend) DeletePartyInvitesByParty(ctx context.Context, partyID string) error {
-	_, err := p.db.ExecContext(ctx, `DELETE FROM party_invites WHERE party_id = $1`, partyID)
+	_, err := postgresExecutorFromContext(ctx, p.db).ExecContext(ctx, `DELETE FROM party_invites WHERE party_id = $1`, partyID)
 	return err
 }
 
 func (p *postgresStoreBackend) DeletePendingPartyInviteForInvitee(ctx context.Context, partyID string, inviteeCharacterID string) error {
-	result, err := p.db.ExecContext(
+	result, err := postgresExecutorFromContext(ctx, p.db).ExecContext(
 		ctx,
 		`DELETE FROM party_invites
 		 WHERE party_id = $1
@@ -625,7 +621,7 @@ func (p *postgresStoreBackend) DeletePendingPartyInviteForInvitee(ctx context.Co
 }
 
 func (p *postgresStoreBackend) ExpirePartyInvites(ctx context.Context, now time.Time) error {
-	_, err := p.db.ExecContext(ctx, `DELETE FROM party_invites WHERE expires_at <= $1`, now)
+	_, err := postgresExecutorFromContext(ctx, p.db).ExecContext(ctx, `DELETE FROM party_invites WHERE expires_at <= $1`, now)
 	return err
 }
 

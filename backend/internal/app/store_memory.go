@@ -11,6 +11,7 @@ import (
 
 type memoryStoreBackend struct {
 	mu                  sync.Mutex
+	socialTxMu          sync.Mutex
 	accounts            map[string]*Account
 	accountByLogin      map[string]string
 	credentials         map[string]*CredentialRecord
@@ -18,6 +19,7 @@ type memoryStoreBackend struct {
 	commandRecords      map[string]*GameplayCommandRecord
 	gameplayEvents      map[int64]*GameplayEvent
 	gameplayEventByKey  map[string]int64
+	gameplayReceipts    map[int64]*GameplayEventReceipt
 	nextGameplayEventID int64
 	characters          map[string]*Character
 	characterCooldowns  map[string][]CharacterSkillCooldown
@@ -49,6 +51,7 @@ type memoryCredentialRepo struct{ backend *memoryStoreBackend }
 type memoryAccountSessionRepo struct{ backend *memoryStoreBackend }
 type memoryGameplayCommandRecordRepo struct{ backend *memoryStoreBackend }
 type memoryGameplayEventRepo struct{ backend *memoryStoreBackend }
+type memoryGameplayEventReceiptRepo struct{ backend *memoryStoreBackend }
 type memoryCharacterRepo struct{ backend *memoryStoreBackend }
 type memoryCharacterCooldownRepo struct{ backend *memoryStoreBackend }
 type memoryCharacterHotbarRepo struct{ backend *memoryStoreBackend }
@@ -76,6 +79,7 @@ func newMemoryStoreBackend() *memoryStoreBackend {
 		commandRecords:     map[string]*GameplayCommandRecord{},
 		gameplayEvents:     map[int64]*GameplayEvent{},
 		gameplayEventByKey: map[string]int64{},
+		gameplayReceipts:   map[int64]*GameplayEventReceipt{},
 		characters:         map[string]*Character{},
 		characterCooldowns: map[string][]CharacterSkillCooldown{},
 		characterHotbars:   map[string]CharacterHotbarState{},
@@ -112,6 +116,7 @@ func newMemoryStoreWithBackend(backend *memoryStoreBackend) *Store {
 		AccountSessions:    memoryAccountSessionRepo{backend: backend},
 		GameplayCommands:   memoryGameplayCommandRecordRepo{backend: backend},
 		GameplayEvents:     memoryGameplayEventRepo{backend: backend},
+		GameplayReceipts:   memoryGameplayEventReceiptRepo{backend: backend},
 		Characters:         memoryCharacterRepo{backend: backend},
 		CharacterCooldowns: memoryCharacterCooldownRepo{backend: backend},
 		CharacterHotbars:   memoryCharacterHotbarRepo{backend: backend},
@@ -129,6 +134,7 @@ func newMemoryStoreWithBackend(backend *memoryStoreBackend) *Store {
 		loginLookup:        backend,
 		characterSeed:      backend,
 		commandEventWriter: backend,
+		socialTransactions: backend,
 	}
 }
 

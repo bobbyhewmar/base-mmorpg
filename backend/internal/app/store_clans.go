@@ -363,7 +363,7 @@ func (repo memoryClanRepo) ExpireInvites(_ context.Context, now time.Time) error
 }
 
 func (p *postgresStoreBackend) GetClanByID(ctx context.Context, clanID string) (*Clan, error) {
-	row := p.db.QueryRowContext(
+	row := postgresExecutorFromContext(ctx, p.db).QueryRowContext(
 		ctx,
 		`SELECT clan_id, name, leader_character_id, created_at, updated_at
 		 FROM clans
@@ -381,7 +381,7 @@ func (p *postgresStoreBackend) GetClanByID(ctx context.Context, clanID string) (
 }
 
 func (p *postgresStoreBackend) GetClanByName(ctx context.Context, name string) (*Clan, error) {
-	row := p.db.QueryRowContext(
+	row := postgresExecutorFromContext(ctx, p.db).QueryRowContext(
 		ctx,
 		`SELECT clan_id, name, leader_character_id, created_at, updated_at
 		 FROM clans
@@ -399,7 +399,7 @@ func (p *postgresStoreBackend) GetClanByName(ctx context.Context, name string) (
 }
 
 func (p *postgresStoreBackend) GetClanByCharacterID(ctx context.Context, characterID string) (*Clan, error) {
-	row := p.db.QueryRowContext(
+	row := postgresExecutorFromContext(ctx, p.db).QueryRowContext(
 		ctx,
 		`SELECT c.clan_id, c.name, c.leader_character_id, c.created_at, c.updated_at
 		 FROM clans c
@@ -418,7 +418,7 @@ func (p *postgresStoreBackend) GetClanByCharacterID(ctx context.Context, charact
 }
 
 func (p *postgresStoreBackend) ListClanMembers(ctx context.Context, clanID string) ([]ClanMember, error) {
-	rows, err := p.db.QueryContext(
+	rows, err := postgresExecutorFromContext(ctx, p.db).QueryContext(
 		ctx,
 		`SELECT clan_id, character_id, joined_at, created_at, updated_at
 		 FROM clan_members
@@ -449,43 +449,39 @@ func (p *postgresStoreBackend) ListClanMembers(ctx context.Context, clanID strin
 }
 
 func (p *postgresStoreBackend) CreateClan(ctx context.Context, clan *Clan, leader ClanMember) error {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.ExecContext(
-		ctx,
-		`INSERT INTO clans (clan_id, name, leader_character_id, created_at, updated_at)
+	return p.RunSocialCommandTransaction(ctx, func(txCtx context.Context) error {
+		executor := postgresExecutorFromContext(txCtx, p.db)
+		if _, err := executor.ExecContext(
+			txCtx,
+			`INSERT INTO clans (clan_id, name, leader_character_id, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5)`,
-		clan.ID,
-		normalizeClanName(clan.Name),
-		clan.LeaderCharacterID,
-		clan.CreatedAt,
-		clan.UpdatedAt,
-	); err != nil {
-		return mapPostgresError(err)
-	}
+			clan.ID,
+			normalizeClanName(clan.Name),
+			clan.LeaderCharacterID,
+			clan.CreatedAt,
+			clan.UpdatedAt,
+		); err != nil {
+			return mapPostgresError(err)
+		}
 
-	if _, err := tx.ExecContext(
-		ctx,
-		`INSERT INTO clan_members (clan_id, character_id, joined_at, created_at, updated_at)
+		if _, err := executor.ExecContext(
+			txCtx,
+			`INSERT INTO clan_members (clan_id, character_id, joined_at, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5)`,
-		leader.ClanID,
-		leader.CharacterID,
-		leader.JoinedAt,
-		leader.CreatedAt,
-		leader.UpdatedAt,
-	); err != nil {
-		return mapPostgresError(err)
-	}
-
-	return tx.Commit()
+			leader.ClanID,
+			leader.CharacterID,
+			leader.JoinedAt,
+			leader.CreatedAt,
+			leader.UpdatedAt,
+		); err != nil {
+			return mapPostgresError(err)
+		}
+		return nil
+	})
 }
 
 func (p *postgresStoreBackend) AddClanMember(ctx context.Context, member *ClanMember) error {
-	_, err := p.db.ExecContext(
+	_, err := postgresExecutorFromContext(ctx, p.db).ExecContext(
 		ctx,
 		`INSERT INTO clan_members (clan_id, character_id, joined_at, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5)`,
@@ -499,7 +495,7 @@ func (p *postgresStoreBackend) AddClanMember(ctx context.Context, member *ClanMe
 }
 
 func (p *postgresStoreBackend) RemoveClanMember(ctx context.Context, clanID string, characterID string) error {
-	result, err := p.db.ExecContext(
+	result, err := postgresExecutorFromContext(ctx, p.db).ExecContext(
 		ctx,
 		`DELETE FROM clan_members
 		 WHERE clan_id = $1
@@ -521,7 +517,7 @@ func (p *postgresStoreBackend) RemoveClanMember(ctx context.Context, clanID stri
 }
 
 func (p *postgresStoreBackend) DeleteClan(ctx context.Context, clanID string) error {
-	result, err := p.db.ExecContext(ctx, `DELETE FROM clans WHERE clan_id = $1`, clanID)
+	result, err := postgresExecutorFromContext(ctx, p.db).ExecContext(ctx, `DELETE FROM clans WHERE clan_id = $1`, clanID)
 	if err != nil {
 		return err
 	}
@@ -536,7 +532,7 @@ func (p *postgresStoreBackend) DeleteClan(ctx context.Context, clanID string) er
 }
 
 func (p *postgresStoreBackend) listClanInvites(ctx context.Context, query string, arg any, now time.Time) ([]ClanInvite, error) {
-	rows, err := p.db.QueryContext(ctx, query, arg, now)
+	rows, err := postgresExecutorFromContext(ctx, p.db).QueryContext(ctx, query, arg, now)
 	if err != nil {
 		return nil, err
 	}
@@ -599,7 +595,7 @@ func (p *postgresStoreBackend) ListPendingClanInvitesByClan(ctx context.Context,
 }
 
 func (p *postgresStoreBackend) GetClanInviteByID(ctx context.Context, inviteID string) (*ClanInvite, error) {
-	row := p.db.QueryRowContext(
+	row := postgresExecutorFromContext(ctx, p.db).QueryRowContext(
 		ctx,
 		`SELECT invite_id, clan_id, inviter_character_id, invitee_character_id, expires_at, created_at, updated_at
 		 FROM clan_invites
@@ -617,7 +613,7 @@ func (p *postgresStoreBackend) GetClanInviteByID(ctx context.Context, inviteID s
 }
 
 func (p *postgresStoreBackend) CreateClanInvite(ctx context.Context, invite *ClanInvite) error {
-	_, err := p.db.ExecContext(
+	_, err := postgresExecutorFromContext(ctx, p.db).ExecContext(
 		ctx,
 		`INSERT INTO clan_invites (invite_id, clan_id, inviter_character_id, invitee_character_id, expires_at, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -636,61 +632,58 @@ func (p *postgresStoreBackend) AcceptClanInvite(ctx context.Context, inviteID st
 	if member == nil {
 		return errRecordNotFound
 	}
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	var clanID string
-	var inviteeCharacterID string
-	var expiresAt time.Time
-	if err := tx.QueryRowContext(
-		ctx,
-		`SELECT clan_id, invitee_character_id, expires_at
+	return p.RunSocialCommandTransaction(ctx, func(txCtx context.Context) error {
+		executor := postgresExecutorFromContext(txCtx, p.db)
+		var clanID string
+		var inviteeCharacterID string
+		var expiresAt time.Time
+		if err := executor.QueryRowContext(
+			txCtx,
+			`SELECT clan_id, invitee_character_id, expires_at
 		 FROM clan_invites
 		 WHERE invite_id = $1
 		 FOR UPDATE`,
-		inviteID,
-	).Scan(&clanID, &inviteeCharacterID, &expiresAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+			inviteID,
+		).Scan(&clanID, &inviteeCharacterID, &expiresAt); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errRecordNotFound
+			}
+			return err
+		}
+		if clanID != member.ClanID || inviteeCharacterID != member.CharacterID || !expiresAt.After(member.JoinedAt) {
 			return errRecordNotFound
 		}
-		return err
-	}
-	if clanID != member.ClanID || inviteeCharacterID != member.CharacterID || !expiresAt.After(member.JoinedAt) {
-		return errRecordNotFound
-	}
 
-	if _, err := tx.ExecContext(
-		ctx,
-		`INSERT INTO clan_members (clan_id, character_id, joined_at, created_at, updated_at)
+		if _, err := executor.ExecContext(
+			txCtx,
+			`INSERT INTO clan_members (clan_id, character_id, joined_at, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5)`,
-		member.ClanID,
-		member.CharacterID,
-		member.JoinedAt,
-		member.CreatedAt,
-		member.UpdatedAt,
-	); err != nil {
-		return mapPostgresError(err)
-	}
+			member.ClanID,
+			member.CharacterID,
+			member.JoinedAt,
+			member.CreatedAt,
+			member.UpdatedAt,
+		); err != nil {
+			return mapPostgresError(err)
+		}
 
-	result, err := tx.ExecContext(ctx, `DELETE FROM clan_invites WHERE invite_id = $1`, inviteID)
-	if err != nil {
-		return err
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rowsAffected != 1 {
-		return errRecordNotFound
-	}
-	return tx.Commit()
+		result, err := executor.ExecContext(txCtx, `DELETE FROM clan_invites WHERE invite_id = $1`, inviteID)
+		if err != nil {
+			return err
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected != 1 {
+			return errRecordNotFound
+		}
+		return nil
+	})
 }
 
 func (p *postgresStoreBackend) DeleteClanInvite(ctx context.Context, inviteID string) error {
-	result, err := p.db.ExecContext(ctx, `DELETE FROM clan_invites WHERE invite_id = $1`, inviteID)
+	result, err := postgresExecutorFromContext(ctx, p.db).ExecContext(ctx, `DELETE FROM clan_invites WHERE invite_id = $1`, inviteID)
 	if err != nil {
 		return err
 	}
@@ -705,7 +698,7 @@ func (p *postgresStoreBackend) DeleteClanInvite(ctx context.Context, inviteID st
 }
 
 func (p *postgresStoreBackend) DeleteClanInvitesByClan(ctx context.Context, clanID string) error {
-	result, err := p.db.ExecContext(ctx, `DELETE FROM clan_invites WHERE clan_id = $1`, clanID)
+	result, err := postgresExecutorFromContext(ctx, p.db).ExecContext(ctx, `DELETE FROM clan_invites WHERE clan_id = $1`, clanID)
 	if err != nil {
 		return err
 	}
@@ -720,7 +713,7 @@ func (p *postgresStoreBackend) DeleteClanInvitesByClan(ctx context.Context, clan
 }
 
 func (p *postgresStoreBackend) DeletePendingClanInviteForInvitee(ctx context.Context, clanID string, inviteeCharacterID string) error {
-	result, err := p.db.ExecContext(
+	result, err := postgresExecutorFromContext(ctx, p.db).ExecContext(
 		ctx,
 		`DELETE FROM clan_invites
 		 WHERE clan_id = $1
@@ -742,7 +735,7 @@ func (p *postgresStoreBackend) DeletePendingClanInviteForInvitee(ctx context.Con
 }
 
 func (p *postgresStoreBackend) ExpireClanInvites(ctx context.Context, now time.Time) error {
-	_, err := p.db.ExecContext(ctx, `DELETE FROM clan_invites WHERE expires_at <= $1`, now)
+	_, err := postgresExecutorFromContext(ctx, p.db).ExecContext(ctx, `DELETE FROM clan_invites WHERE expires_at <= $1`, now)
 	return err
 }
 

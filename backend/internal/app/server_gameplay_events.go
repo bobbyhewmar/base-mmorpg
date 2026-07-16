@@ -87,7 +87,7 @@ func (s *Server) dispatchGameplayEventsOnce(ctx context.Context, workerID string
 	for index := range events {
 		event := &events[index]
 		s.recordGameplayEvent("claimed", event, "")
-		if deliveryErr := s.deliverGameplayEvent(ctx, event); deliveryErr != nil {
+		if deliveryErr := s.deliverGameplayEvent(ctx, event, workerID); deliveryErr != nil {
 			s.failGameplayEvent(ctx, workerID, event, deliveryErr)
 			continue
 		}
@@ -107,7 +107,7 @@ func (s *Server) dispatchGameplayEventsOnce(ctx context.Context, workerID string
 	return len(events)
 }
 
-func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent) error {
+func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent, workerID string) error {
 	if event == nil || event.ID <= 0 {
 		return errors.New("invalid_event")
 	}
@@ -118,18 +118,63 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent)
 		s.recordSocialFanoutEvent("duplicate", event, "")
 		return nil
 	}
+	if s.store == nil || s.store.GameplayReceipts == nil {
+		return errors.New("social.receipt_store_unavailable")
+	}
+	receipt := GameplayEventReceipt{
+		EventID:              event.ID,
+		RecipientSessionID:   event.TargetSessionID,
+		RecipientCharacterID: event.TargetCharacterID,
+		ServerInstanceID:     event.TargetServerInstanceID,
+	}
+	reservation, err := s.store.GameplayReceipts.Reserve(ctx, receipt, workerID, time.Now(), s.config.GameplayEventClaimLease)
+	if err != nil {
+		return err
+	}
+	if reservation.Duplicate {
+		s.recordGameplayEventReceipt("duplicate_receipt", event, &reservation.Receipt)
+		s.recordSocialFanoutEvent("duplicate", event, "")
+		s.rememberGameplayEvent(event.ID)
+		return nil
+	}
+	if reservation.Busy || !reservation.Acquired {
+		return errors.New("social.receipt_pending")
+	}
+	s.recordGameplayEventReceipt("receipt_created", event, &reservation.Receipt)
+
+	var deliveryErr error
 	switch event.Type {
 	case remoteTargetNoticeEventType:
-		return s.deliverRemoteTargetNotice(ctx, event)
+		deliveryErr = s.deliverRemoteTargetNotice(ctx, event)
 	case remoteChatMessageEventType:
-		return s.deliverRemoteChatMessage(ctx, event)
+		deliveryErr = s.deliverRemoteChatMessage(ctx, event)
 	case remotePartyNoticeEventType:
-		return s.deliverRemotePartyNotice(ctx, event)
+		deliveryErr = s.deliverRemotePartyNotice(ctx, event)
 	case remoteClanNoticeEventType:
-		return s.deliverRemoteClanNotice(ctx, event)
+		deliveryErr = s.deliverRemoteClanNotice(ctx, event)
 	default:
-		return errors.New("unsupported_event_type")
+		deliveryErr = errors.New("unsupported_event_type")
 	}
+	if deliveryErr != nil {
+		if releaseErr := s.store.GameplayReceipts.Release(ctx, event.ID, workerID); releaseErr != nil {
+			s.recordStoreError("gameplay_event_receipts.release", releaseErr, errOwnershipStale)
+		}
+		return deliveryErr
+	}
+
+	// The socket accepted the authoritative payload. Remember it before the durable
+	// receipt update so an in-process retry cannot duplicate the visual delivery.
+	s.rememberGameplayEvent(event.ID)
+	consumed, err := s.store.GameplayReceipts.MarkConsumed(ctx, event.ID, workerID, time.Now())
+	if err != nil {
+		return err
+	}
+	if !consumed {
+		return errors.New("social.receipt_commit_failed")
+	}
+	storedReceipt, _ := s.store.GameplayReceipts.GetByEventID(ctx, event.ID)
+	s.recordGameplayEventReceipt("consumed", event, storedReceipt)
+	return nil
 }
 
 func (s *Server) deliverRemoteTargetNotice(ctx context.Context, event *GameplayEvent) error {
@@ -162,8 +207,33 @@ func (s *Server) deliverRemoteTargetNotice(ctx context.Context, event *GameplayE
 	if !attached.sendSerialized(notice) {
 		return errors.New("socket_delivery_failed")
 	}
-	s.rememberGameplayEvent(event.ID)
 	return nil
+}
+
+func (s *Server) recordGameplayEventReceipt(result string, event *GameplayEvent, receipt *GameplayEventReceipt) {
+	if s == nil || s.observer == nil || event == nil {
+		return
+	}
+	category := socialEventCategory(event.Type)
+	if category == "" {
+		category = "presence_notice"
+	}
+	s.observer.incCounter("l2bg_gameplay_event_receipts_total", "Total durable gameplay delivery receipts by lifecycle result.", map[string]string{
+		"category": category,
+		"result":   result,
+	}, 1)
+	fields := map[string]any{
+		"result":             result,
+		"category":           category,
+		"event_id":           event.ID,
+		"event_type":         event.Type,
+		"server_instance_id": s.config.ServerInstanceID,
+	}
+	if receipt != nil {
+		fields["recipient_session_id"] = receipt.RecipientSessionID
+		fields["recipient_character_id"] = receipt.RecipientCharacterID
+	}
+	s.observer.log("info", "gameplay_event_receipt", fields)
 }
 
 func (s *Server) failGameplayEvent(ctx context.Context, workerID string, event *GameplayEvent, deliveryErr error) {

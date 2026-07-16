@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -35,6 +36,34 @@ func gameplayCommandRecordStatusFromOutbound(messages []map[string]any) Gameplay
 	return gameplayCommandRecordStatusRejected
 }
 
+func isTransactionalSocialCommand(commandType string) bool {
+	switch commandType {
+	case "invite_party_member", "accept_party_invite", "decline_party_invite", "leave_party", "kick_party_member",
+		"create_clan", "invite_clan_member", "accept_clan_invite", "decline_clan_invite", "leave_clan", "kick_clan_member", "dissolve_clan":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) rehydrateSocialRuntimeAfterRollback(ctx context.Context, session *Session, runtime *attachedRuntime, commandType string) {
+	if session == nil || runtime == nil {
+		return
+	}
+	now := time.Now().UTC()
+	if strings.Contains(commandType, "party") {
+		party, invites, err := s.loadCharacterPartyState(ctx, session.CharacterID, now)
+		if err == nil {
+			_ = runtime.partyDeltaMessage(party, invites)
+		}
+		return
+	}
+	clan, invites, err := s.loadCharacterClanState(ctx, session.CharacterID, now)
+	if err == nil {
+		_ = runtime.clanDeltaMessage(clan, invites)
+	}
+}
+
 func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *Session, runtime *attachedRuntime, command commandEnvelope) ([]map[string]any, bool) {
 	startedAt := time.Now()
 	if session == nil || runtime == nil || s == nil || s.store == nil || s.store.GameplayCommands == nil {
@@ -48,17 +77,20 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 		return outboundMessages, false
 	}
 
-	if replay, resolved, shouldFanOut := s.resolveExistingGameplayCommandRecord(ctx, session.ID, command); resolved {
-		result := "replayed"
-		if extractRejectReason(replay) != "" {
-			result = "rejected"
+	transactionState := socialCommandTransactionFromContext(ctx)
+	if transactionState == nil {
+		if replay, resolved, shouldFanOut := s.resolveExistingGameplayCommandRecord(ctx, session.ID, command); resolved {
+			result := "replayed"
+			if extractRejectReason(replay) != "" {
+				result = "rejected"
+			}
+			s.recordCommandObservation(session.ID, command, replay, result, time.Since(startedAt))
+			return replay, shouldFanOut
 		}
-		s.recordCommandObservation(session.ID, command, replay, result, time.Since(startedAt))
-		return replay, shouldFanOut
 	}
 
 	shouldPersist := command.CommandID != "" && command.CommandSeq == runtime.expectedCommandSeqValue()
-	if shouldPersist {
+	if shouldPersist && transactionState == nil {
 		record := &GameplayCommandRecord{
 			SessionID:   session.ID,
 			CommandSeq:  command.CommandSeq,
@@ -83,6 +115,31 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 			s.recordCommandObservation(session.ID, command, outboundMessages, "rejected", time.Since(startedAt))
 			return outboundMessages, false
 		}
+	}
+
+	if shouldPersist && transactionState == nil && isTransactionalSocialCommand(command.Type) {
+		state := &socialCommandTransactionState{}
+		var outboundMessages []map[string]any
+		var shouldFanOut bool
+		transactionErr := s.store.RunSocialCommandTransaction(ctx, func(txCtx context.Context) error {
+			txCtx = context.WithValue(txCtx, socialCommandTransactionContextKey{}, state)
+			outboundMessages, shouldFanOut = s.processGameplayCommandWithDedup(txCtx, session, runtime, command)
+			return state.err
+		})
+		if transactionErr != nil {
+			s.recordStoreError("social.command_transaction", transactionErr)
+			log.Printf("social command transaction failed session=%s seq=%d: %v", session.ID, command.CommandSeq, transactionErr)
+			outboundMessages = []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to commit social command.")}
+			if err := s.store.GameplayCommands.UpdateOutcome(ctx, session.ID, command.CommandSeq, gameplayCommandRecordStatusRejected, outboundMessages); err != nil {
+				s.recordStoreError("gameplay_commands.reject_social_outcome", err)
+			}
+			s.rehydrateSocialRuntimeAfterRollback(ctx, session, runtime, command.Type)
+			return outboundMessages, false
+		}
+		for _, effect := range state.postCommit {
+			effect()
+		}
+		return outboundMessages, shouldFanOut
 	}
 
 	eventCollector := &gameplayEventCollector{}
@@ -163,12 +220,15 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 			finalizeErr = s.store.GameplayCommands.UpdateOutcome(ctx, session.ID, command.CommandSeq, status, outboundMessages)
 		}
 		if finalizeErr != nil {
+			if transactionState != nil {
+				transactionState.err = finalizeErr
+			}
 			s.recordStoreError("gameplay_commands.update_outcome", finalizeErr)
 			log.Printf("gameplay command dedup finalize failed session=%s seq=%d: %v", session.ID, command.CommandSeq, finalizeErr)
-			if eventCollector.chatMessage != nil {
-				outboundMessages = []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist chat delivery.")}
+			outboundMessages = []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist command outcome.")}
+			if transactionState == nil {
 				if err := s.store.GameplayCommands.UpdateOutcome(ctx, session.ID, command.CommandSeq, gameplayCommandRecordStatusRejected, outboundMessages); err != nil {
-					s.recordStoreError("gameplay_commands.reject_chat_outcome", err)
+					s.recordStoreError("gameplay_commands.reject_failed_outcome", err)
 				}
 			}
 		}
@@ -184,6 +244,9 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 		if commandTouchesDurableQuests(command.Type) {
 			s.persistCharacterQuestState(session.CharacterID, runtime)
 		}
+	}
+	if transactionState != nil && transactionState.err == nil && extractRejectReason(outboundMessages) == "system.persistence_failed" {
+		transactionState.err = errors.New("social command persistence failed")
 	}
 
 	if reasonCode := extractRejectReason(outboundMessages); reasonCode == "system.persistence_failed" {

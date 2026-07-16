@@ -192,6 +192,10 @@ func (s *Server) sendPartyStateRefresh(ctx context.Context, characterID string) 
 }
 
 func (s *Server) refreshPartyStates(ctx context.Context, characterIDs []string) {
+	deferredCharacterIDs := append([]string(nil), characterIDs...)
+	if deferSocialSideEffect(ctx, func() { s.refreshPartyStates(context.Background(), deferredCharacterIDs) }) {
+		return
+	}
 	seen := map[string]struct{}{}
 	for _, characterID := range characterIDs {
 		if characterID == "" {
@@ -547,12 +551,17 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 			actorName+" invited you to a party.",
 		)
 		if targetAttached != nil {
-			_ = targetAttached.dispatchAll(func(targetRuntime *attachedRuntime) []map[string]any {
-				return []map[string]any{
-					targetRuntime.partyDeltaMessage(targetParty, targetInvites),
-					targetNotice,
-				}
-			})
+			dispatch := func() {
+				_ = targetAttached.dispatchAll(func(targetRuntime *attachedRuntime) []map[string]any {
+					return []map[string]any{
+						targetRuntime.partyDeltaMessage(targetParty, targetInvites),
+						targetNotice,
+					}
+				})
+			}
+			if !deferSocialSideEffect(ctx, dispatch) {
+				dispatch()
+			}
 		} else if targetOwnership != nil {
 			if err := s.collectRemoteSocialDelivery(ctx, session, command, targetOwnership, inviteTargetID, remotePartyNoticeEventType, "party-invite-received", targetNotice); err != nil {
 				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote party invitation."))

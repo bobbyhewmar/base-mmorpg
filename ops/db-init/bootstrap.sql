@@ -552,6 +552,36 @@ CREATE INDEX IF NOT EXISTS idx_gameplay_event_outbox_target_character
   ON gameplay_event_outbox(target_character_id, event_id)
   WHERE target_character_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS gameplay_event_receipts (
+  event_id BIGINT PRIMARY KEY REFERENCES gameplay_event_outbox(event_id) ON DELETE CASCADE,
+  recipient_session_id TEXT NULL,
+  recipient_character_id TEXT NULL,
+  server_instance_id TEXT NOT NULL,
+  claim_owner_id TEXT NULL,
+  claim_deadline_at TIMESTAMPTZ NULL,
+  delivered_at TIMESTAMPTZ NULL,
+  consumed_at TIMESTAMPTZ NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_gameplay_event_receipts_recipient CHECK (
+    recipient_session_id IS NOT NULL OR recipient_character_id IS NOT NULL
+  ),
+  CONSTRAINT chk_gameplay_event_receipts_claim CHECK (
+    (claim_owner_id IS NULL AND claim_deadline_at IS NULL)
+    OR (claim_owner_id IS NOT NULL AND claim_deadline_at IS NOT NULL)
+  ),
+  CONSTRAINT chk_gameplay_event_receipts_consumed CHECK (
+    consumed_at IS NULL OR delivered_at IS NOT NULL
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_gameplay_event_receipts_recipient_character
+  ON gameplay_event_receipts(recipient_character_id, event_id)
+  WHERE recipient_character_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_gameplay_event_receipts_consumed_at
+  ON gameplay_event_receipts(consumed_at)
+  WHERE consumed_at IS NOT NULL;
+
 INSERT INTO schema_bootstrap (bootstrap_key)
 VALUES ('baseline_v1')
 ON CONFLICT (bootstrap_key) DO UPDATE

@@ -78,6 +78,96 @@ func TestMemoryGameplayEventConcurrentClaimDoesNotDuplicateDelivery(t *testing.T
 	}
 }
 
+func TestMemoryGameplayEventReceiptIsDurableAcrossConcurrentConsumers(t *testing.T) {
+	backend := newMemoryStoreBackend()
+	firstStore := newMemoryStoreWithBackend(backend)
+	secondStore := newMemoryStoreWithBackend(backend)
+	event := gameplayEventForTest("receipt-concurrent", "instance-b")
+	if created, err := firstStore.GameplayEvents.Create(context.Background(), event); err != nil || !created {
+		t.Fatalf("GameplayEvents.Create() created=%v error=%v", created, err)
+	}
+	receipt := GameplayEventReceipt{EventID: event.ID, RecipientCharacterID: "target", ServerInstanceID: "instance-b"}
+	start := make(chan struct{})
+	reservations := make(chan GameplayEventReceiptReservation, 2)
+	var wait sync.WaitGroup
+	for index, store := range []*Store{firstStore, secondStore} {
+		wait.Add(1)
+		go func(index int, store *Store) {
+			defer wait.Done()
+			<-start
+			reservation, reserveErr := store.GameplayReceipts.Reserve(context.Background(), receipt, "receipt-worker-"+string(rune('a'+index)), time.Now(), time.Minute)
+			if reserveErr != nil {
+				t.Errorf("GameplayReceipts.Reserve() error=%v", reserveErr)
+			}
+			reservations <- reservation
+		}(index, store)
+	}
+	close(start)
+	wait.Wait()
+	close(reservations)
+
+	acquired := 0
+	busy := 0
+	owner := ""
+	for reservation := range reservations {
+		if reservation.Acquired {
+			acquired++
+			owner = reservation.Receipt.ClaimOwnerID
+		}
+		if reservation.Busy {
+			busy++
+		}
+	}
+	if acquired != 1 || busy != 1 || owner == "" {
+		t.Fatalf("receipt reservations acquired=%d busy=%d owner=%q", acquired, busy, owner)
+	}
+	if consumed, err := firstStore.GameplayReceipts.MarkConsumed(context.Background(), event.ID, owner, time.Now()); err != nil || !consumed {
+		t.Fatalf("GameplayReceipts.MarkConsumed() consumed=%v error=%v", consumed, err)
+	}
+	replayed, err := secondStore.GameplayReceipts.Reserve(context.Background(), receipt, "receipt-restart-worker", time.Now(), time.Minute)
+	if err != nil || !replayed.Duplicate || replayed.Acquired || replayed.Receipt.ConsumedAt.IsZero() {
+		t.Fatalf("durable receipt replay=%+v error=%v", replayed, err)
+	}
+}
+
+func TestMemorySocialTransactionRollsBackMutationOutcomeAndOutbox(t *testing.T) {
+	store := newMemoryStore()
+	ctx := context.Background()
+	if err := store.Characters.Create(ctx, &Character{ID: "leader", AccountID: "social-tx-account", Name: "Social Tx Leader", Race: "Human", BaseClass: "Fighter", Sex: "Male", Level: 1, IsEnterable: true}); err != nil {
+		t.Fatalf("Characters.Create() error=%v", err)
+	}
+	record := &GameplayCommandRecord{SessionID: "social-tx-session", CommandSeq: 1, CommandID: "social-tx-command", CommandType: "invite_party_member", Status: gameplayCommandRecordStatusPending}
+	if err := store.GameplayCommands.CreatePending(ctx, record); err != nil {
+		t.Fatalf("CreatePending() error=%v", err)
+	}
+	party := &Party{ID: "social-tx-party", LeaderCharacterID: "leader", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	leader := PartyMember{PartyID: party.ID, CharacterID: "leader", JoinedAt: time.Now(), CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	event := gameplayEventForTest("social-tx-event", "instance-b")
+	sentinel := errors.New("force social transaction rollback")
+	err := store.RunSocialCommandTransaction(ctx, func(txCtx context.Context) error {
+		if createErr := store.Parties.Create(txCtx, party, leader); createErr != nil {
+			return createErr
+		}
+		if _, finalizeErr := store.FinalizeGameplayCommandWithEvents(txCtx, record.SessionID, record.CommandSeq, gameplayCommandRecordStatusApplied, []map[string]any{{"kind": "delta"}}, []*GameplayEvent{event}); finalizeErr != nil {
+			return finalizeErr
+		}
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("RunSocialCommandTransaction() error=%v", err)
+	}
+	if persistedParty, getErr := store.Parties.GetByID(ctx, party.ID); !errors.Is(getErr, errRecordNotFound) || persistedParty != nil {
+		t.Fatalf("rolled back party=%+v error=%v", persistedParty, getErr)
+	}
+	if persistedEvent, getErr := store.GameplayEvents.GetByIdempotencyKey(ctx, event.IdempotencyKey); !errors.Is(getErr, errRecordNotFound) || persistedEvent != nil {
+		t.Fatalf("rolled back event=%+v error=%v", persistedEvent, getErr)
+	}
+	persistedRecord, err := store.GameplayCommands.GetBySessionAndSeq(ctx, record.SessionID, record.CommandSeq)
+	if err != nil || persistedRecord.Status != gameplayCommandRecordStatusPending || len(persistedRecord.OutboundMessages) != 0 {
+		t.Fatalf("rolled back command=%+v error=%v", persistedRecord, err)
+	}
+}
+
 func TestMemoryGameplayEventFailureAndRetentionAreSafe(t *testing.T) {
 	store := newMemoryStore()
 	old := time.Now().Add(-2 * time.Hour)
@@ -454,5 +544,119 @@ func TestPostgresGameplayEventRetentionDeletesOnlyOldDeliveredRows(t *testing.T)
 	}
 	if _, err := env.store.GameplayEvents.GetByIdempotencyKey(context.Background(), pendingEvent.IdempotencyKey); err != nil {
 		t.Fatalf("pending PostgreSQL event was removed by retention: %v", err)
+	}
+}
+
+func TestPostgresGameplayEventReceiptSerializesConcurrentConsumers(t *testing.T) {
+	env := newPersistenceTestEnv(t)
+	event := gameplayEventForTest("pg-receipt-concurrent", "pg-instance-b")
+	if created, err := env.store.GameplayEvents.Create(context.Background(), event); err != nil || !created {
+		t.Fatalf("GameplayEvents.Create() created=%v error=%v", created, err)
+	}
+	receipt := GameplayEventReceipt{EventID: event.ID, RecipientCharacterID: "target", ServerInstanceID: "pg-instance-b"}
+	start := make(chan struct{})
+	reservations := make(chan GameplayEventReceiptReservation, 2)
+	var wait sync.WaitGroup
+	for index := 0; index < 2; index++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			reservation, reserveErr := env.store.GameplayReceipts.Reserve(context.Background(), receipt, "pg-receipt-worker-"+string(rune('a'+index)), time.Now(), time.Minute)
+			if reserveErr != nil {
+				t.Errorf("GameplayReceipts.Reserve() error=%v", reserveErr)
+			}
+			reservations <- reservation
+		}(index)
+	}
+	close(start)
+	wait.Wait()
+	close(reservations)
+
+	acquired := 0
+	busy := 0
+	owner := ""
+	for reservation := range reservations {
+		if reservation.Acquired {
+			acquired++
+			owner = reservation.Receipt.ClaimOwnerID
+		}
+		if reservation.Busy {
+			busy++
+		}
+	}
+	if acquired != 1 || busy != 1 || owner == "" {
+		t.Fatalf("PostgreSQL receipt reservations acquired=%d busy=%d owner=%q", acquired, busy, owner)
+	}
+	if consumed, err := env.store.GameplayReceipts.MarkConsumed(context.Background(), event.ID, owner, time.Now()); err != nil || !consumed {
+		t.Fatalf("GameplayReceipts.MarkConsumed() consumed=%v error=%v", consumed, err)
+	}
+	replayed, err := env.store.GameplayReceipts.Reserve(context.Background(), receipt, "pg-restart-worker", time.Now(), time.Minute)
+	if err != nil || !replayed.Duplicate || replayed.Receipt.ConsumedAt.IsZero() {
+		t.Fatalf("PostgreSQL durable receipt replay=%+v error=%v", replayed, err)
+	}
+}
+
+func TestPostgresSocialTransactionRollsBackMutationOutcomeAndOutbox(t *testing.T) {
+	env := newPersistenceTestEnv(t)
+	ctx := context.Background()
+	accountID, _ := registerAndLogin(t, env, "social.atomic.rollback@test")
+	character := &Character{
+		ID:           "char_social_atomic_rollback",
+		AccountID:    accountID,
+		Name:         "Social Atomic Rollback",
+		Race:         "Human",
+		BaseClass:    "Fighter",
+		Sex:          "Male",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+		PositionX:    -8,
+		PositionZ:    0,
+		IsEnterable:  true,
+	}
+	if err := env.store.CreateCharacterWithItemSeed(ctx, character, initialCharacterItemSeed(character)); err != nil {
+		t.Fatalf("CreateCharacterWithItemSeed() error=%v", err)
+	}
+	session := &Session{
+		ID:              "session_social_atomic_rollback",
+		AccountID:       accountID,
+		CharacterID:     character.ID,
+		AttachToken:     "attach_social_atomic_rollback",
+		AttachExpiresAt: time.Now().Add(time.Minute),
+		Status:          sessionStatusPendingAttach,
+	}
+	if err := env.store.GameplaySessions.Create(ctx, session); err != nil {
+		t.Fatalf("GameplaySessions.Create() error=%v", err)
+	}
+	record := &GameplayCommandRecord{SessionID: session.ID, CommandSeq: 1, CommandID: "pg-social-atomic-command", CommandType: "create_clan", Status: gameplayCommandRecordStatusPending}
+	if err := env.store.GameplayCommands.CreatePending(ctx, record); err != nil {
+		t.Fatalf("CreatePending() error=%v", err)
+	}
+	party := &Party{ID: "pg-social-atomic-party", LeaderCharacterID: character.ID, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	leader := PartyMember{PartyID: party.ID, CharacterID: character.ID, JoinedAt: time.Now(), CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	event := gameplayEventForTest("pg-social-atomic-event", "pg-instance-b")
+	event.TargetCharacterID = character.ID
+	sentinel := errors.New("force postgres social transaction rollback")
+	err := env.store.RunSocialCommandTransaction(ctx, func(txCtx context.Context) error {
+		if createErr := env.store.Parties.Create(txCtx, party, leader); createErr != nil {
+			return createErr
+		}
+		if _, finalizeErr := env.store.FinalizeGameplayCommandWithEvents(txCtx, session.ID, record.CommandSeq, gameplayCommandRecordStatusApplied, []map[string]any{{"kind": "delta"}}, []*GameplayEvent{event}); finalizeErr != nil {
+			return finalizeErr
+		}
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("RunSocialCommandTransaction() error=%v", err)
+	}
+	if persistedParty, getErr := env.store.Parties.GetByID(ctx, party.ID); !errors.Is(getErr, errRecordNotFound) || persistedParty != nil {
+		t.Fatalf("rolled back PostgreSQL party=%+v error=%v", persistedParty, getErr)
+	}
+	if persistedEvent, getErr := env.store.GameplayEvents.GetByIdempotencyKey(ctx, event.IdempotencyKey); !errors.Is(getErr, errRecordNotFound) || persistedEvent != nil {
+		t.Fatalf("rolled back PostgreSQL event=%+v error=%v", persistedEvent, getErr)
+	}
+	persistedRecord, err := env.store.GameplayCommands.GetBySessionAndSeq(ctx, session.ID, record.CommandSeq)
+	if err != nil || persistedRecord.Status != gameplayCommandRecordStatusPending || len(persistedRecord.OutboundMessages) != 0 {
+		t.Fatalf("rolled back PostgreSQL command=%+v error=%v", persistedRecord, err)
 	}
 }

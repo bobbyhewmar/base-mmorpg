@@ -423,7 +423,7 @@ func (p *postgresStoreBackend) UpdateGameplayCommandRecordOutcome(ctx context.Co
 	if err != nil {
 		return err
 	}
-	result, err := p.db.ExecContext(
+	result, err := postgresExecutorFromContext(ctx, p.db).ExecContext(
 		ctx,
 		`UPDATE gameplay_command_records
 		 SET status = $3,

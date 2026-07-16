@@ -588,44 +588,43 @@ func (backend *postgresStoreBackend) FinalizeGameplayCommandWithEvents(ctx conte
 	if err != nil {
 		return 0, err
 	}
-	tx, err := backend.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx,
-		`UPDATE gameplay_command_records
+	createdCount := 0
+	err = backend.RunSocialCommandTransaction(ctx, func(txCtx context.Context) error {
+		executor := postgresExecutorFromContext(txCtx, backend.db)
+		result, execErr := executor.ExecContext(txCtx,
+			`UPDATE gameplay_command_records
 		 SET status = $3,
 		     outcome_json = $4,
 		     updated_at = NOW()
 		 WHERE session_id = $1
 		   AND command_seq = $2`,
-		sessionID,
-		commandSeq,
-		string(status),
-		outcomeJSON,
-	)
-	if err != nil {
-		return 0, err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-	if rows == 0 {
-		return 0, errRecordNotFound
-	}
-	createdCount := 0
-	for _, event := range events {
-		created, insertErr := insertGameplayEvent(ctx, tx, event)
-		if insertErr != nil {
-			return 0, insertErr
+			sessionID,
+			commandSeq,
+			string(status),
+			outcomeJSON,
+		)
+		if execErr != nil {
+			return execErr
 		}
-		if created {
-			createdCount++
+		rows, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return rowsErr
 		}
-	}
-	if err := tx.Commit(); err != nil {
+		if rows == 0 {
+			return errRecordNotFound
+		}
+		for _, event := range events {
+			created, insertErr := insertGameplayEvent(txCtx, executor, event)
+			if insertErr != nil {
+				return insertErr
+			}
+			if created {
+				createdCount++
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return 0, err
 	}
 	return createdCount, nil
@@ -636,47 +635,46 @@ func (backend *postgresStoreBackend) FinalizeGameplayCommandWithChatAndEvents(ct
 	if err != nil {
 		return 0, err
 	}
-	tx, err := backend.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx,
-		`UPDATE gameplay_command_records
+	createdCount := 0
+	err = backend.RunSocialCommandTransaction(ctx, func(txCtx context.Context) error {
+		executor := postgresExecutorFromContext(txCtx, backend.db)
+		result, execErr := executor.ExecContext(txCtx,
+			`UPDATE gameplay_command_records
 		 SET status = $3,
 		     outcome_json = $4,
 		     updated_at = NOW()
 		 WHERE session_id = $1
 		   AND command_seq = $2`,
-		sessionID,
-		commandSeq,
-		string(status),
-		outcomeJSON,
-	)
-	if err != nil {
-		return 0, err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-	if rows == 0 {
-		return 0, errRecordNotFound
-	}
-	if err := insertChatMessage(ctx, tx, normalizeChatMessageRecord(chatMessage)); err != nil {
-		return 0, err
-	}
-	createdCount := 0
-	for _, event := range events {
-		created, insertErr := insertGameplayEvent(ctx, tx, event)
-		if insertErr != nil {
-			return 0, insertErr
+			sessionID,
+			commandSeq,
+			string(status),
+			outcomeJSON,
+		)
+		if execErr != nil {
+			return execErr
 		}
-		if created {
-			createdCount++
+		rows, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return rowsErr
 		}
-	}
-	if err := tx.Commit(); err != nil {
+		if rows == 0 {
+			return errRecordNotFound
+		}
+		if insertErr := insertChatMessage(txCtx, executor, normalizeChatMessageRecord(chatMessage)); insertErr != nil {
+			return insertErr
+		}
+		for _, event := range events {
+			created, insertErr := insertGameplayEvent(txCtx, executor, event)
+			if insertErr != nil {
+				return insertErr
+			}
+			if created {
+				createdCount++
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return 0, err
 	}
 	return createdCount, nil

@@ -75,6 +75,26 @@ type GameplayEventFailure struct {
 	DeadLettered bool
 }
 
+type GameplayEventReceipt struct {
+	EventID              int64
+	RecipientSessionID   string
+	RecipientCharacterID string
+	ServerInstanceID     string
+	ClaimOwnerID         string
+	ClaimDeadlineAt      time.Time
+	DeliveredAt          time.Time
+	ConsumedAt           time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+type GameplayEventReceiptReservation struct {
+	Receipt   GameplayEventReceipt
+	Acquired  bool
+	Duplicate bool
+	Busy      bool
+}
+
 type Character struct {
 	ID           string    `json:"character_id"`
 	Name         string    `json:"name"`

@@ -23,6 +23,27 @@ type gameplayEventCollector struct {
 	chatMessage *ChatMessageRecord
 }
 
+type socialCommandTransactionContextKey struct{}
+
+type socialCommandTransactionState struct {
+	err        error
+	postCommit []func()
+}
+
+func socialCommandTransactionFromContext(ctx context.Context) *socialCommandTransactionState {
+	state, _ := ctx.Value(socialCommandTransactionContextKey{}).(*socialCommandTransactionState)
+	return state
+}
+
+func deferSocialSideEffect(ctx context.Context, effect func()) bool {
+	state := socialCommandTransactionFromContext(ctx)
+	if state == nil || effect == nil {
+		return false
+	}
+	state.postCommit = append(state.postCommit, effect)
+	return true
+}
+
 type remoteSocialDeliveryPayload struct {
 	RecipientCharacterID string         `json:"recipient_character_id"`
 	Message              map[string]any `json:"message"`
@@ -123,7 +144,13 @@ func (s *Server) sendOrCollectSocialMessage(
 	}
 	switch scope {
 	case characterPresenceLocal:
-		if attached == nil || !attached.sendSerialized(message) {
+		if attached == nil {
+			return errors.New("social.socket_delivery_failed")
+		}
+		if deferSocialSideEffect(ctx, func() { _ = attached.sendSerialized(message) }) {
+			return nil
+		}
+		if !attached.sendSerialized(message) {
 			return errors.New("social.socket_delivery_failed")
 		}
 	case characterPresenceRemote:
@@ -257,7 +284,6 @@ func (s *Server) deliverRemoteChatMessage(ctx context.Context, event *GameplayEv
 	if !attached.sendSerialized(payload.Message) {
 		return errors.New("social.socket_delivery_failed")
 	}
-	s.rememberGameplayEvent(event.ID)
 	return nil
 }
 
@@ -280,7 +306,6 @@ func (s *Server) deliverRemotePartyNotice(ctx context.Context, event *GameplayEv
 	}) {
 		return errors.New("social.socket_delivery_failed")
 	}
-	s.rememberGameplayEvent(event.ID)
 	return nil
 }
 
@@ -303,7 +328,6 @@ func (s *Server) deliverRemoteClanNotice(ctx context.Context, event *GameplayEve
 	}) {
 		return errors.New("social.socket_delivery_failed")
 	}
-	s.rememberGameplayEvent(event.ID)
 	return nil
 }
 
