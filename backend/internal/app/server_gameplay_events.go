@@ -61,6 +61,8 @@ func (s *Server) startGameplayEventDispatcher(ctx context.Context) {
 				return
 			case <-pollTicker.C:
 				s.dispatchGameplayEventsOnce(ctx, s.gameplayEventWorkerID)
+			case request := <-s.regionProjectionQueue:
+				s.publishRegionProjectionRequest(ctx, request)
 			case <-cleanupTicker.C:
 				s.cleanupDeliveredGameplayEvents(ctx, time.Now())
 			}
@@ -117,6 +119,9 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent,
 	if s.gameplayEventWasSeen(event.ID) {
 		s.recordSocialFanoutEvent("duplicate", event, "")
 		s.recordRegionChatEvent("duplicate", event, "")
+		if isRegionPlayerProjectionEvent(event) {
+			s.recordRegionProjectionEvent("duplicate", event, nil, "")
+		}
 		return nil
 	}
 	if s.store == nil || s.store.GameplayReceipts == nil {
@@ -136,6 +141,9 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent,
 		s.recordGameplayEventReceipt("duplicate_receipt", event, &reservation.Receipt)
 		s.recordSocialFanoutEvent("duplicate", event, "")
 		s.recordRegionChatEvent("duplicate", event, "")
+		if isRegionPlayerProjectionEvent(event) {
+			s.recordRegionProjectionEvent("duplicate", event, nil, "durable_receipt")
+		}
 		s.rememberGameplayEvent(event.ID)
 		return nil
 	}
@@ -154,6 +162,8 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent,
 		deliveryErr = s.deliverRemotePartyNotice(ctx, event)
 	case remoteClanNoticeEventType:
 		deliveryErr = s.deliverRemoteClanNotice(ctx, event)
+	case regionPlayerProjectionEventType:
+		deliveryErr = s.deliverRegionPlayerProjection(ctx, event)
 	default:
 		deliveryErr = errors.New("unsupported_event_type")
 	}
@@ -218,6 +228,9 @@ func (s *Server) recordGameplayEventReceipt(result string, event *GameplayEvent,
 		return
 	}
 	category := socialEventCategory(event.Type)
+	if isRegionPlayerProjectionEvent(event) {
+		category = "region_projection"
+	}
 	if category == "" {
 		category = "presence_notice"
 	}
@@ -263,6 +276,9 @@ func (s *Server) failGameplayEvent(ctx context.Context, workerID string, event *
 	}
 	event.RetryCount = failure.RetryCount
 	s.recordGameplayEvent("failed", event, failureCode)
+	if isRegionPlayerProjectionEvent(event) {
+		s.recordRegionProjectionEvent("failed", event, nil, failureCode)
+	}
 	if failureCode == "social.recipient_stale_owner" {
 		s.recordSocialFanoutEvent("stale_owner", event, failureCode)
 		s.recordRegionChatEvent("stale_owner", event, failureCode)
@@ -273,6 +289,9 @@ func (s *Server) failGameplayEvent(ctx context.Context, workerID string, event *
 		s.recordGameplayEvent("dead_lettered", event, failureCode)
 		s.recordSocialFanoutEvent("dead_letter", event, failureCode)
 		s.recordRegionChatEvent("dead_letter", event, failureCode)
+		if isRegionPlayerProjectionEvent(event) {
+			s.recordRegionProjectionEvent("dead_letter", event, nil, failureCode)
+		}
 		return
 	}
 	s.recordGameplayEvent("retried", event, failureCode)

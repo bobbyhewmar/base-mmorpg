@@ -29,6 +29,8 @@ const (
 	defaultGameplayEventCleanupInterval = 10 * time.Minute
 	defaultGameplayEventBatchSize       = 32
 	defaultGameplayEventMaxRetries      = 5
+	defaultRegionProjectionTTL          = 6 * time.Second
+	defaultRegionProjectionHeartbeat    = 2 * time.Second
 )
 
 type RateLimitConfig struct {
@@ -54,6 +56,8 @@ type ServerConfig struct {
 	GameplayEventCleanupInterval time.Duration
 	GameplayEventBatchSize       int
 	GameplayEventMaxRetries      int
+	RegionProjectionTTL          time.Duration
+	RegionProjectionHeartbeat    time.Duration
 }
 
 type fixedWindowRateLimiter struct {
@@ -89,6 +93,8 @@ func defaultServerConfig() ServerConfig {
 		GameplayEventCleanupInterval: defaultGameplayEventCleanupInterval,
 		GameplayEventBatchSize:       defaultGameplayEventBatchSize,
 		GameplayEventMaxRetries:      defaultGameplayEventMaxRetries,
+		RegionProjectionTTL:          defaultRegionProjectionTTL,
+		RegionProjectionHeartbeat:    defaultRegionProjectionHeartbeat,
 	}
 }
 
@@ -135,6 +141,15 @@ func normalizeServerConfig(config ServerConfig) ServerConfig {
 	}
 	if config.GameplayEventMaxRetries <= 0 {
 		config.GameplayEventMaxRetries = defaults.GameplayEventMaxRetries
+	}
+	if config.RegionProjectionTTL <= 0 {
+		config.RegionProjectionTTL = defaults.RegionProjectionTTL
+	}
+	if config.RegionProjectionHeartbeat <= 0 || config.RegionProjectionHeartbeat >= config.RegionProjectionTTL {
+		config.RegionProjectionHeartbeat = config.RegionProjectionTTL / 3
+		if config.RegionProjectionHeartbeat <= 0 {
+			config.RegionProjectionHeartbeat = time.Millisecond
+		}
 	}
 	config.ServerInstanceID = strings.TrimSpace(config.ServerInstanceID)
 	config.AllowedOrigins = normalizeAllowedOrigins(config.AllowedOrigins)

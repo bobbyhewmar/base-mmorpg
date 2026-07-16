@@ -61,6 +61,9 @@ func (s *Server) renewSessionOwnership(ctx context.Context, session *Session, re
 	}
 	if attached := s.attachedSessionBySessionID(session.ID); attached != nil && attached.fencingToken == session.FencingToken {
 		attached.updateLease(ownership.LeaseExpiresAt)
+		if attached.regionProjectionRegion() != "" && attached.regionProjectionRegion() != ownership.RegionID {
+			s.enqueueRegionPlayerProjection(attached, regionProjectionActionUpsert, time.Now())
+		}
 	}
 	if observeSuccess {
 		s.recordOwnershipEvent("renewed", session, ownership)

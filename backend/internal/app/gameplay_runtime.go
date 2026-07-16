@@ -138,6 +138,7 @@ type attachedRuntime struct {
 	respawnPosition         runtimePoint
 	targetID                string
 	knownEntities           map[string]runtimeEntity
+	remotePlayerProjections map[string]remotePlayerProjectionMeta
 	spawnEntities           map[string]runtimeEntity
 	cooldownEndsAt          map[string]time.Time
 	scheduledLifecycle      []scheduledLifecycleEvent
@@ -495,6 +496,7 @@ func newAttachedRuntimeWithInitialEntities(sessionID string, character *Characte
 		facing:                  0,
 		respawnPosition:         runtimePoint{X: state.PositionX, Z: state.PositionZ},
 		knownEntities:           knownEntities,
+		remotePlayerProjections: map[string]remotePlayerProjectionMeta{},
 		spawnEntities:           spawnEntities,
 		cooldownEndsAt:          map[string]time.Time{},
 		nextLootSeq:             1,
@@ -1495,7 +1497,7 @@ func playerPresencePatchFromEntity(entity runtimeEntity) map[string]any {
 		"entity_id": entity.EntityID,
 		"position":  entity.Position,
 	}
-	for _, key := range []string{"name", "level", "race", "base_class", "sex", "hair_style", "hair_color", "skin_type", "cp", "hp", "dead", "pvp_flagged", "pvp_flag_until_ms", "pvp_kills", "pk_count", "karma", "facing", "mounted_pet_id"} {
+	for _, key := range []string{"name", "level", "race", "base_class", "sex", "hair_style", "hair_color", "skin_type", "cp", "hp", "dead", "pvp_flagged", "pvp_flag_until_ms", "pvp_kills", "pk_count", "karma", "facing", "mounted_pet_id", "moving", "movement_destination", "visual_target_id", "projection_only", "projection_fence", "projection_version"} {
 		if value, exists := entity.State[key]; exists {
 			patch[key] = value
 		}
@@ -1546,6 +1548,7 @@ func (runtime *attachedRuntime) applyRemotePlayerState(entity runtimeEntity) map
 
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
+	delete(runtime.remotePlayerProjections, entity.EntityID)
 
 	existing, exists := runtime.knownEntities[entity.EntityID]
 	if !exists || existing.EntityType != "player" {

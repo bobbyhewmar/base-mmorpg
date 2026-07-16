@@ -1188,6 +1188,59 @@ describe('online read model', () => {
     expect(model.snapshot.otherPlayers.char_other).toBeUndefined();
   });
 
+  it('renders a projection-only remote player without granting local target authority', () => {
+    const model = new OnlineReadModel(regionContext, character);
+
+    model.applyMessage({
+      kind: 'entity_appear',
+      emitted_at_ms: Date.now(),
+      region_revision: 2,
+      entity: {
+        entity_id: 'char_projected_remote',
+        entity_type: 'player',
+        template_id: 'player_character',
+        position: { x: 7, z: -2 },
+        state: {
+          name: 'Remote Projection',
+          race: 'Human',
+          base_class: 'Fighter',
+          sex: 'Female',
+          hair_style: 1,
+          hair_color: '#6b4e37',
+          skin_type: 0,
+          facing: 0.75,
+          moving: true,
+          movement_destination: { x: 12, z: -3 },
+          projection_only: true,
+          projection_fence: 4,
+          projection_version: 19,
+        },
+      },
+    });
+
+    expect(model.snapshot.otherPlayers.char_projected_remote).toMatchObject({
+      id: 'char_projected_remote',
+      name: 'Remote Projection',
+      position: { x: 7, z: -2 },
+      facing: 0.75,
+    });
+    const select = model.createSelectTarget('char_projected_remote');
+    expect(select).not.toBeNull();
+    expect(model.snapshot.targetId).toBeNull();
+
+    model.applyMessage({
+      kind: 'reject',
+      emitted_at_ms: Date.now(),
+      command_id: select!.command_id,
+      command_seq: select!.command_seq,
+      reason_code: 'presence.target_remote',
+      message: 'Projected remote players are not locally interactable.',
+    });
+
+    expect(model.snapshot.targetId).toBeNull();
+    expect(model.snapshot.otherPlayers.char_projected_remote).toBeDefined();
+  });
+
   it('snaps remote player interpolation for extreme position divergence', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));

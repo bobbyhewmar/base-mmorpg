@@ -40,21 +40,26 @@ type Server struct {
 	gameplayEventSeen     map[int64]struct{}
 	gameplayEventOrder    []int64
 	gameplayEventWorkerID string
+	regionProjectionQueue chan regionProjectionPublishRequest
 }
 
 type attachedSession struct {
-	sessionID        string
-	characterID      string
-	serverInstanceID string
-	fencingToken     int64
-	leaseMu          sync.Mutex
-	leaseExpiresAt   time.Time
-	runtime          *attachedRuntime
-	send             func(map[string]any) bool
-	ready            bool
-	dispatchMu       sync.Mutex
-	movementMu       sync.Mutex
-	pendingMove      *pendingMovementDispatch
+	sessionID             string
+	characterID           string
+	serverInstanceID      string
+	fencingToken          int64
+	leaseMu               sync.Mutex
+	leaseExpiresAt        time.Time
+	runtime               *attachedRuntime
+	send                  func(map[string]any) bool
+	ready                 bool
+	dispatchMu            sync.Mutex
+	movementMu            sync.Mutex
+	pendingMove           *pendingMovementDispatch
+	projectionMu          sync.Mutex
+	projectionVersion     int64
+	projectionRegionID    string
+	projectionPublishedAt time.Time
 }
 
 type pendingMovementDispatch struct {
@@ -154,6 +159,7 @@ func NewServerWithConfig(addr string, publicWSURL string, store *Store, config S
 		observer:              newObserver(),
 		gameplayEventSeen:     map[int64]struct{}{},
 		gameplayEventWorkerID: config.ServerInstanceID + "/" + randomID("outbox-worker"),
+		regionProjectionQueue: make(chan regionProjectionPublishRequest, regionProjectionQueueSize),
 	}
 	s.routes()
 	return s
@@ -1056,6 +1062,7 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.enqueueRegionPlayerProjection(attached, regionProjectionActionUpsert, time.Now())
 	s.fanOutPartyStateForCharacterExcept(loopCtx, session.CharacterID, session.CharacterID)
 
 	go func() {
@@ -1107,6 +1114,14 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 					s.persistCharacterProgression(session.CharacterID, runtime)
 					if !movementChanged {
 						s.fanOutPresenceState(session.ID, runtime)
+					}
+				}
+				if attached != nil && !movementChanged && attached.regionProjectionHeartbeatDue(now, s.config.RegionProjectionHeartbeat) {
+					s.enqueueRegionPlayerProjection(attached, regionProjectionActionUpsert, now)
+				}
+				if attached != nil {
+					if _, ok := s.expireAttachedRegionPlayerProjections(attached, now); !ok {
+						return
 					}
 				}
 				if attached != nil && attached.runtime != nil {
@@ -1394,6 +1409,7 @@ func (s *Server) unregisterAttachedSession(sessionID string, expectedFencingToke
 				return messages
 			})
 		}
+		s.enqueueRegionPlayerProjection(attached, regionProjectionActionDespawn, time.Now())
 	}
 	s.fanOutPartyStateForCharacter(context.Background(), attached.runtime.characterID)
 	s.observer.addGauge("l2bg_attached_sessions_active", "Currently attached gameplay sessions.", nil, -1)
@@ -1461,9 +1477,6 @@ func (s *Server) fanOutPresenceState(sourceSessionID string, sourceRuntime *atta
 		return
 	}
 	targets := s.readyRegionTargets(sourceSessionID, sourceRegionID)
-	if len(targets) == 0 {
-		return
-	}
 
 	entity := sourceRuntime.playerPresenceEntity()
 	petEntity, hasPetEntity := sourceRuntime.activePetEntity()
@@ -1480,6 +1493,9 @@ func (s *Server) fanOutPresenceState(sourceSessionID string, sourceRuntime *atta
 			}
 			return messages
 		})
+	}
+	if attached := s.attachedSessionBySessionID(sourceSessionID); attached != nil && attached.runtime == sourceRuntime {
+		s.enqueueRegionPlayerProjection(attached, regionProjectionActionUpsert, time.Now())
 	}
 }
 
