@@ -93,7 +93,7 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Presence cleanup on disconnect is verified.
 - [x] Durable ownership distinguishes a known player online on another instance from an offline or unknown player.
 - [x] `select_target` and PvP reject remote-owned players with `presence.target_remote` and never create local fallback success; a previously authoritative social target may be revalidated for a remote party/clan invite.
-- [x] PostgreSQL outbox provides monotonic ids, immutable idempotency keys, exact-instance claim leases, retry/dead-letter state, delivered-only retention, remote-target notice, remote whisper, remote region chat, and party/clan lifecycle notices.
+- [x] PostgreSQL outbox provides monotonic ids, immutable idempotency keys, exact-instance claim leases, retry/dead-letter state, delivered-only retention, remote-target notice, remote whisper/region chat, party/clan lifecycle notices, and exact-recipient regional player projections.
 - [x] Remote-target notice production is atomic with command finalization; identical replay cannot duplicate the event and conflicting replay remains rejected.
 - [x] Remote whisper history, command outcome, and delivery intent commit atomically; identical replay does not duplicate history, event, or visual delivery.
 - [x] Ownership drift uses explicit exact-session retry/dead-letter with `social.recipient_offline` or `social.recipient_stale_owner`; it does not reroute or fall back locally.
@@ -101,7 +101,10 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Durable recipient receipts serialize concurrent consumers and suppress a consumed event after logical consumer restart.
 - [x] Command-driven party/clan mutation, final command outcome, and remote outbox events commit or roll back as one PostgreSQL transaction; local fanout waits for commit.
 - [x] Ownership drift releases unconsumed receipt reservations and preserves retry/dead-letter without local success or automatic reroute.
-- [ ] Cross-instance movement, entity, party-chat broadcast, and combat fanout remain later slices; remote-online is not generally interactable.
+- [x] Same-region remote-owned players receive exact-recipient `presence.region_player_projection.v1` upsert/despawn events with durable receipts, source ownership revalidation, and fence/version ordering.
+- [x] Regional projection redelivery and older events cannot duplicate, overwrite, or resurrect a newer entity; TTL removes stale visuals while retaining an ordering tombstone.
+- [x] The browser reuses bounded other-player interpolation and does not set target or command success from projection appearance; backend selection/PvP remain `presence.target_remote`.
+- [ ] Party-chat broadcast, remote combat, remote entity authority, and mob/NPC/loot/pet replication remain later slices.
 
 ### Terrain and Pathfinding Reality
 

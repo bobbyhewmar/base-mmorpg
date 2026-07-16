@@ -40,7 +40,7 @@ The initial slice uses static region definitions already aligned to the compact 
 
 The region model is not a seamless-world streaming system and does not introduce cross-shard routing.
 
-The cross-instance foundation adds a durable ownership lookup without changing this spatial model. It can distinguish a ready local player from a player with an unexpired lease on another instance, but it does not fan out remote movement or synthesize remote visibility.
+The cross-instance foundation adds a durable ownership lookup and an exact-recipient visual projection path without changing this spatial model. Ownership distinguishes a ready local player from a player with an unexpired lease on another instance. A valid outbox projection may synthesize volatile remote visibility for same-region recipients, ordered by ownership fence plus projection version and removed by despawn or TTL.
 
 ## Minimum Presence Model
 
@@ -64,6 +64,8 @@ Presence exists to answer:
 - which region an entity belongs to
 - which sessions should know about the entity
 - which commands may legally reference the entity
+
+Cross-instance projection is a narrower visual form of presence. Its player entity carries `projection_only: true`, minimal renderer identity/appearance, position, facing, movement presentation, optional visual target, and fence/version. It intentionally omits combat resources and social truth. Projection membership is volatile and never grants local ownership.
 
 ## Definition of `known-set`
 
@@ -161,7 +163,7 @@ If the entity is not in `known-set`, the command must be rejected with a stable 
 
 For a player target, known-set membership does not authorize damage. The PvP path also requires live attachment in the same region, an open region policy, distinct living characters, non-matching party and clan membership, authoritative range, and the command-specific skill/resource rules in `docs/specs/pvp-pk.md`.
 
-If the known player is online on another instance, `select_target` and PvP reject with `presence.target_remote`. There is no local target success, remote combat mutation, or delivery fallback. A party/clan invite may continue only when its recipient came from an already authoritative player target that drifted remote; the command revalidates durable ownership and social eligibility and routes only the resulting lifecycle notice through the outbox. This never adds the remote player to `known-set`.
+If the known player is online on another instance, including a `projection_only` player introduced by regional fanout, `select_target` and PvP reject with `presence.target_remote`. There is no local target success, remote combat mutation, or delivery fallback. A party/clan invite may continue only when its recipient came from an already authoritative player target that drifted remote; the command revalidates durable ownership and social eligibility and routes only the resulting lifecycle notice through the outbox. Projection visibility by itself never authorizes that invite.
 
 ### Basic Attack
 
@@ -353,6 +355,7 @@ Initial correction reasons:
 
 - Each active session belongs to one primary region context at a time.
 - `known-set` is runtime-only.
+- cross-instance player projection is volatile visual state ordered by fence/version; it is not remote gameplay authority.
 - durable session ownership classifies local, remote-online, and offline without persisting visibility.
 - Entity-referencing commands depend on `known-set`.
 - `known-set` membership is not enough by itself to make an action legal.

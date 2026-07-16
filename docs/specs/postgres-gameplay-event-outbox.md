@@ -4,7 +4,7 @@
 
 Freeze the minimum cross-instance gameplay fanout contract that runs on the existing PostgreSQL deployment. This slice adds no Redis, external queue, broker, remote combat, client fallback, or map change.
 
-The shipped consumers are an informational remote-target notice plus canonical remote whisper, party-notice, and clan-notice delivery. They prove durable production, instance-scoped claiming, retry, delivery, and retention without making a remote player locally interactable or introducing remote combat, movement, or entity replication.
+The shipped consumers are an informational remote-target notice, canonical remote whisper/region chat, party/clan notices, and exact-recipient regional player projections. They prove durable production, instance-scoped claiming, retry, delivery, receipts, and retention without making a remote player locally authoritative or introducing remote combat.
 
 ## Conceptual Reference Boundary
 
@@ -42,6 +42,8 @@ Producers derive keys from the authoritative session, command sequence, purpose,
 
 `gameplay-command/{session_id}/{command_seq}/social/{purpose}/{recipient_character_id}`
 
+`region-player-projection/{source_character_id}/{source_fence}/{version}/{recipient_character_id}/{recipient_fence}`
+
 Disconnect-driven invite expiry has no gameplay command and uses its durable invite identity instead:
 
 `{party|clan}-invite/{invite_id}/disconnect-expired/{recipient_character_id}`
@@ -72,6 +74,8 @@ Concurrent workers cannot claim the same live row. An expired claim may be recla
 PostgreSQL time owns claim, delivery, retry, and dead-letter deadlines so clock skew between backend instances cannot steal or retain a claim early.
 
 Transport is at-least-once. `gameplay_event_receipts` persists `event_id`, recipient session/character, destination instance, claim lease, `delivered_at`, and `consumed_at`. A consumed receipt survives consumer restart: redelivery of the same event skips the socket and lets the outbox finish without a second visual message. Concurrent consumers serialize on the receipt row, so only one owns delivery. Failed ownership/socket validation releases an unconsumed reservation; retry and dead-letter never become local success.
+
+Regional player projections also use one exact-recipient receipt per outbox row. Their source fence plus version provides a second ordering barrier: an older delivered event cannot overwrite or resurrect a newer projection even when transport order differs from production order. See `cross-instance-region-player-projections.md`.
 
 Every delivery also carries the stable monotonic `event_id`, and the browser read-model keeps a bounded set of remote social event ids. Party and clan state still changes only from the freshly rehydrated authoritative delta sent before the notice; a notice alone is never mutation authority.
 
@@ -149,6 +153,8 @@ Logs include event id, event type, destination instance, retry count, and a boun
 
 `l2bg_region_chat_events_total{result}` and structured `region_chat` logs cover `region_chat_produced`, `local_delivered`, `remote_enqueued`, `remote_consumed`, `duplicate`, `stale_owner`, and `dead_letter`. They contain only routing/lifecycle metadata and never message text or payload JSON.
 
+`l2bg_region_projection_events_total{result}` and structured `region_player_projection` logs cover production, consumption, duplicate/stale suppression, expiry, despawn, failure, and dead-letter without logging payload JSON, display name, position, or visual target.
+
 ## Memory Adapter
 
 The memory adapter shares the same semantics for deterministic tests:
@@ -169,7 +175,7 @@ Two `Store` wrappers may share one memory backend to simulate separate server in
 ## Non-Goals
 
 - remote damage or cross-instance combat transactions
-- cross-instance movement or entity replication
+- cross-instance mob/NPC/loot/pet replication or any remote entity authority beyond player visual projection
 - cross-instance party-chat broadcast
 - state-changing remote party/clan authority beyond the already persisted domain command
 - Redis, broker, external queue, or event sourcing
@@ -184,6 +190,7 @@ Two `Store` wrappers may share one memory backend to simulate separate server in
 - delivered marking requires the current unexpired worker claim
 - identical command replay cannot duplicate the event
 - identical region-chat replay cannot duplicate local delivery, persisted history, remote event, durable receipt, or browser projection
+- an older or identical regional player projection cannot overwrite, resurrect, or duplicate a newer entity projection
 - conflicting command replay remains rejected
 - a remote notice never changes the actor's target or enables remote gameplay
 - a remote social notice never becomes party/clan state authority in the browser

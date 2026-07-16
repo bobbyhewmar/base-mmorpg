@@ -4,7 +4,7 @@
 
 Freeze the minimum durable ownership and fencing contract that lets more than one backend instance share PostgreSQL without allowing two instances to author the same online character.
 
-The ownership slice adds no Redis, external queue, shard transfer, map change, or client fallback. The PostgreSQL outbox now uses this registry for an informational remote-target notice, exact-owner remote whisper, region chat, and party/clan lifecycle notices; its separate contract is `postgres-gameplay-event-outbox.md`.
+The ownership slice adds no Redis, external queue, shard transfer, map change, or client fallback. The PostgreSQL outbox now uses this registry for an informational remote-target notice, exact-owner remote whisper/region chat, party/clan lifecycle notices, and exact-recipient regional player projections; its transport contract is `postgres-gameplay-event-outbox.md` and its visual-projection contract is `cross-instance-region-player-projections.md`.
 
 ## Concept Translation
 
@@ -76,7 +76,7 @@ When a local attachment is replaced after reconnect or expiry, the local registr
 - `offline`: no unexpired ownership exists
 - `unavailable`: ownership claims this instance but the matching ready runtime is not available yet
 
-This classification does not synthesize a remote runtime entity. It prevents remote-online characters from collapsing into fake local success or the same meaning as unknown/offline, and it may provide the exact destination ownership used by the durable outbox.
+This classification alone does not synthesize a remote runtime entity. A separate valid region-projection event may add a volatile `projection_only` player entity to a recipient runtime. Ownership still prevents remote-online characters from collapsing into fake local success or the same meaning as unknown/offline, and provides the exact destination tuple used by the durable outbox.
 
 For a player already present in runtime `known-set`, `select_target` and player PvP return `presence.target_remote` when that player is currently owned by another instance. A previously known player with no active ownership returns the existing domain-unavailable behavior or `presence.target_offline` for selection. A character absent from `known-set` still returns `world.entity_not_known`.
 
@@ -84,7 +84,7 @@ For a player already present in runtime `known-set`, `select_target` and player 
 
 A social invite may use a player target that was selected authoritatively while local and subsequently changed owner. Party/clan commands revalidate the current durable remote owner, region and domain eligibility, persist the invite on the backend, and queue an exact-owner lifecycle event. They never accept a client-authored substitute recipient. Remote whisper resolves canonical character identity by name and active ownership without adding the recipient to `known-set`.
 
-Region chat resolves its remote recipient set by listing active ownership rows for the actor's authoritative region. Every remote recipient is bound to the ownership's exact instance/session/character tuple. Consumption revalidates both ownership and attached runtime region; drift is stale ownership, not permission to reroute. This presence query does not persist `known-set` or synthesize remote entities. Remote PvP, movement, entity replication, and party-chat broadcast remain unsupported.
+Region chat and regional player projection resolve their remote recipient set by listing active ownership rows for the actor's authoritative region. Every remote recipient is bound to the ownership's exact instance/session/character tuple. Consumption revalidates both ownership and attached runtime region; drift is stale ownership, not permission to reroute. Projection upsert additionally revalidates the source owner/fence/region. The query never persists `known-set`; only a consumed projection event may add a volatile visual entity. Remote PvP, remote entity authority, mob replication, and party-chat broadcast remain unsupported.
 
 The destination owner also writes a durable receipt before attempting social delivery and marks it consumed after socket acceptance. If ownership drifts before consumption, the unconsumed reservation is released and the exact-destination event retries or dead-letters with `social.recipient_stale_owner`; it is never rerouted. A consumed receipt suppresses later redelivery even if ownership has since moved.
 
@@ -116,7 +116,7 @@ Logs include session, character, instance, fence, and lease deadline when availa
 
 ## Explicitly Deferred
 
-- cross-instance entity, movement, combat, or party-chat fanout
+- cross-instance combat, party-chat, mob/NPC/loot/pet replication, or remote entity authority
 - remote social-state mutation that is not already owned by the authoritative party/clan repository command
 - automatic reroute after an event's exact destination session changes; current policy retries and dead-letters
 - remote PvP execution

@@ -400,6 +400,7 @@ Specs principais:
 - `docs/specs/runtime-state.md`
 - `docs/specs/session-ownership-and-cross-instance-presence.md`
 - `docs/specs/postgres-gameplay-event-outbox.md`
+- `docs/specs/cross-instance-region-player-projections.md`
 - `docs/specs/server-terrain-geodata-pathfinding.md`
 
 Backlog:
@@ -1050,7 +1051,7 @@ Riscos residuais de auth/sessao:
 - rate limit ainda e in-memory e single-instance
 - ainda nao existe endpoint HTTP explicito de logout/revocation
 - sessoes expiradas sao rejeitadas na leitura, mas ainda nao ha limpeza operacional dedicada
-- fan-out cross-instance amplo ainda nao existe; a foundation atual classifica local, remote-online e offline e entrega notice de target, whisper remoto, region chat e notices party/clan via outbox PostgreSQL, mas entidade, movimento, party chat e combate remoto continuam pendentes
+- fan-out cross-instance amplo ainda nao existe; a foundation atual classifica local, remote-online e offline, entrega notice de target, whisper/region chat, notices party/clan e projecao visual versionada de player/movimento via outbox PostgreSQL, mas party chat, combate remoto e replicacao autoritativa continuam pendentes
 
 Foundation multi-instancia de sessao ja resolvida:
 
@@ -1070,6 +1071,8 @@ Foundation multi-instancia de sessao ja resolvida:
 - retention remove somente eventos entregues antigos; falhos permanecem para retry ou dead-letter
 - drift de ownership nao faz reroute implicito: destinatario offline/stale segue retry/dead-letter com reason interno estavel, sem fallback local
 - runtime e read-model mantem dedup limitado por `event_id`; party/clan reidratam delta autoritativo antes do notice remoto
+- `presence.region_player_projection.v1` publica upsert/despawn exato por ownership remoto da mesma regiao; fence + versao monotona impedem overwrite/resurrection stale, heartbeat repara snapshot e TTL remove visual sem conceder autoridade
+- a fila runtime de publicacao e limitada e nao bloqueia command/movement; o consumer revalida recipient e source ownership, usa receipts existentes e projeta apenas identity/appearance/position/facing/movement/target visual necessarios
 - o socket nao compartilha transacao com PostgreSQL: crash depois do send e antes de `consumed_at` ainda pode redeliver apos restart simultaneo de server/page; exactly-once exigiria ack duravel do client
 
 ### Ja resolvido na Fase C - Deduplicacao de comandos
@@ -1188,7 +1191,7 @@ Ainda falta:
 
 - region transfer
 - interest management real
-- fan-out cross-instance de entidade, movimento, party chat e combate
+- interest management mais fino, party chat, combate remoto e replicacao de mobs/NPC/loot/pets
 - ack duravel de consume no protocolo apenas se a ambiguidade residual socket/receipt justificar; reroute continua proibido sem contrato explicito
 - alliance social base
 
@@ -1741,7 +1744,7 @@ Sempre escolher a maior prioridade que:
 
 Prioridade atual recomendada:
 
-1. hardening sob carga e fault injection do fanout social PostgreSQL com receipts e region chat ja entregues, depois expansao deliberada para presence/entity, sem combate remoto, Redis ou fila externa antes de necessidade comprovada
+1. hardening sob carga e fault injection do fanout social e da projecao regional de players ja entregues, depois interest management mais fino, sem combate remoto, Redis ou fila externa antes de necessidade comprovada
 2. karma recovery, correlacao account/device e alerting sobre attribution/anti-feed ja auditados, sem ampliar para guerras/eventos ou aplicar punicao automatica ainda
 3. instancias, siege, olympiad e producao somente depois de ownership, presence cross-instance, PvP/PK e clan permanecerem estaveis
 
@@ -2228,15 +2231,15 @@ Antes de alterar qualquer arquivo, rode git status --short e inspecione o estado
 
 Estado atual que voce deve tratar como entregue, salvo evidencia contraria no codigo:
 - A foundation de ownership multi-instancia ja persiste um lease por personagem, `server_instance_id` e fencing monotono; attach concorrente tem um vencedor, stale owner rejeita antes de ack/dedup e release/unregister e condicional/idempotente.
-- Presence minima ja distingue local, remote-online e offline. O fan-out entre processos entrega notice de target, whisper remoto, region chat e notices de lifecycle party/clan via outbox PostgreSQL; `presence.target_remote` continua bloqueando select/PvP e nao existe fallback local.
-- O outbox cross-instance ja possui id monotono, chave idempotente imutavel por command/purpose/recipient, producao atomica com command outcome, whisper/region-history atomico, fanout regional local pos-commit, mutation party/clan na mesma transacao, claim seguro por instancia, receipts duraveis de delivery/consume, dedup runtime/read-model, retry/dead-letter, retention de entregues e observabilidade sem payload sensivel.
+- Presence minima ja distingue local, remote-online e offline. O fan-out entre processos entrega notice de target, whisper remoto, region chat, notices party/clan e projecoes visuais versionadas de player/movimento na mesma regiao via outbox PostgreSQL; `presence.target_remote` continua bloqueando select/PvP e nao existe fallback local.
+- O outbox cross-instance ja possui id monotono, chave idempotente imutavel por command/purpose/recipient ou source-fence-version/recipient-fence, producao atomica com command outcome quando aplicavel, whisper/region-history atomico, fanout regional local pos-commit, mutation party/clan na mesma transacao, claim seguro por instancia, receipts duraveis de delivery/consume, ordering de projecao, dedup runtime/read-model, retry/dead-letter, retention e observabilidade sem payload sensivel.
 - Fase L ja possui party canonica minima, social chat `region`/`party`/`whisper`, shared XP minimo, party-owned loot minimo e clan foundation hardened em slices autoritativos.
 - Fase M ja possui o primeiro slice PvP/PK autoritativo hardened para ataque e skill single-target, CP antes de HP, deadline de flag persistido, safe-area minima backend-only, classificacao PvP versus PK, counters/karma duraveis, row locking PostgreSQL multi-instancia, attribution de killer/assists, sinal de kill repetida, audit investigavel, morte/respawn backend-owned e replay duravel.
 - A regiao ativa atual usa `stonecross_plaza` apenas como id compativel, mas o mapa oficial foi resetado para uma area limpa 1024x1024 com `clean_plain_1024_geo_v1`, bounds `x=-512..512` e `z=-512..512`.
 - Renderer, ground raycast/picking plane, server geodata bounds, spawn/checkpoint, exits e testes precisam compartilhar esse mesmo contrato de mapa.
 - Nao reintroduza clamp hardcoded do mapa antigo, visual Stonecross, props/spawns antigos, blockers antigos, nem bounds antigos de `dawn_plaza`.
 
-Prioridade 1: validar o fanout social PostgreSQL com receipts e region chat sob carga multi-instancia e fault injection, e so depois expandir para presence/entity, preservando `presence.target_remote` para combate e sem introduzir Redis/fila externa antes de medir necessidade.
+Prioridade 1: validar o fanout social e a projecao regional de players PostgreSQL sob carga multi-instancia e fault injection, e so depois aprofundar interest management/party chat, preservando `presence.target_remote` para combate e sem introduzir Redis/fila externa antes de medir necessidade.
 - Reuse runtime autoritativo, persistencia curta e HUD classica.
 - Preserve toda autoridade de sessao, presence, party, chat, clan, shared XP, party loot, elegibilidade PvP, dano, morte e consequencias no backend.
 - Nao aceite membership, reward split, target legality, presence truth, chat delivery ou loot ownership vindo do client.

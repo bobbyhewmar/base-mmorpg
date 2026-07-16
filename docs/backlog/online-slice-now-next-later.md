@@ -54,6 +54,7 @@ The repository already contains these online capabilities:
 - PostgreSQL gameplay outbox with monotonic event ids, exact-instance claiming, immutable idempotency keys, retry/dead-letter state, delivered-only retention, and structured lifecycle observability
 - replay-safe remote-target notice from one instance to the current target owner while the originating command still rejects with `presence.target_remote`
 - replay-safe remote whisper plus party/clan lifecycle notices, with exact-session ownership validation, durable delivery/consume receipts, bounded server/client duplicate suppression, authoritative social-state rehydration, and explicit stale-owner retry/dead-letter
+- exact-recipient same-region player visual projections through the PostgreSQL outbox, with source/recipient ownership revalidation, monotonic fence/version ordering, heartbeat snapshots, despawn, TTL, and existing browser interpolation
 - command-driven party/clan mutation, command outcome, and remote outbox intents committed atomically, with local fanout deferred until commit
 - class-specific learned skills and active or passive categorization
 - authoritative skill book projection and persistent hotbar snapshot in `world/enter` and runtime deltas
@@ -94,7 +95,7 @@ Remaining work:
 
 The current execution priority should follow the master prompt and the real repository state:
 
-1. validate receipt-backed whisper/region/party/clan delivery under sustained multi-instance load and operational fault injection, then extend deliberately toward presence/entity delivery without remote combat or new infrastructure
+1. validate receipt-backed social and regional player-projection delivery under sustained multi-instance load and operational fault injection, then deepen interest management without remote combat or new infrastructure
 2. keep the shipped PvP/PK transaction and attribution audit under multi-actor load, then deepen karma recovery, account/device correlation, and alerting without automatic punishment
 3. instances, siege, olympiad, and broader competitive systems only after ownership, cross-instance presence delivery, PvP/PK, and clan base remain stable
 
@@ -134,7 +135,7 @@ Status:
 
 - concluida para o slice online atual
 - hardening multi-instancia concluido para ownership: attach serializado por personagem no PostgreSQL, lease renovavel, fencing monotono, stale-owner reject antes de ack/dedup e release idempotente/condicional
-- presence cross-instance minima distingue player local, remote-online e offline; outbox PostgreSQL entrega notice de target, whisper remoto, region chat e notices de lifecycle party/clan com dedup e reidratacao autoritativa, enquanto entidade, movimento, party chat e combate remoto continuam pendentes
+- presence cross-instance minima distingue player local, remote-online e offline; outbox PostgreSQL entrega notice de target, whisper remoto, region chat, notices party/clan e projecao visual versionada de player/movimento na mesma regiao, enquanto party chat, combate remoto e replicacao autoritativa continuam pendentes
 
 ### Fase F - Persistencia de Progressao Online
 
@@ -344,13 +345,14 @@ Status:
 - PostgreSQL cross-instance fanout now delivers command-correlated remote-target notice, remote whisper, region chat, and party/clan lifecycle notices; claim is destination-safe, replay/client delivery is deduplicated, social state is rehydrated before notices, drift retries/dead-letters, and no remote damage or local target success is created
 - durable recipient receipts now survive logical consumer restart, serialize competing consumers, and keep stale-owner/dead-letter paths free of visual success; party/clan command mutations now share the command/outbox transaction
 - region chat now resolves active same-region ownership server-side, commits sanitized history + command outcome + one exact-owner event per remote recipient atomically, delivers local recipients only after commit, excludes other regions, and revalidates ownership/runtime region without automatic reroute
+- regional player projection now publishes exact-recipient `upsert`/`despawn` events on attach, movement/state change, heartbeat, region change, and unregister; consumers keep projection-only known-set entities ordered by fence/version and expire stale visuals by TTL
 - AoE/chain PvP, auto-approach/repeat against players, pet/summon or weighted attribution, anti-feed enforcement/correlation/alerting, richer named-zone/content volumes, karma recovery, economic penalties, wars, siege, olympiad, events, ranking, and rewards remain later slices
 
 ## Later
 
 After the online foundation becomes secure, replay-safe, and observable, the roadmap can continue into:
 
-- cross-instance entity and movement delivery plus party-chat broadcast using the shipped ownership registry and PostgreSQL outbox, with infrastructure expansion only if measured load requires it
+- hardening/fault injection for shipped cross-instance social plus player-projection delivery, then finer interest management and party-chat broadcast, with infrastructure expansion only if measured load requires it
 - protocol-level client consume acknowledgements only if the residual socket-accept/receipt-commit ambiguity becomes operationally unacceptable; reroute remains a separate explicit policy decision
 - broader vendor and warehouse variants
 - PvP/PK expansion beyond the hardened single-target slice: karma recovery, economic/death penalties, alerting, richer named-zone/content policy, and weighted/non-player attribution

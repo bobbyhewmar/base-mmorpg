@@ -37,6 +37,7 @@ The following data lives in authoritative runtime memory:
 - current accepted movement destination
 - current region geodata version used for movement validation
 - current `known-set`
+- remote player projection fence/version, last-seen deadline, visibility tombstone, and projection-only entity state per recipient runtime
 - current target state
 - active cast state
 - active cooldown map
@@ -49,6 +50,7 @@ The following data lives in authoritative runtime memory:
 - current region-local entity presence
 - region-local revision counters used for outbound deltas
 - live PostgreSQL outbox poller identity plus a bounded set of successfully delivered informational event ids
+- bounded regional projection publisher queue plus per-owner projection version, last region, and heartbeat time
 
 ### Motivation
 
@@ -94,7 +96,7 @@ The current implementation persists skill cooldown recovery state in `character_
 
 The multi-instance session foundation persists one `gameplay_session_ownerships` row per currently claimed character. `gameplay_sessions.status = attached` is lifecycle history, not sufficient online truth. Attach acquisition serializes on the character row, renewal matches the exact session, instance, and fence, and conditional release prevents an old socket from closing a newer owner. PostgreSQL time owns deadlines; startup sanitation preserves unexpired owners belonging to other instances.
 
-The minimum fanout foundation persists one exact-instance delivery intent per row in `gameplay_event_outbox`. Command-correlated production commits with the command outcome when applicable, and command-driven party/clan mutations share that transaction. `gameplay_event_receipts` persists recipient-scoped delivery/consume truth so a completed event remains idempotent across consumer restart. Claim, retry, delivery, dead-letter, receipt, and retention state are durable; the worker loop and bounded live-event dedup set are runtime projections. This is an outbox, not event sourcing or frame-level presence persistence.
+The minimum fanout foundation persists one exact-instance delivery intent per row in `gameplay_event_outbox`. Command-correlated production commits with the command outcome when applicable, and command-driven party/clan mutations share that transaction. `gameplay_event_receipts` persists recipient-scoped delivery/consume truth so a completed event remains idempotent across consumer restart. Regional player snapshots/deltas also use exact-recipient rows and receipts, while source fence/version and TTL stay runtime ordering/presentation state. Claim, retry, delivery, dead-letter, receipt, and retention state are durable; the worker loop, projection queue, volatile projection entities, and bounded live-event dedup set are runtime projections. This is an outbox, not event sourcing or frame-level presence persistence.
 
 The hardened PvP/PK slice persists `pvp_kills`, `pk_count`, `karma`, and `pvp_flag_until` on `characters`. The flag deadline is absolute: attach/world-enter restore it only when it is still in the future, while server-time expiry clears the durable value before publishing the expiry transition. A player-combat hit locks both durable character rows in deterministic order and computes the resource transition from that locked truth. The same transaction commits attacker/victim combat resources, both flag deadlines, classification counters, attacker cooldown, lethal victim cooldown cleanup, attribution/anti-feed fields, and one `pvp_combat_events` row before success is published.
 
@@ -534,7 +536,7 @@ Predicted local-only movement does not update `known-set`. `known-set` changes o
 
 When a known player is referenced, runtime legality may additionally consult durable session ownership. A matching ready owner on this process is `local`; an unexpired owner on another `server_instance_id` is `remote`; no unexpired row is `offline`. This classification cannot add an entity to `known-set` and cannot authorize remote interaction by itself.
 
-The remote classification may route an informational target notice or a supported exact-recipient social event to the owning instance. Region recipient enumeration is a separate active-ownership query scoped by `region_id`; it does not materialize remote runtime state. Delivery still revalidates the target's current ownership, exact session, and ready local runtime, plus matching region for regional chat. It cannot authorize combat, synthesize remote `known-set` state, or turn a notice into party/clan state authority.
+The remote classification may route an informational target notice or a supported exact-recipient social event to the owning instance. Region recipient enumeration is a separate active-ownership query scoped by `region_id`; enumeration alone does not materialize remote runtime state. A consumed `presence.region_player_projection.v1` event is the explicit exception that may add a volatile `projection_only` entity to the recipient runtime known-set after recipient and source ownership revalidation. It still cannot authorize combat or turn a notice/projection into party/clan or gameplay authority.
 
 ## Anti-Examples
 
