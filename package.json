@@ -13,7 +13,8 @@
     "backend:build": "cd backend && go build ./...",
     "e2e": "playwright test",
     "e2e:install": "playwright install chromium",
-    "e2e:docker": "node scripts/run-e2e-docker.mjs"
+    "e2e:docker": "node scripts/run-e2e-docker.mjs",
+    "e2e:multi-backend": "node scripts/run-multi-backend-fanout.mjs"
   },
   "dependencies": {
     "three": "^0.179.1"

@@ -7,6 +7,8 @@ RUN go mod download
 
 COPY . .
 
+RUN go build -o /usr/local/bin/l2bg-server ./cmd/server
+
 EXPOSE 8080
 
-CMD ["go", "run", "./cmd/server"]
+CMD ["l2bg-server"]
