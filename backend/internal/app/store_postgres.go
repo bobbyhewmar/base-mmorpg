@@ -3815,6 +3815,39 @@ func (p *postgresStoreBackend) GetActiveSessionOwnershipByCharacterID(ctx contex
 	))
 }
 
+func (p *postgresStoreBackend) ListActiveSessionOwnershipsByRegion(ctx context.Context, regionID string) ([]SessionOwnership, error) {
+	rows, err := p.db.QueryContext(
+		ctx,
+		`SELECT ownership.character_id, ownership.session_id, ownership.server_instance_id, ownership.fencing_token, ownership.region_id,
+		        ownership.lease_expires_at, ownership.acquired_at, ownership.renewed_at
+		 FROM gameplay_session_ownerships ownership
+		 JOIN gameplay_sessions session ON session.session_id = ownership.session_id
+		 WHERE ownership.region_id = $1
+		   AND ownership.lease_expires_at > NOW()
+		   AND session.status = $2
+		 ORDER BY ownership.character_id, ownership.session_id`,
+		strings.TrimSpace(regionID),
+		string(sessionStatusAttached),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ownerships := make([]SessionOwnership, 0)
+	for rows.Next() {
+		ownership, scanErr := scanSessionOwnership(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		ownerships = append(ownerships, *ownership)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ownerships, nil
+}
+
 func (p *postgresStoreBackend) GetActiveSessionForCharacter(ctx context.Context, characterID string) (*Session, error) {
 	row := p.db.QueryRowContext(
 		ctx,
@@ -4254,6 +4287,10 @@ func (repo postgresGameplaySessionRepo) ReleaseOwnership(ctx context.Context, ch
 
 func (repo postgresGameplaySessionRepo) GetActiveOwnershipByCharacterID(ctx context.Context, characterID string) (*SessionOwnership, error) {
 	return repo.backend.GetActiveSessionOwnershipByCharacterID(ctx, characterID)
+}
+
+func (repo postgresGameplaySessionRepo) ListActiveOwnershipsByRegion(ctx context.Context, regionID string) ([]SessionOwnership, error) {
+	return repo.backend.ListActiveSessionOwnershipsByRegion(ctx, regionID)
 }
 
 func (repo postgresGameplaySessionRepo) GetActiveSessionForCharacter(ctx context.Context, characterID string) (*Session, error) {

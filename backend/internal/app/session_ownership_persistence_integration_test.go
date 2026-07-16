@@ -182,6 +182,14 @@ func TestPostgresSessionOwnershipSerializesTwoServerInstances(t *testing.T) {
 	if renewed.FencingToken != winnerSession.FencingToken {
 		t.Fatalf("renewal changed fencing token: before=%d after=%d", winnerSession.FencingToken, renewed.FencingToken)
 	}
+	regionOwnerships, err := secondStore.GameplaySessions.ListActiveOwnershipsByRegion(context.Background(), "dawn_plaza")
+	if err != nil || len(regionOwnerships) != 1 || regionOwnerships[0].CharacterID != character.ID || regionOwnerships[0].ServerInstanceID != winnerInstance {
+		t.Fatalf("ListActiveOwnershipsByRegion(dawn_plaza)=%+v error=%v", regionOwnerships, err)
+	}
+	otherRegionOwnerships, err := secondStore.GameplaySessions.ListActiveOwnershipsByRegion(context.Background(), "gate_road")
+	if err != nil || len(otherRegionOwnerships) != 0 {
+		t.Fatalf("ListActiveOwnershipsByRegion(gate_road)=%+v error=%v", otherRegionOwnerships, err)
+	}
 	wrongInstance := "pg-instance-a"
 	if winnerInstance == wrongInstance {
 		wrongInstance = "pg-instance-b"

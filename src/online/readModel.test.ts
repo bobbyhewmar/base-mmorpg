@@ -698,6 +698,19 @@ describe('online read model', () => {
       text: '[Region] Arden: Hello there',
       channel: 'region',
     });
+    const logsAfterRegion = model.snapshot.logs.length;
+    model.applyMessage({
+      kind: 'chat_message',
+      emitted_at_ms: Date.now(),
+      command_id: regionCommand?.command_id,
+      command_seq: regionCommand?.command_seq,
+      channel: 'region',
+      sender_character_id: 'char_1',
+      sender_name: 'Arden',
+      region_id: 'stonecross_plaza',
+      text: 'Hello there',
+    });
+    expect(model.snapshot.logs).toHaveLength(logsAfterRegion);
 
     const whisperCommand = model.createSendChatMessage('whisper', 'Meet at gate.', 'Selene');
     expect(whisperCommand?.type).toBe('send_chat_message');
@@ -754,6 +767,21 @@ describe('online read model', () => {
     const afterFirstWhisper = model.snapshot.logs.length;
     expect(model.applyMessage(remoteWhisper)).toEqual({ changed: false });
     expect(model.snapshot.logs).toHaveLength(afterFirstWhisper);
+
+    const remoteRegion = {
+      kind: 'chat_message' as const,
+      event_id: 44,
+      emitted_at_ms: Date.now(),
+      channel: 'region' as const,
+      sender_character_id: 'char_3',
+      sender_name: 'Bastion',
+      region_id: partyRegionContext.region_id,
+      text: 'Remote region hello.',
+    };
+    expect(model.applyMessage(remoteRegion)).toEqual({ changed: true });
+    const afterFirstRegion = model.snapshot.logs.length;
+    expect(model.applyMessage(remoteRegion)).toEqual({ changed: false });
+    expect(model.snapshot.logs).toHaveLength(afterFirstRegion);
 
     const remotePartyNotice = {
       kind: 'party_notice' as const,

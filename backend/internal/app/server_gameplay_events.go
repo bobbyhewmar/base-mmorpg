@@ -116,6 +116,7 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent,
 	}
 	if s.gameplayEventWasSeen(event.ID) {
 		s.recordSocialFanoutEvent("duplicate", event, "")
+		s.recordRegionChatEvent("duplicate", event, "")
 		return nil
 	}
 	if s.store == nil || s.store.GameplayReceipts == nil {
@@ -134,6 +135,7 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent,
 	if reservation.Duplicate {
 		s.recordGameplayEventReceipt("duplicate_receipt", event, &reservation.Receipt)
 		s.recordSocialFanoutEvent("duplicate", event, "")
+		s.recordRegionChatEvent("duplicate", event, "")
 		s.rememberGameplayEvent(event.ID)
 		return nil
 	}
@@ -174,6 +176,7 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent,
 	}
 	storedReceipt, _ := s.store.GameplayReceipts.GetByEventID(ctx, event.ID)
 	s.recordGameplayEventReceipt("consumed", event, storedReceipt)
+	s.recordRegionChatEvent("remote_consumed", event, "")
 	return nil
 }
 
@@ -262,12 +265,14 @@ func (s *Server) failGameplayEvent(ctx context.Context, workerID string, event *
 	s.recordGameplayEvent("failed", event, failureCode)
 	if failureCode == "social.recipient_stale_owner" {
 		s.recordSocialFanoutEvent("stale_owner", event, failureCode)
+		s.recordRegionChatEvent("stale_owner", event, failureCode)
 	} else {
 		s.recordSocialFanoutEvent("failed", event, failureCode)
 	}
 	if failure.DeadLettered {
 		s.recordGameplayEvent("dead_lettered", event, failureCode)
 		s.recordSocialFanoutEvent("dead_letter", event, failureCode)
+		s.recordRegionChatEvent("dead_letter", event, failureCode)
 		return
 	}
 	s.recordGameplayEvent("retried", event, failureCode)

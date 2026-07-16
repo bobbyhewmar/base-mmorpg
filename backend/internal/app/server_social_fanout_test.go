@@ -97,6 +97,125 @@ func (fixture *crossInstanceSocialFixture) resetMessages() {
 	fixture.targetMessagesMu.Unlock()
 }
 
+func TestRegionChatFansOutLocallyAndAcrossInstancesWithDurableDedup(t *testing.T) {
+	fixture := newCrossInstanceSocialFixture(t, "social_region")
+	remoteOtherCharacter, remoteOtherSession := createOwnershipTestCharacterAndSession(t, fixture.storeA, "social_region_remote_other", "social_region_remote_other_session")
+	remoteOtherOwned, err := fixture.storeB.GameplaySessions.AcquireOwnership(context.Background(), remoteOtherSession.ID, remoteOtherSession.AttachToken, "instance-b", time.Minute, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("AcquireOwnership(remote other region) error=%v", err)
+	}
+	if _, err := fixture.storeB.GameplaySessions.RenewOwnership(context.Background(), remoteOtherCharacter.ID, remoteOtherOwned.Session.ID, "instance-b", remoteOtherOwned.Session.FencingToken, "gate_road", time.Minute, 5*time.Minute); err != nil {
+		t.Fatalf("RenewOwnership(remote other region) error=%v", err)
+	}
+	remoteOtherCharacter.LastRegionID = "gate_road"
+	remoteOtherRuntime := newAttachedRuntime(remoteOtherOwned.Session.ID, remoteOtherCharacter)
+	remoteOtherMessages := make([]map[string]any, 0)
+	fixture.serverB.registerAttachedSession(remoteOtherOwned.Session.ID, remoteOtherRuntime, func(message map[string]any) bool {
+		remoteOtherMessages = append(remoteOtherMessages, message)
+		return true
+	}, remoteOtherOwned.Session)
+	t.Cleanup(func() {
+		fixture.serverB.unregisterAttachedSession(remoteOtherOwned.Session.ID, remoteOtherOwned.Session.FencingToken)
+	})
+	local := stageChatTestClient(t, fixture.serverA, fixture.storeA, "social_region_local_session", &Character{
+		ID:           "social_region_local",
+		AccountID:    "account_social_region_local",
+		Name:         "Local Listener",
+		BaseClass:    "Fighter",
+		Sex:          "Female",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+		CurrentCP:    80,
+		CurrentHP:    122,
+		CurrentMP:    58,
+	})
+	otherRegion := stageChatTestClient(t, fixture.serverA, fixture.storeA, "social_region_other_session", &Character{
+		ID:           "social_region_other",
+		AccountID:    "account_social_region_other",
+		Name:         "Other Region Listener",
+		BaseClass:    "Mage",
+		Sex:          "Male",
+		Level:        1,
+		LastRegionID: "gate_road",
+		CurrentCP:    80,
+		CurrentHP:    122,
+		CurrentMP:    58,
+	})
+	fixture.resetMessages()
+	local.resetMessages()
+	otherRegion.resetMessages()
+
+	command := commandEnvelope{
+		ProtocolVersion: 1,
+		CommandID:       "remote_region_chat_command",
+		CommandSeq:      1,
+		Type:            "send_chat_message",
+		Payload: mustMarshalCommandPayload(t, map[string]any{
+			"channel": chatChannelRegion,
+			"text":    "  same\nregion <b>only</b>  ",
+		}),
+	}
+	first, shouldFanOut := fixture.serverA.processGameplayCommandWithDedup(context.Background(), fixture.actor.session, fixture.actor.runtime, command)
+	if extractRejectReason(first) != "" || findChatMessage(first, chatChannelRegion) == nil {
+		t.Fatalf("region chat result=%+v fanout=%v", first, shouldFanOut)
+	}
+	if localMessage := findChatMessage(local.messages, chatChannelRegion); localMessage == nil || localMessage["text"] != "same region <b>only</b>" {
+		t.Fatalf("local region delivery=%+v", local.messages)
+	}
+	if otherMessage := findChatMessage(otherRegion.messages, chatChannelRegion); otherMessage != nil {
+		t.Fatalf("other region received chat=%+v", otherRegion.messages)
+	}
+	if countMessageKind(fixture.targetMessageSnapshot(), chatMessageKind) != 0 {
+		t.Fatalf("remote recipient received before outbox dispatch=%+v", fixture.targetMessageSnapshot())
+	}
+	if countMessageKind(remoteOtherMessages, chatMessageKind) != 0 {
+		t.Fatalf("remote other-region recipient received before dispatch=%+v", remoteOtherMessages)
+	}
+
+	eventKey := "gameplay-command/" + fixture.actor.session.ID + "/1/social/chat-region/" + fixture.targetCharacter.ID
+	event, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), eventKey)
+	if err != nil || event.TargetRegionID != "dawn_plaza" || event.TargetServerInstanceID != "instance-b" {
+		t.Fatalf("region chat event=%+v err=%v", event, err)
+	}
+	replayed, replayFanOut := fixture.serverA.processGameplayCommandWithDedup(context.Background(), fixture.actor.session, fixture.actor.runtime, command)
+	if extractRejectReason(replayed) != "" || replayFanOut || fixture.backend.nextGameplayEventID != 1 || countMessageKind(local.messages, chatMessageKind) != 1 {
+		t.Fatalf("region replay=%+v fanout=%v event_count=%d local=%+v", replayed, replayFanOut, fixture.backend.nextGameplayEventID, local.messages)
+	}
+	conflict := command
+	conflict.CommandID = "remote_region_chat_conflict"
+	conflict.Payload = mustMarshalCommandPayload(t, map[string]any{"channel": chatChannelRegion, "text": "different"})
+	conflicting, _ := fixture.serverA.processGameplayCommandWithDedup(context.Background(), fixture.actor.session, fixture.actor.runtime, conflict)
+	if reason := extractRejectReason(conflicting); reason != "sequence.conflicting_replay" {
+		t.Fatalf("region conflicting replay reason=%q outbound=%+v", reason, conflicting)
+	}
+	if records, listErr := fixture.storeA.ChatMessages.ListByCharacterID(context.Background(), fixture.actorCharacter.ID); listErr != nil || len(records) != 1 {
+		t.Fatalf("region chat history=%+v err=%v", records, listErr)
+	}
+
+	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/region-worker"); claimed != 1 {
+		t.Fatalf("region chat claimed=%d", claimed)
+	}
+	remoteMessages := fixture.targetMessageSnapshot()
+	remoteMessage := findChatMessage(remoteMessages, chatChannelRegion)
+	if remoteMessage == nil || remoteMessage["region_id"] != "dawn_plaza" || remoteMessage["event_id"] == nil {
+		t.Fatalf("remote region delivery=%+v", remoteMessages)
+	}
+	if countMessageKind(remoteOtherMessages, chatMessageKind) != 0 {
+		t.Fatalf("remote other-region recipient received chat=%+v", remoteOtherMessages)
+	}
+	if receipt, receiptErr := fixture.storeB.GameplayReceipts.GetByEventID(context.Background(), event.ID); receiptErr != nil || receipt.ConsumedAt.IsZero() {
+		t.Fatalf("region receipt=%+v error=%v", receipt, receiptErr)
+	}
+
+	restartedConsumer := NewServerWithConfig(":0", "", fixture.storeB, ServerConfig{ServerInstanceID: "instance-b"})
+	if err := restartedConsumer.deliverGameplayEvent(context.Background(), event, "instance-b/restarted-region-worker"); err != nil {
+		t.Fatalf("logical restart region redelivery error=%v", err)
+	}
+	if countMessageKind(fixture.targetMessageSnapshot(), chatMessageKind) != 1 {
+		t.Fatalf("logical restart duplicated region chat=%+v", fixture.targetMessageSnapshot())
+	}
+}
+
 func TestRemoteWhisperCrossesInstancesAndReplayDoesNotDuplicate(t *testing.T) {
 	fixture := newCrossInstanceSocialFixture(t, "social_whisper")
 	command := commandEnvelope{
@@ -301,9 +420,9 @@ func TestRemoteClanDisconnectExpiryNoticeIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestRemoteSocialDeliveryDeadLettersStableStaleOwner(t *testing.T) {
+func TestRemoteRegionChatDeadLettersStableStaleOwner(t *testing.T) {
 	fixture := newCrossInstanceSocialFixture(t, "social_stale")
-	notice := chatMessagePayload("", 0, chatChannelWhisper, fixture.actorCharacter.ID, fixture.actorCharacter.Name, fixture.targetCharacter.ID, fixture.targetCharacter.Name, "", "ownership drift", time.Now().UTC())
+	notice := chatMessagePayload("", 0, chatChannelRegion, fixture.actorCharacter.ID, fixture.actorCharacter.Name, "", "", "dawn_plaza", "ownership drift", time.Now().UTC())
 	payload, err := json.Marshal(remoteSocialDeliveryPayload{RecipientCharacterID: fixture.targetCharacter.ID, Message: notice})
 	if err != nil {
 		t.Fatalf("json.Marshal() error=%v", err)
@@ -313,6 +432,7 @@ func TestRemoteSocialDeliveryDeadLettersStableStaleOwner(t *testing.T) {
 		Type:                   remoteChatMessageEventType,
 		Payload:                payload,
 		TargetServerInstanceID: "instance-b",
+		TargetRegionID:         "dawn_plaza",
 		TargetSessionID:        fixture.target.session.ID,
 		TargetCharacterID:      fixture.targetCharacter.ID,
 	}

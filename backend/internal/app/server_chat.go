@@ -153,6 +153,10 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 	actorSessionID := runtime.sessionID
 	actorName := runtime.characterName
 	actorRegionID := runtime.regionID
+	if channel == chatChannelRegion && strings.TrimSpace(actorRegionID) == "" {
+		runtime.mu.Unlock()
+		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "chat.region_unavailable", "Region chat requires an authoritative current region."))
+	}
 
 	var partyMemberIDs []string
 	if channel == chatChannelParty {
@@ -260,6 +264,35 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote whisper delivery."))
 		}
 	}
+	remoteRegionEvents := make([]*GameplayEvent, 0)
+	if channel == chatChannelRegion {
+		ownerships, ownershipErr := s.store.GameplaySessions.ListActiveOwnershipsByRegion(ctx, actorRegionID)
+		if ownershipErr != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve authoritative region recipients."))
+		}
+		for index := range ownerships {
+			ownership := &ownerships[index]
+			if ownership.CharacterID == "" || ownership.CharacterID == actorCharacterID || ownership.ServerInstanceID == "" || ownership.SessionID == "" {
+				continue
+			}
+			if ownership.ServerInstanceID == s.config.ServerInstanceID {
+				continue
+			}
+			event, buildErr := buildRemoteSocialDeliveryEvent(
+				session,
+				command,
+				ownership,
+				ownership.CharacterID,
+				remoteChatMessageEventType,
+				"chat-region",
+				recipientMessage,
+			)
+			if buildErr != nil {
+				continue
+			}
+			remoteRegionEvents = append(remoteRegionEvents, event)
+		}
+	}
 	if err := collectChatMessage(ctx, record); err != nil {
 		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to stage chat history."))
 	}
@@ -268,14 +301,29 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote whisper delivery."))
 		}
 	}
+	for _, event := range remoteRegionEvents {
+		if err := collectGameplayEvent(ctx, event); err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote region chat delivery."))
+		}
+	}
 
 	switch channel {
 	case chatChannelRegion:
-		for _, target := range s.readyRegionTargets(actorSessionID, actorRegionID) {
+		localRecipients := s.readyRegionTargets(actorSessionID, actorRegionID)
+		deferSocialSideEffect(ctx, func() {
+			s.recordRegionChatEvent("region_chat_produced", nil, "")
+		})
+		for _, target := range localRecipients {
 			if target == nil {
 				continue
 			}
-			target.sendSerialized(recipientMessage)
+			targetSessionID := target.sessionID
+			targetCharacterID := target.characterID
+			deferSocialSideEffect(ctx, func() {
+				if s.deliverLocalRegionChat(targetSessionID, targetCharacterID, actorRegionID, recipientMessage) {
+					s.recordRegionChatEvent("local_delivered", nil, "")
+				}
+			})
 		}
 	case chatChannelParty:
 		notified := map[string]struct{}{
@@ -290,14 +338,55 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 			}
 			notified[memberCharacterID] = struct{}{}
 			if target := s.attachedSessionByCharacterID(memberCharacterID); target != nil {
-				target.sendSerialized(recipientMessage)
+				deferSocialSideEffect(ctx, func() { _ = target.sendSerialized(recipientMessage) })
 			}
 		}
 	case chatChannelWhisper:
 		if whisperTarget != nil && whisperTarget.runtime != nil && whisperTarget.runtime.characterID != actorCharacterID {
-			whisperTarget.sendSerialized(recipientMessage)
+			deferSocialSideEffect(ctx, func() { _ = whisperTarget.sendSerialized(recipientMessage) })
 		}
 	}
 
 	return append(outbound, senderMessage)
+}
+
+func (s *Server) deliverLocalRegionChat(sessionID string, characterID string, regionID string, message map[string]any) bool {
+	if s == nil || sessionID == "" || characterID == "" || regionID == "" || message == nil {
+		return false
+	}
+	s.attachedMu.Lock()
+	target := s.attached[sessionID]
+	valid := target != nil && target.ready && target.runtime != nil && target.send != nil && target.characterID == characterID
+	fencingToken := int64(0)
+	targetInstanceID := ""
+	if target != nil {
+		fencingToken = target.fencingToken
+		targetInstanceID = target.serverInstanceID
+	}
+	s.attachedMu.Unlock()
+	if !valid || target.runtime.regionIDValue() != regionID {
+		return false
+	}
+	if fencingToken != 0 {
+		ownershipCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		ownership, err := s.store.GameplaySessions.GetActiveOwnershipByCharacterID(ownershipCtx, characterID)
+		if err != nil || ownership.SessionID != sessionID || ownership.ServerInstanceID != targetInstanceID || ownership.FencingToken != fencingToken || ownership.RegionID != regionID {
+			s.recordRegionChatEvent("stale_owner", nil, "social.recipient_stale_owner")
+			return false
+		}
+	}
+	return target.sendSerialized(message)
+}
+
+func (s *Server) recordRegionChatReplay(command commandEnvelope, outbound []map[string]any) {
+	if command.Type != "send_chat_message" {
+		return
+	}
+	for _, message := range outbound {
+		if message["kind"] == chatMessageKind && message["channel"] == chatChannelRegion && message["command_id"] == command.CommandID {
+			s.recordRegionChatEvent("duplicate", nil, "")
+			return
+		}
+	}
 }

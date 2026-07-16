@@ -209,6 +209,7 @@ type GameplaySessionRepository interface {
 	RenewOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error)
 	ReleaseOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64) (bool, error)
 	GetActiveOwnershipByCharacterID(ctx context.Context, characterID string) (*SessionOwnership, error)
+	ListActiveOwnershipsByRegion(ctx context.Context, regionID string) ([]SessionOwnership, error)
 	GetActiveSessionForCharacter(ctx context.Context, characterID string) (*Session, error)
 }
 

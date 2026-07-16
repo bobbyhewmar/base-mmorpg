@@ -200,6 +200,8 @@ export const formatRejectMessage = (
       return 'Clan leave failed: leader must dissolve the clan in this phase.';
     case 'chat.channel_unknown':
       return 'Chat send failed: channel is not available in this slice.';
+    case 'chat.region_unavailable':
+      return 'Region chat failed: authoritative region is unavailable.';
     case 'chat.message_empty':
       return 'Chat send failed: message cannot be empty.';
     case 'chat.message_too_long':

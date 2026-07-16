@@ -80,6 +80,7 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 	transactionState := socialCommandTransactionFromContext(ctx)
 	if transactionState == nil {
 		if replay, resolved, shouldFanOut := s.resolveExistingGameplayCommandRecord(ctx, session.ID, command); resolved {
+			s.recordRegionChatReplay(command, replay)
 			result := "replayed"
 			if extractRejectReason(replay) != "" {
 				result = "rejected"
@@ -101,6 +102,7 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 		if err := s.store.GameplayCommands.CreatePending(ctx, record); err != nil {
 			if errors.Is(err, errRecordConflict) {
 				if replay, resolved, shouldFanOut := s.resolveExistingGameplayCommandRecord(ctx, session.ID, command); resolved {
+					s.recordRegionChatReplay(command, replay)
 					result := "replayed"
 					if extractRejectReason(replay) != "" {
 						result = "rejected"
@@ -187,6 +189,7 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 
 	outboundMessages = s.applyPartyRewardSharing(session, runtime, command, outboundMessages)
 
+	commandCommitted := false
 	if shouldPersist {
 		status := gameplayCommandRecordStatusFromOutbound(outboundMessages)
 		var finalizeErr error
@@ -194,6 +197,7 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 			var created int
 			created, finalizeErr = s.store.FinalizeGameplayCommandWithChatAndEvents(ctx, session.ID, command.CommandSeq, status, outboundMessages, *eventCollector.chatMessage, eventCollector.events)
 			if finalizeErr == nil {
+				commandCommitted = true
 				for _, event := range eventCollector.events {
 					result := "produced"
 					if created != len(eventCollector.events) {
@@ -201,12 +205,14 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 					}
 					s.recordGameplayEvent(result, event, "")
 					s.recordSocialFanoutEvent(result, event, "")
+					s.recordRegionChatEnqueue(event, result)
 				}
 			}
 		} else if len(eventCollector.events) > 0 {
 			var created int
 			created, finalizeErr = s.store.FinalizeGameplayCommandWithEvents(ctx, session.ID, command.CommandSeq, status, outboundMessages, eventCollector.events)
 			if finalizeErr == nil {
+				commandCommitted = true
 				for _, event := range eventCollector.events {
 					result := "produced"
 					if created != len(eventCollector.events) {
@@ -214,10 +220,12 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 					}
 					s.recordGameplayEvent(result, event, "")
 					s.recordSocialFanoutEvent(result, event, "")
+					s.recordRegionChatEnqueue(event, result)
 				}
 			}
 		} else {
 			finalizeErr = s.store.GameplayCommands.UpdateOutcome(ctx, session.ID, command.CommandSeq, status, outboundMessages)
+			commandCommitted = finalizeErr == nil
 		}
 		if finalizeErr != nil {
 			if transactionState != nil {
@@ -231,6 +239,11 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 					s.recordStoreError("gameplay_commands.reject_failed_outcome", err)
 				}
 			}
+		}
+	}
+	if commandCommitted && transactionState == nil {
+		for _, effect := range eventCollector.postCommit {
+			effect()
 		}
 	}
 

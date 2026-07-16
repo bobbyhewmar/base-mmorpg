@@ -2061,6 +2061,35 @@ func (repo memoryGameplaySessionRepo) GetActiveOwnershipByCharacterID(_ context.
 	return &copy, nil
 }
 
+func (repo memoryGameplaySessionRepo) ListActiveOwnershipsByRegion(_ context.Context, regionID string) ([]SessionOwnership, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	regionID = strings.TrimSpace(regionID)
+	if regionID == "" {
+		return []SessionOwnership{}, nil
+	}
+	now := time.Now().UTC()
+	ownerships := make([]SessionOwnership, 0)
+	for _, ownership := range repo.backend.sessionOwnerships {
+		if ownership == nil || ownership.RegionID != regionID || !ownership.LeaseExpiresAt.After(now) {
+			continue
+		}
+		session := repo.backend.sessions[ownership.SessionID]
+		if session == nil || session.Status != sessionStatusAttached {
+			continue
+		}
+		ownerships = append(ownerships, *ownership)
+	}
+	sort.Slice(ownerships, func(left, right int) bool {
+		if ownerships[left].CharacterID != ownerships[right].CharacterID {
+			return ownerships[left].CharacterID < ownerships[right].CharacterID
+		}
+		return ownerships[left].SessionID < ownerships[right].SessionID
+	})
+	return ownerships, nil
+}
+
 func (repo memoryGameplaySessionRepo) GetActiveSessionForCharacter(_ context.Context, characterID string) (*Session, error) {
 	repo.backend.mu.Lock()
 	defer repo.backend.mu.Unlock()

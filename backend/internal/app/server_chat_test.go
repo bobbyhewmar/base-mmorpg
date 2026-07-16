@@ -7,6 +7,22 @@ import (
 	"time"
 )
 
+type failingChatCommandEventWriter struct {
+	delegate gameplayCommandEventWriter
+}
+
+func (writer failingChatCommandEventWriter) FinalizeGameplayCommandWithEvent(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, event *GameplayEvent) (bool, error) {
+	return writer.delegate.FinalizeGameplayCommandWithEvent(ctx, sessionID, commandSeq, status, outboundMessages, event)
+}
+
+func (writer failingChatCommandEventWriter) FinalizeGameplayCommandWithEvents(ctx context.Context, sessionID string, commandSeq int, status GameplayCommandRecordStatus, outboundMessages []map[string]any, events []*GameplayEvent) (int, error) {
+	return writer.delegate.FinalizeGameplayCommandWithEvents(ctx, sessionID, commandSeq, status, outboundMessages, events)
+}
+
+func (writer failingChatCommandEventWriter) FinalizeGameplayCommandWithChatAndEvents(context.Context, string, int, GameplayCommandRecordStatus, []map[string]any, ChatMessageRecord, []*GameplayEvent) (int, error) {
+	return 0, errors.New("injected chat transaction failure")
+}
+
 func stageChatTestClient(t *testing.T, server *Server, store *Store, sessionID string, character *Character) *partyTestClient {
 	t.Helper()
 
@@ -152,6 +168,46 @@ func TestServerChatRegionFanOutAndPersistence(t *testing.T) {
 	}
 	if records[0].Channel != chatChannelRegion || records[0].RegionID != "dawn_plaza" || records[0].Text != "<b>Hello</b> world" {
 		t.Fatalf("unexpected persisted chat record %+v", records[0])
+	}
+}
+
+func TestServerRegionChatDoesNotDeliverLocallyBeforeAtomicCommit(t *testing.T) {
+	store := newMemoryStore()
+	server := NewServer(":0", "", store)
+	sender := stageChatTestClient(t, server, store, "sess_chat_atomic_sender", &Character{
+		ID:           "char_chat_atomic_sender",
+		AccountID:    "acc_chat_atomic_sender",
+		Name:         "Atomic Sender",
+		BaseClass:    "Fighter",
+		Sex:          "Female",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+	})
+	recipient := stageChatTestClient(t, server, store, "sess_chat_atomic_recipient", &Character{
+		ID:           "char_chat_atomic_recipient",
+		AccountID:    "acc_chat_atomic_recipient",
+		Name:         "Atomic Recipient",
+		BaseClass:    "Mage",
+		Sex:          "Male",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+	})
+	sender.resetMessages()
+	recipient.resetMessages()
+	store.commandEventWriter = failingChatCommandEventWriter{delegate: store.commandEventWriter}
+
+	outbound := dispatchPartyCommand(t, server, sender, "cmd_chat_atomic_failure", 1, "send_chat_message", map[string]any{
+		"channel": chatChannelRegion,
+		"text":    "must not escape before commit",
+	})
+	if reason := extractRejectReason(outbound); reason != "system.persistence_failed" {
+		t.Fatalf("atomic failure reason=%q outbound=%+v", reason, outbound)
+	}
+	if message := findChatMessage(recipient.messages, chatChannelRegion); message != nil {
+		t.Fatalf("recipient observed uncommitted region chat=%+v", recipient.messages)
+	}
+	if records, err := store.ChatMessages.ListByCharacterID(context.Background(), sender.session.CharacterID); err != nil || len(records) != 0 {
+		t.Fatalf("uncommitted region chat history=%+v error=%v", records, err)
 	}
 }
 

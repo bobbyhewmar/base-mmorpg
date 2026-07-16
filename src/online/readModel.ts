@@ -154,6 +154,7 @@ const PET_FOLLOW_DISTANCE = 1.8;
 const PET_FOLLOW_SIDE_OFFSET = 0.75;
 const CHAT_MESSAGE_MAX_LENGTH = 240;
 const REMOTE_SOCIAL_EVENT_DEDUP_LIMIT = 4096;
+const CHAT_COMMAND_DEDUP_LIMIT = 4096;
 
 const makeCommandId = (commandSeq: number): string => `cmd_${Date.now()}_${commandSeq}`;
 
@@ -415,6 +416,8 @@ export class OnlineReadModel {
   private readonly remotePlayerProjections = new Map<string, RemotePlayerProjection>();
   private readonly seenRemoteSocialEventIds = new Set<number>();
   private readonly remoteSocialEventOrder: number[] = [];
+  private readonly seenChatCommandIds = new Set<string>();
+  private readonly chatCommandOrder: string[] = [];
   private logs: OnlineLogEntry[] = [];
   private desyncState: DesyncState = 'none';
 
@@ -2624,6 +2627,9 @@ export class OnlineReadModel {
     if (!this.acceptRemoteSocialEvent(message.event_id)) {
       return { changed: false };
     }
+    if (!this.acceptChatCommandMessage(message.command_id)) {
+      return { changed: false };
+    }
     if (message.command_id) {
       const pending = this.pendingCommands.get(message.command_id);
       if (pending) {
@@ -2651,6 +2657,24 @@ export class OnlineReadModel {
       const oldestEventId = this.remoteSocialEventOrder.shift();
       if (oldestEventId !== undefined) {
         this.seenRemoteSocialEventIds.delete(oldestEventId);
+      }
+    }
+    return true;
+  }
+
+  private acceptChatCommandMessage(commandId: string | undefined): boolean {
+    if (commandId === undefined) {
+      return true;
+    }
+    if (commandId.length === 0 || this.seenChatCommandIds.has(commandId)) {
+      return false;
+    }
+    this.seenChatCommandIds.add(commandId);
+    this.chatCommandOrder.push(commandId);
+    if (this.chatCommandOrder.length > CHAT_COMMAND_DEDUP_LIMIT) {
+      const oldestCommandId = this.chatCommandOrder.shift();
+      if (oldestCommandId !== undefined) {
+        this.seenChatCommandIds.delete(oldestCommandId);
       }
     }
     return true;
