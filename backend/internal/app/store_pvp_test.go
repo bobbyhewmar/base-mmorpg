@@ -2,26 +2,27 @@ package app
 
 import (
 	"context"
+	"os"
+	"sync"
 	"testing"
 	"time"
 )
 
-func pvpStoreTestEvent(id string, actor *Character, target *Character) PvPCombatEvent {
-	return PvPCombatEvent{
-		ID:                  id,
+func pvpStoreMutation(id string, actor *Character, target *Character, damage int, occurredAt time.Time) PvPCombatMutation {
+	return PvPCombatMutation{
+		EventID:             id,
 		AttackerCharacterID: actor.ID,
-		AttackerAccountID:   actor.AccountID,
 		VictimCharacterID:   target.ID,
-		VictimAccountID:     target.AccountID,
 		ActionType:          "basic_attack",
-		Damage:              10,
-		CPDamage:            10,
-		Result:              "hit",
-		CreatedAt:           time.Now().UTC(),
+		Damage:              damage,
+		SessionID:           "session_" + id,
+		CommandID:           "command_" + id,
+		CommandSeq:          1,
+		OccurredAt:          occurredAt,
 	}
 }
 
-func TestMemoryCharacterRepositoryAppliesPvPCombatStateAtomically(t *testing.T) {
+func TestMemoryCharacterRepositoryAppliesPvPCombatAtomically(t *testing.T) {
 	store := newMemoryStore()
 	actor := &Character{ID: "char_store_pvp_actor", AccountID: "acct_store_pvp_actor", Name: "StorePvpActor", BaseClass: "Fighter", LastRegionID: startingRegionID}
 	target := &Character{ID: "char_store_pvp_target", AccountID: "acct_store_pvp_target", Name: "StorePvpTarget", BaseClass: "Mage", LastRegionID: startingRegionID}
@@ -31,41 +32,40 @@ func TestMemoryCharacterRepositoryAppliesPvPCombatStateAtomically(t *testing.T) 
 	if err := store.Characters.Create(context.Background(), target); err != nil {
 		t.Fatal(err)
 	}
-
-	flagUntil := time.Now().Add(time.Minute).UTC()
-	err := store.Characters.ApplyPvPCombatState(context.Background(), CharacterPvPCombatState{
-		CharacterID:  actor.ID,
-		CurrentCP:    80,
-		CurrentHP:    122,
-		CurrentMP:    52,
-		PvPKills:     3,
-		PKCount:      2,
-		Karma:        200,
-		PvPFlagUntil: flagUntil,
-	}, CharacterPvPCombatState{
-		CharacterID: target.ID,
-		CurrentCP:   0,
-		CurrentHP:   17,
-		CurrentMP:   58,
-		PvPKills:    1,
-		PKCount:     0,
-		Karma:       0,
-	}, pvpStoreTestEvent("pvp_event_memory", actor, target))
+	initialTarget, err := store.Characters.GetByID(context.Background(), target.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	now := time.Now().UTC()
+	mutation := pvpStoreMutation("pvp_event_memory", actor, target, 10, now)
+	mutation.MPCost = 6
+	mutation.CooldownID = "basic_attack"
+	mutation.CooldownDuration = time.Second
+	commit, err := store.Characters.ApplyPvPCombat(context.Background(), mutation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commit.Event.CPDamage != 10 || commit.Event.HPDamage != 0 || commit.Event.Result != "hit" {
+		t.Fatalf("unexpected combat commit: %+v", commit)
+	}
+
 	loadedActor, _ := store.Characters.GetByID(context.Background(), actor.ID)
 	loadedTarget, _ := store.Characters.GetByID(context.Background(), target.ID)
-	if loadedActor.CurrentMP != 52 || loadedActor.PvPKills != 3 || loadedActor.PKCount != 2 || loadedActor.Karma != 200 || !loadedActor.PvPFlagUntil.Equal(flagUntil) {
+	if loadedActor.CurrentMP != 52 || !loadedActor.PvPFlagUntil.After(now) {
 		t.Fatalf("unexpected actor state: %+v", loadedActor)
 	}
-	if loadedTarget.CurrentCP != 0 || loadedTarget.CurrentHP != 17 {
+	if loadedTarget.CurrentCP != initialTarget.CurrentCP-10 || loadedTarget.CurrentHP != initialTarget.CurrentHP {
 		t.Fatalf("unexpected target state: %+v", loadedTarget)
+	}
+	cooldowns, err := store.CharacterCooldowns.ListByCharacterID(context.Background(), actor.ID)
+	if err != nil || len(cooldowns) != 1 || cooldowns[0].SkillID != "basic_attack" || !cooldowns[0].EndsAt.Equal(commit.CooldownEndsAt) {
+		t.Fatalf("unexpected atomic attacker cooldown: cooldowns=%+v err=%v", cooldowns, err)
 	}
 
 	beforeActor := *loadedActor
-	if err := store.Characters.ApplyPvPCombatState(context.Background(), CharacterPvPCombatState{CharacterID: actor.ID}, CharacterPvPCombatState{CharacterID: "missing"}, pvpStoreTestEvent("pvp_event_missing", actor, target)); err != errRecordNotFound {
+	missingMutation := pvpStoreMutation("pvp_event_missing", actor, &Character{ID: "missing"}, 10, now.Add(2*time.Second))
+	if _, err := store.Characters.ApplyPvPCombat(context.Background(), missingMutation); err != errRecordNotFound {
 		t.Fatalf("missing target error = %v", err)
 	}
 	afterActor, _ := store.Characters.GetByID(context.Background(), actor.ID)
@@ -78,59 +78,185 @@ func TestMemoryCharacterRepositoryAppliesPvPCombatStateAtomically(t *testing.T) 
 	}
 }
 
-func TestPostgresCharacterRepositoryPersistsPvPCombatState(t *testing.T) {
+func TestMemoryPvPCombatPersistsAssistsAndRepeatedKillSignal(t *testing.T) {
+	store := newMemoryStore()
+	now := time.Now().UTC()
+	firstAttacker := &Character{ID: "char_assist_first", AccountID: "acct_assist_first", Name: "AssistFirst", BaseClass: "Fighter", LastRegionID: startingRegionID}
+	killer := &Character{ID: "char_assist_killer", AccountID: "acct_assist_killer", Name: "AssistKiller", BaseClass: "Fighter", LastRegionID: startingRegionID}
+	victim := &Character{ID: "char_assist_victim", AccountID: "acct_assist_victim", Name: "AssistVictim", BaseClass: "Mage", LastRegionID: startingRegionID}
+	for _, character := range []*Character{firstAttacker, killer, victim} {
+		if err := store.Characters.Create(context.Background(), character); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Characters.UpdateProgression(context.Background(), victim.ID, 1, 0, 0, 50, 58); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Characters.ApplyPvPCombat(context.Background(), pvpStoreMutation("assist_hit", firstAttacker, victim, 10, now)); err != nil {
+		t.Fatal(err)
+	}
+	kill, err := store.Characters.ApplyPvPCombat(context.Background(), pvpStoreMutation("assist_kill", killer, victim, 100, now.Add(time.Second)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kill.Event.KillerCharacterID != killer.ID || len(kill.Event.AssistCharacterIDs) != 1 || kill.Event.AssistCharacterIDs[0] != firstAttacker.ID {
+		t.Fatalf("unexpected kill attribution: %+v", kill.Event)
+	}
+	if kill.Event.Suspicious || kill.Event.RepeatedKillCount != 1 {
+		t.Fatalf("first pair kill should not be suspicious: %+v", kill.Event)
+	}
+
+	if err := store.Characters.UpdateProgression(context.Background(), victim.ID, 1, 0, 0, 1, 58); err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := store.Characters.ApplyPvPCombat(context.Background(), pvpStoreMutation("assist_repeated_kill", killer, victim, 10, now.Add(2*time.Second)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repeated.Event.Suspicious || repeated.Event.RepeatedKillCount != 2 || len(repeated.Event.AssistCharacterIDs) != 0 {
+		t.Fatalf("repeated kill signal or death-boundary attribution is wrong: %+v", repeated.Event)
+	}
+	suspicious := true
+	events, err := store.PvPCombatEvents.ListByFilter(context.Background(), PvPCombatEventQuery{
+		KillerCharacterID: killer.ID,
+		VictimCharacterID: victim.ID,
+		Suspicious:        &suspicious,
+	})
+	if err != nil || len(events) != 1 || events[0].ID != repeated.Event.ID {
+		t.Fatalf("unexpected suspicious kill query: events=%+v err=%v", events, err)
+	}
+}
+
+func TestMemoryPvPCombatSerializesConcurrentDamageOnSameVictim(t *testing.T) {
+	store := newMemoryStore()
+	assertConcurrentPvPCombatSerialization(t, store, store)
+}
+
+func TestPostgresPvPCombatPersistsAndSerializesAcrossStoreInstances(t *testing.T) {
 	env := newPersistenceTestEnv(t)
-	actor := &Character{ID: "char_pg_pvp_actor", AccountID: "acct_pg_pvp_actor", Name: "PgPvpActor", BaseClass: "Fighter", LastRegionID: startingRegionID}
-	target := &Character{ID: "char_pg_pvp_target", AccountID: "acct_pg_pvp_target", Name: "PgPvpTarget", BaseClass: "Mage", LastRegionID: startingRegionID}
-
-	if err := env.store.Accounts.Create(context.Background(), &Account{ID: actor.AccountID, Login: "pg-pvp-actor@test", DisplayName: "actor", State: accountStateActive}); err != nil {
-		t.Fatal(err)
-	}
-	if err := env.store.Accounts.Create(context.Background(), &Account{ID: target.AccountID, Login: "pg-pvp-target@test", DisplayName: "target", State: accountStateActive}); err != nil {
-		t.Fatal(err)
-	}
-	if err := env.store.Characters.Create(context.Background(), actor); err != nil {
-		t.Fatal(err)
-	}
-	if err := env.store.Characters.Create(context.Background(), target); err != nil {
-		t.Fatal(err)
-	}
-
-	flagUntil := time.Now().Add(time.Minute).UTC().Truncate(time.Microsecond)
-	if err := env.store.Characters.ApplyPvPCombatState(context.Background(), CharacterPvPCombatState{
-		CharacterID:  actor.ID,
-		CurrentCP:    70,
-		CurrentHP:    120,
-		CurrentMP:    51,
-		PvPKills:     4,
-		PKCount:      2,
-		Karma:        200,
-		PvPFlagUntil: flagUntil,
-	}, CharacterPvPCombatState{
-		CharacterID: target.ID,
-		CurrentCP:   0,
-		CurrentHP:   9,
-		CurrentMP:   58,
-	}, pvpStoreTestEvent("pvp_event_postgres", actor, target)); err != nil {
-		t.Fatal(err)
-	}
-
-	loadedActor, err := env.store.Characters.GetByID(context.Background(), actor.ID)
+	secondStore, err := NewStore(os.Getenv("L2BG_TEST_DATABASE_URL"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadedTarget, err := env.store.Characters.GetByID(context.Background(), target.ID)
+	defer secondStore.Close()
+	assertConcurrentPvPCombatSerialization(t, env.store, secondStore)
+}
+
+func TestPostgresPvPCombatPersistsRepeatedKillSignal(t *testing.T) {
+	env := newPersistenceTestEnv(t)
+	ctx := context.Background()
+	attacker := &Character{ID: "char_pg_repeated_attacker", AccountID: "acct_pg_repeated_attacker", Name: "PgRepeatedAttacker", BaseClass: "Fighter", LastRegionID: startingRegionID}
+	victim := &Character{ID: "char_pg_repeated_victim", AccountID: "acct_pg_repeated_victim", Name: "PgRepeatedVictim", BaseClass: "Mage", LastRegionID: startingRegionID}
+	for _, character := range []*Character{attacker, victim} {
+		if err := env.store.Accounts.Create(ctx, &Account{ID: character.AccountID, Login: character.AccountID + "@test", DisplayName: character.Name, State: accountStateActive}); err != nil {
+			t.Fatal(err)
+		}
+		if err := env.store.Characters.Create(ctx, character); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index, eventID := range []string{"pg_repeated_first", "pg_repeated_second"} {
+		if err := env.store.Characters.UpdateProgression(ctx, victim.ID, 1, 0, 0, 1, 58); err != nil {
+			t.Fatal(err)
+		}
+		commit, err := env.store.Characters.ApplyPvPCombat(ctx, pvpStoreMutation(eventID, attacker, victim, 10, time.Now().Add(time.Duration(index)*time.Second)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if commit.Event.Suspicious != (index == 1) || commit.Event.RepeatedKillCount != index+1 {
+			t.Fatalf("unexpected repeated kill commit %d: %+v", index, commit.Event)
+		}
+	}
+	suspicious := true
+	events, err := env.store.PvPCombatEvents.ListByFilter(ctx, PvPCombatEventQuery{KillerCharacterID: attacker.ID, VictimCharacterID: victim.ID, Suspicious: &suspicious})
+	if err != nil || len(events) != 1 || events[0].ID != "pg_repeated_second" || events[0].RepeatedKillCount != 2 {
+		t.Fatalf("unexpected persisted PostgreSQL repeated-kill signal: events=%+v err=%v", events, err)
+	}
+}
+
+func assertConcurrentPvPCombatSerialization(t *testing.T, firstStore *Store, secondStore *Store) {
+	t.Helper()
+	ctx := context.Background()
+	firstAttacker := &Character{ID: "char_concurrent_first", AccountID: "acct_concurrent_first", Name: "ConcurrentFirst", BaseClass: "Fighter", LastRegionID: startingRegionID}
+	secondAttacker := &Character{ID: "char_concurrent_second", AccountID: "acct_concurrent_second", Name: "ConcurrentSecond", BaseClass: "Fighter", LastRegionID: startingRegionID}
+	victim := &Character{ID: "char_concurrent_victim", AccountID: "acct_concurrent_victim", Name: "ConcurrentVictim", BaseClass: "Mage", LastRegionID: startingRegionID}
+	for _, character := range []*Character{firstAttacker, secondAttacker, victim} {
+		if firstStore.Mode == "postgres" {
+			if err := firstStore.Accounts.Create(ctx, &Account{ID: character.AccountID, Login: character.AccountID + "@test", DisplayName: character.Name, State: accountStateActive}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := firstStore.Characters.Create(ctx, character); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := firstStore.Characters.UpdateProgression(ctx, victim.ID, 1, 0, 0, 100, 58); err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	results := make(chan *PvPCombatCommit, 2)
+	errors := make(chan error, 2)
+	now := time.Now().UTC()
+	mutations := []struct {
+		store    *Store
+		mutation PvPCombatMutation
+	}{
+		{store: firstStore, mutation: pvpStoreMutation("concurrent_first", firstAttacker, victim, 60, now)},
+		{store: secondStore, mutation: pvpStoreMutation("concurrent_second", secondAttacker, victim, 60, now)},
+	}
+	var wait sync.WaitGroup
+	for _, item := range mutations {
+		wait.Add(1)
+		go func(store *Store, mutation PvPCombatMutation) {
+			defer wait.Done()
+			<-started
+			commit, err := store.Characters.ApplyPvPCombat(ctx, mutation)
+			if err != nil {
+				errors <- err
+				return
+			}
+			results <- commit
+		}(item.store, item.mutation)
+	}
+	close(started)
+	wait.Wait()
+	close(results)
+	close(errors)
+	for err := range errors {
+		t.Fatalf("concurrent combat failed: %v", err)
+	}
+	commits := make([]*PvPCombatCommit, 0, 2)
+	for commit := range results {
+		commits = append(commits, commit)
+	}
+	if len(commits) != 2 {
+		t.Fatalf("commit count = %d want 2", len(commits))
+	}
+	loadedVictim, err := firstStore.Characters.GetByID(ctx, victim.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loadedActor.PvPKills != 4 || loadedActor.PKCount != 2 || loadedActor.Karma != 200 || loadedActor.CurrentMP != 51 || !loadedActor.PvPFlagUntil.Equal(flagUntil) {
-		t.Fatalf("unexpected persisted actor: %+v", loadedActor)
+	if loadedVictim.CurrentCP != 0 || loadedVictim.CurrentHP != 0 {
+		t.Fatalf("concurrent damage was lost or over-applied: %+v", loadedVictim)
 	}
-	if loadedTarget.CurrentCP != 0 || loadedTarget.CurrentHP != 9 {
-		t.Fatalf("unexpected persisted target: %+v", loadedTarget)
+	events, err := firstStore.PvPCombatEvents.ListByFilter(ctx, PvPCombatEventQuery{VictimCharacterID: victim.ID})
+	if err != nil || len(events) != 2 {
+		t.Fatalf("expected exactly two serialized audit events: events=%+v err=%v", events, err)
 	}
-	events, err := env.store.PvPCombatEvents.ListByFilter(context.Background(), PvPCombatEventQuery{AttackerCharacterID: actor.ID})
-	if err != nil || len(events) != 1 || events[0].ID != "pvp_event_postgres" {
-		t.Fatalf("unexpected persisted PvP audit: events=%+v err=%v", events, err)
+	var hit, kill *PvPCombatEvent
+	for index := range events {
+		switch events[index].Result {
+		case "hit":
+			hit = &events[index]
+		case "pk_kill", "pvp_kill":
+			kill = &events[index]
+		}
+	}
+	if hit == nil || kill == nil || hit.Damage != 60 || kill.Damage != 40 {
+		t.Fatalf("unexpected serialized damage events: %+v", events)
+	}
+	if kill.KillerCharacterID == "" || len(kill.AssistCharacterIDs) != 1 || kill.AssistCharacterIDs[0] != hit.AttackerCharacterID {
+		t.Fatalf("concurrent kill attribution is wrong: hit=%+v kill=%+v", hit, kill)
 	}
 }

@@ -87,6 +87,7 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 	})
 
 	var outboundMessages []map[string]any
+	playerCombatCommand := false
 	if command.Type == "pick_up_loot" {
 		outboundMessages = runtime.processLootPickup(auditCtx, s.store, command)
 	} else if command.Type == "interact_npc" {
@@ -98,7 +99,7 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 	} else if command.Type == "create_clan" || command.Type == "invite_clan_member" || command.Type == "accept_clan_invite" || command.Type == "decline_clan_invite" || command.Type == "leave_clan" || command.Type == "kick_clan_member" || command.Type == "dissolve_clan" {
 		outboundMessages = s.processClanCommand(auditCtx, session, runtime, command)
 	} else if command.Type == "basic_attack" || command.Type == "use_skill" {
-		outboundMessages = s.processCombatCommand(auditCtx, session, runtime, command)
+		outboundMessages, playerCombatCommand = s.processCombatCommand(auditCtx, session, runtime, command)
 	} else if command.Type == "send_chat_message" {
 		outboundMessages = s.processChatCommand(auditCtx, session, runtime, command)
 	} else if command.Type == "set_hotbar_state" {
@@ -125,7 +126,7 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 		}
 	}
 
-	if commandOutcomeFromOutbound(outboundMessages) == "applied" {
+	if commandOutcomeFromOutbound(outboundMessages) == "applied" && !playerCombatCommand {
 		if commandTouchesDurableProgression(command.Type) {
 			s.persistCharacterProgression(session.CharacterID, runtime)
 		}

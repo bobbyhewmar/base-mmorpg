@@ -26,6 +26,10 @@ var (
 	errInsufficientMaterials = errors.New("insufficient materials")
 	errItemNotSellable       = errors.New("item not sellable")
 	errWarehouseItemNotFound = errors.New("warehouse item not found")
+	errPvPActorDead          = errors.New("pvp actor dead")
+	errPvPTargetDead         = errors.New("pvp target dead")
+	errPvPInsufficientMP     = errors.New("pvp insufficient mp")
+	errPvPCooldownActive     = errors.New("pvp cooldown active")
 )
 
 type AccountRepository interface {
@@ -60,7 +64,7 @@ type CharacterRepository interface {
 	UpdateWorldState(ctx context.Context, characterID string, regionID string, positionX float64, positionZ float64) error
 	UpdateProgression(ctx context.Context, characterID string, level int, xp int, currentCP int, currentHP int, currentMP int) error
 	UpdatePvPFlagUntil(ctx context.Context, characterID string, flagUntil time.Time) error
-	ApplyPvPCombatState(ctx context.Context, attacker CharacterPvPCombatState, target CharacterPvPCombatState, event PvPCombatEvent) error
+	ApplyPvPCombat(ctx context.Context, mutation PvPCombatMutation) (*PvPCombatCommit, error)
 }
 
 type CharacterCooldownRepository interface {

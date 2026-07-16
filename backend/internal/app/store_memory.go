@@ -391,34 +391,78 @@ func (repo memoryCharacterRepo) UpdatePvPFlagUntil(_ context.Context, characterI
 	return nil
 }
 
-func (repo memoryCharacterRepo) ApplyPvPCombatState(_ context.Context, attacker CharacterPvPCombatState, target CharacterPvPCombatState, event PvPCombatEvent) error {
+func (repo memoryCharacterRepo) ApplyPvPCombat(_ context.Context, mutation PvPCombatMutation) (*PvPCombatCommit, error) {
 	repo.backend.mu.Lock()
 	defer repo.backend.mu.Unlock()
 
-	attackerCharacter, attackerExists := repo.backend.characters[attacker.CharacterID]
-	targetCharacter, targetExists := repo.backend.characters[target.CharacterID]
+	attackerCharacter, attackerExists := repo.backend.characters[mutation.AttackerCharacterID]
+	targetCharacter, targetExists := repo.backend.characters[mutation.VictimCharacterID]
 	if !attackerExists || !targetExists {
-		return errRecordNotFound
+		return nil, errRecordNotFound
 	}
-	attackerCharacter.CurrentCP = max(0, attacker.CurrentCP)
-	attackerCharacter.CurrentHP = max(0, attacker.CurrentHP)
-	attackerCharacter.CurrentMP = max(0, attacker.CurrentMP)
-	attackerCharacter.PvPKills = max(0, attacker.PvPKills)
-	attackerCharacter.PKCount = max(0, attacker.PKCount)
-	attackerCharacter.Karma = max(0, attacker.Karma)
-	attackerCharacter.PvPFlagUntil = attacker.PvPFlagUntil.UTC()
-	targetCharacter.CurrentCP = max(0, target.CurrentCP)
-	targetCharacter.CurrentHP = max(0, target.CurrentHP)
-	targetCharacter.CurrentMP = max(0, target.CurrentMP)
-	targetCharacter.PvPKills = max(0, target.PvPKills)
-	targetCharacter.PKCount = max(0, target.PKCount)
-	targetCharacter.Karma = max(0, target.Karma)
-	targetCharacter.PvPFlagUntil = target.PvPFlagUntil.UTC()
+	if mutation.OccurredAt.IsZero() {
+		mutation.OccurredAt = time.Now().UTC()
+	} else {
+		mutation.OccurredAt = mutation.OccurredAt.UTC()
+	}
+	for _, event := range repo.backend.pvpCombatEvents {
+		if mutation.SessionID != "" && mutation.CommandSeq > 0 && event.SessionID == mutation.SessionID && event.CommandSeq == mutation.CommandSeq {
+			return nil, errRecordConflict
+		}
+	}
+	for _, cooldown := range repo.backend.characterCooldowns[mutation.AttackerCharacterID] {
+		if cooldown.SkillID == mutation.CooldownID && cooldown.EndsAt.After(mutation.OccurredAt) {
+			return nil, errPvPCooldownActive
+		}
+	}
+	priorVictimEvents := make([]PvPCombatEvent, 0)
+	priorRepeatedKills := 0
+	for _, event := range repo.backend.pvpCombatEvents {
+		if event.VictimCharacterID == mutation.VictimCharacterID && !event.CreatedAt.Before(mutation.OccurredAt.Add(-pvpAttributionWindow)) && !event.CreatedAt.After(mutation.OccurredAt) {
+			priorVictimEvents = append(priorVictimEvents, event)
+		}
+		if event.AttackerCharacterID == mutation.AttackerCharacterID && event.VictimCharacterID == mutation.VictimCharacterID &&
+			(event.Result == "pvp_kill" || event.Result == "pk_kill") && !event.CreatedAt.Before(mutation.OccurredAt.Add(-pvpRepeatedKillWindow)) && !event.CreatedAt.After(mutation.OccurredAt) {
+			priorRepeatedKills++
+		}
+	}
+	commit, err := resolvePvPCombatMutation(*attackerCharacter, *targetCharacter, mutation, priorVictimEvents, priorRepeatedKills)
+	if err != nil {
+		return nil, err
+	}
+	applyCharacterPvPCombatState(attackerCharacter, commit.Attacker)
+	applyCharacterPvPCombatState(targetCharacter, commit.Victim)
+	if commit.CooldownID != "" && commit.CooldownEndsAt.After(mutation.OccurredAt) {
+		cooldowns := repo.backend.characterCooldowns[mutation.AttackerCharacterID]
+		replaced := false
+		for index := range cooldowns {
+			if cooldowns[index].SkillID != commit.CooldownID {
+				continue
+			}
+			cooldowns[index].EndsAt = commit.CooldownEndsAt
+			replaced = true
+			break
+		}
+		if !replaced {
+			cooldowns = append(cooldowns, CharacterSkillCooldown{CharacterID: mutation.AttackerCharacterID, SkillID: commit.CooldownID, EndsAt: commit.CooldownEndsAt})
+		}
+		repo.backend.characterCooldowns[mutation.AttackerCharacterID] = cooldowns
+	}
 	if targetCharacter.CurrentHP == 0 {
-		delete(repo.backend.characterCooldowns, target.CharacterID)
+		delete(repo.backend.characterCooldowns, mutation.VictimCharacterID)
 	}
-	repo.backend.pvpCombatEvents = append(repo.backend.pvpCombatEvents, event)
-	return nil
+	repo.backend.pvpCombatEvents = append(repo.backend.pvpCombatEvents, commit.Event)
+	return commit, nil
+}
+
+func applyCharacterPvPCombatState(character *Character, state CharacterPvPCombatState) {
+	character.CurrentCP = max(0, state.CurrentCP)
+	character.CurrentHP = max(0, state.CurrentHP)
+	character.CurrentMP = max(0, state.CurrentMP)
+	character.PvPKills = max(0, state.PvPKills)
+	character.PKCount = max(0, state.PKCount)
+	character.Karma = max(0, state.Karma)
+	character.PvPFlagUntil = state.PvPFlagUntil.UTC()
 }
 
 func (repo memoryCharacterCooldownRepo) ListByCharacterID(_ context.Context, characterID string) ([]CharacterSkillCooldown, error) {
@@ -1699,6 +1743,9 @@ func (repo memoryPvPCombatEventRepo) ListByFilter(_ context.Context, query PvPCo
 		if query.VictimCharacterID != "" && record.VictimCharacterID != query.VictimCharacterID {
 			continue
 		}
+		if query.KillerCharacterID != "" && record.KillerCharacterID != query.KillerCharacterID {
+			continue
+		}
 		if query.InvolvedCharacterID != "" && record.AttackerCharacterID != query.InvolvedCharacterID && record.VictimCharacterID != query.InvolvedCharacterID {
 			continue
 		}
@@ -1706,6 +1753,9 @@ func (repo memoryPvPCombatEventRepo) ListByFilter(_ context.Context, query PvPCo
 			continue
 		}
 		if query.Result != "" && record.Result != query.Result {
+			continue
+		}
+		if query.Suspicious != nil && record.Suspicious != *query.Suspicious {
 			continue
 		}
 		if query.OccurredAfter != nil && record.CreatedAt.Before(*query.OccurredAfter) {

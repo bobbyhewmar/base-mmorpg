@@ -668,12 +668,110 @@ func (p *postgresStoreBackend) UpdateCharacterPvPFlagUntil(ctx context.Context, 
 	return nil
 }
 
-func (p *postgresStoreBackend) ApplyCharacterPvPCombatState(ctx context.Context, attacker CharacterPvPCombatState, target CharacterPvPCombatState, event PvPCombatEvent) error {
+func (p *postgresStoreBackend) ApplyCharacterPvPCombat(ctx context.Context, mutation PvPCombatMutation) (*PvPCombatCommit, error) {
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(
+		ctx,
+		`SELECT character_id, account_id, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until
+		 FROM characters
+		 WHERE character_id IN ($1, $2)
+		 ORDER BY character_id
+		 FOR UPDATE`,
+		mutation.AttackerCharacterID,
+		mutation.VictimCharacterID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	lockedCharacters := make(map[string]Character, 2)
+	for rows.Next() {
+		var character Character
+		var flagUntil sql.NullTime
+		if err := rows.Scan(
+			&character.ID,
+			&character.AccountID,
+			&character.CurrentCP,
+			&character.CurrentHP,
+			&character.CurrentMP,
+			&character.PvPKills,
+			&character.PKCount,
+			&character.Karma,
+			&flagUntil,
+		); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if flagUntil.Valid {
+			character.PvPFlagUntil = flagUntil.Time.UTC()
+		}
+		lockedCharacters[character.ID] = character
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	attacker, attackerExists := lockedCharacters[mutation.AttackerCharacterID]
+	victim, victimExists := lockedCharacters[mutation.VictimCharacterID]
+	if !attackerExists || !victimExists || len(lockedCharacters) != 2 {
+		return nil, errRecordNotFound
+	}
+
+	var occurredAt time.Time
+	if err := tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&occurredAt); err != nil {
+		return nil, err
+	}
+	mutation.OccurredAt = occurredAt.UTC()
+	if mutation.CooldownID != "" {
+		var durableCooldownEndsAt time.Time
+		err := tx.QueryRowContext(
+			ctx,
+			`SELECT ends_at
+			 FROM character_skill_cooldowns
+			 WHERE character_id = $1 AND skill_id = $2
+			 FOR UPDATE`,
+			mutation.AttackerCharacterID,
+			mutation.CooldownID,
+		).Scan(&durableCooldownEndsAt)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		if err == nil && durableCooldownEndsAt.After(mutation.OccurredAt) {
+			return nil, errPvPCooldownActive
+		}
+	}
+
+	priorVictimEvents, err := p.listRecentVictimPvPEventsTx(ctx, tx, mutation.VictimCharacterID, mutation.OccurredAt.Add(-pvpAttributionWindow), mutation.OccurredAt)
+	if err != nil {
+		return nil, err
+	}
+	var priorRepeatedKills int
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*)
+		 FROM pvp_combat_events
+		 WHERE attacker_character_id = $1
+		   AND victim_character_id = $2
+		   AND result IN ('pvp_kill', 'pk_kill')
+		   AND created_at >= $3
+		   AND created_at <= $4`,
+		mutation.AttackerCharacterID,
+		mutation.VictimCharacterID,
+		mutation.OccurredAt.Add(-pvpRepeatedKillWindow),
+		mutation.OccurredAt,
+	).Scan(&priorRepeatedKills); err != nil {
+		return nil, err
+	}
+	commit, err := resolvePvPCombatMutation(attacker, victim, mutation, priorVictimEvents, priorRepeatedKills)
+	if err != nil {
+		return nil, err
+	}
 
 	update := func(state CharacterPvPCombatState) error {
 		result, err := tx.ExecContext(
@@ -710,21 +808,66 @@ func (p *postgresStoreBackend) ApplyCharacterPvPCombatState(ctx context.Context,
 		return nil
 	}
 
-	if err := update(attacker); err != nil {
-		return err
+	if err := update(commit.Attacker); err != nil {
+		return nil, err
 	}
-	if err := update(target); err != nil {
-		return err
+	if err := update(commit.Victim); err != nil {
+		return nil, err
 	}
-	if target.CurrentHP <= 0 {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM character_skill_cooldowns WHERE character_id = $1`, target.CharacterID); err != nil {
-			return err
+	if commit.CooldownID != "" && commit.CooldownEndsAt.After(mutation.OccurredAt) {
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO character_skill_cooldowns (character_id, skill_id, ends_at, created_at, updated_at)
+			 VALUES ($1, $2, $3, NOW(), NOW())
+			 ON CONFLICT (character_id, skill_id)
+			 DO UPDATE SET ends_at = EXCLUDED.ends_at, updated_at = NOW()`,
+			mutation.AttackerCharacterID,
+			commit.CooldownID,
+			commit.CooldownEndsAt,
+		); err != nil {
+			return nil, err
 		}
 	}
-	if err := insertPvPCombatEvent(ctx, tx, event); err != nil {
-		return err
+	if commit.Victim.CurrentHP <= 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM character_skill_cooldowns WHERE character_id = $1`, commit.Victim.CharacterID); err != nil {
+			return nil, err
+		}
 	}
-	return tx.Commit()
+	if err := insertPvPCombatEvent(ctx, tx, commit.Event); err != nil {
+		return nil, mapPostgresError(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return commit, nil
+}
+
+func (p *postgresStoreBackend) listRecentVictimPvPEventsTx(ctx context.Context, tx *sql.Tx, victimCharacterID string, occurredAfter time.Time, occurredBefore time.Time) ([]PvPCombatEvent, error) {
+	rows, err := tx.QueryContext(
+		ctx,
+		`SELECT event_id, attacker_character_id, damage, result, created_at
+		 FROM pvp_combat_events
+		 WHERE victim_character_id = $1
+		   AND created_at >= $2
+		   AND created_at <= $3
+		 ORDER BY created_at DESC, event_id DESC`,
+		victimCharacterID,
+		occurredAfter,
+		occurredBefore,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	events := make([]PvPCombatEvent, 0)
+	for rows.Next() {
+		var event PvPCombatEvent
+		if err := rows.Scan(&event.ID, &event.AttackerCharacterID, &event.Damage, &event.Result, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
 }
 
 func insertPvPCombatEvent(ctx context.Context, executor interface {
@@ -735,15 +878,17 @@ func insertPvPCombatEvent(ctx context.Context, executor interface {
 		`INSERT INTO pvp_combat_events (
 		   event_id, attacker_character_id, attacker_account_id, victim_character_id, victim_account_id,
 		   action_type, skill_id, damage, cp_damage, hp_damage, result,
+		   killer_character_id, assist_character_ids, suspicious, repeated_kill_count,
 		   attacker_flagged_before, attacker_flagged_after, victim_flagged_before, victim_flagged_after,
 		   pvp_kills_before, pvp_kills_after, pk_count_before, pk_count_after,
 		   karma_before, karma_after, karma_delta, session_id, command_id, command_seq, created_at
 		 ) VALUES (
 		   $1, $2, NULLIF($3, ''), $4, NULLIF($5, ''),
 		   $6, NULLIF($7, ''), $8, $9, $10, $11,
-		   $12, $13, $14, $15,
+		   NULLIF($12, ''), $13::jsonb, $14, $15,
 		   $16, $17, $18, $19,
-		   $20, $21, $22, NULLIF($23, ''), NULLIF($24, ''), $25, $26
+		   $20, $21, $22, $23,
+		   $24, $25, $26, NULLIF($27, ''), NULLIF($28, ''), $29, $30
 		 )`,
 		event.ID,
 		event.AttackerCharacterID,
@@ -756,6 +901,10 @@ func insertPvPCombatEvent(ctx context.Context, executor interface {
 		max(0, event.CPDamage),
 		max(0, event.HPDamage),
 		event.Result,
+		event.KillerCharacterID,
+		encodeStringListJSON(event.AssistCharacterIDs),
+		event.Suspicious,
+		max(0, event.RepeatedKillCount),
 		event.AttackerFlaggedBefore,
 		event.AttackerFlaggedAfter,
 		event.VictimFlaggedBefore,
@@ -773,6 +922,17 @@ func insertPvPCombatEvent(ctx context.Context, executor interface {
 		event.CreatedAt.UTC(),
 	)
 	return err
+}
+
+func encodeStringListJSON(values []string) string {
+	if values == nil {
+		values = []string{}
+	}
+	payload, err := json.Marshal(values)
+	if err != nil {
+		return "[]"
+	}
+	return string(payload)
 }
 
 func (p *postgresStoreBackend) ListCharacterCooldownsByCharacterID(ctx context.Context, characterID string) ([]CharacterSkillCooldown, error) {
@@ -3426,8 +3586,8 @@ func (repo postgresCharacterRepo) UpdatePvPFlagUntil(ctx context.Context, charac
 	return repo.backend.UpdateCharacterPvPFlagUntil(ctx, characterID, flagUntil)
 }
 
-func (repo postgresCharacterRepo) ApplyPvPCombatState(ctx context.Context, attacker CharacterPvPCombatState, target CharacterPvPCombatState, event PvPCombatEvent) error {
-	return repo.backend.ApplyCharacterPvPCombatState(ctx, attacker, target, event)
+func (repo postgresCharacterRepo) ApplyPvPCombat(ctx context.Context, mutation PvPCombatMutation) (*PvPCombatCommit, error) {
+	return repo.backend.ApplyCharacterPvPCombat(ctx, mutation)
 }
 
 func (repo postgresCharacterCooldownRepo) ListByCharacterID(ctx context.Context, characterID string) ([]CharacterSkillCooldown, error) {
@@ -3567,13 +3727,14 @@ func (repo postgresPvPCombatEventRepo) ListByFilter(ctx context.Context, query P
 	baseQuery.WriteString(
 		`SELECT event_id, attacker_character_id, COALESCE(attacker_account_id, ''), victim_character_id, COALESCE(victim_account_id, ''),
 		        action_type, COALESCE(skill_id, ''), damage, cp_damage, hp_damage, result,
+		        COALESCE(killer_character_id, ''), assist_character_ids, suspicious, repeated_kill_count,
 		        attacker_flagged_before, attacker_flagged_after, victim_flagged_before, victim_flagged_after,
 		        pvp_kills_before, pvp_kills_after, pk_count_before, pk_count_after,
 		        karma_before, karma_after, karma_delta, COALESCE(session_id, ''), COALESCE(command_id, ''), command_seq, created_at
 		 FROM pvp_combat_events`,
 	)
-	conditions := make([]string, 0, 7)
-	args := make([]any, 0, 9)
+	conditions := make([]string, 0, 9)
+	args := make([]any, 0, 11)
 	addCondition := func(column string, value string) {
 		if value == "" {
 			return
@@ -3583,12 +3744,17 @@ func (repo postgresPvPCombatEventRepo) ListByFilter(ctx context.Context, query P
 	}
 	addCondition("attacker_character_id", query.AttackerCharacterID)
 	addCondition("victim_character_id", query.VictimCharacterID)
+	addCondition("killer_character_id", query.KillerCharacterID)
 	if query.InvolvedCharacterID != "" {
 		args = append(args, query.InvolvedCharacterID)
 		conditions = append(conditions, fmt.Sprintf("(attacker_character_id = $%d OR victim_character_id = $%d)", len(args), len(args)))
 	}
 	addCondition("action_type", query.ActionType)
 	addCondition("result", query.Result)
+	if query.Suspicious != nil {
+		args = append(args, *query.Suspicious)
+		conditions = append(conditions, fmt.Sprintf("suspicious = $%d", len(args)))
+	}
 	if query.OccurredAfter != nil {
 		args = append(args, *query.OccurredAfter)
 		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", len(args)))
@@ -3613,6 +3779,7 @@ func (repo postgresPvPCombatEventRepo) ListByFilter(ctx context.Context, query P
 	records := make([]PvPCombatEvent, 0)
 	for rows.Next() {
 		var record PvPCombatEvent
+		var assistCharacterIDsJSON []byte
 		if err := rows.Scan(
 			&record.ID,
 			&record.AttackerCharacterID,
@@ -3625,6 +3792,10 @@ func (repo postgresPvPCombatEventRepo) ListByFilter(ctx context.Context, query P
 			&record.CPDamage,
 			&record.HPDamage,
 			&record.Result,
+			&record.KillerCharacterID,
+			&assistCharacterIDsJSON,
+			&record.Suspicious,
+			&record.RepeatedKillCount,
 			&record.AttackerFlaggedBefore,
 			&record.AttackerFlaggedAfter,
 			&record.VictimFlaggedBefore,
@@ -3642,6 +3813,12 @@ func (repo postgresPvPCombatEventRepo) ListByFilter(ctx context.Context, query P
 			&record.CreatedAt,
 		); err != nil {
 			return nil, err
+		}
+		if err := json.Unmarshal(assistCharacterIDsJSON, &record.AssistCharacterIDs); err != nil {
+			return nil, err
+		}
+		if record.AssistCharacterIDs == nil {
+			record.AssistCharacterIDs = []string{}
 		}
 		records = append(records, record)
 	}

@@ -12,11 +12,11 @@ const (
 	pkKarmaGain     = 100
 )
 
-func (s *Server) processCombatCommand(ctx context.Context, session *Session, runtime *attachedRuntime, command commandEnvelope) []map[string]any {
+func (s *Server) processCombatCommand(ctx context.Context, session *Session, runtime *attachedRuntime, command commandEnvelope) ([]map[string]any, bool) {
 	if !runtime.commandTargetsPlayer(command) {
-		return runtime.processCommand(command)
+		return runtime.processCommand(command), false
 	}
-	return s.processPvPCommand(ctx, session, runtime, command)
+	return s.processPvPCommand(ctx, session, runtime, command), true
 }
 
 func (runtime *attachedRuntime) commandTargetsPlayer(command commandEnvelope) bool {
@@ -127,76 +127,42 @@ func (s *Server) processPvPCommand(ctx context.Context, session *Session, actor 
 		return append(outbound, combatReject)
 	}
 
-	attackerWasPvPExposed := actor.pvpFlaggedAt(now)
-	targetWasPvPExposed := target.pvpFlaggedAt(now) || target.karma > 0
-	targetNextCP, targetNextHP := applyPlayerDamage(target.currentCP, target.currentHP, damage)
-	cpDamage := target.currentCP - targetNextCP
-	hpDamage := target.currentHP - targetNextHP
-	actorNextPvPKills := actor.pvpKills
-	actorNextPKCount := actor.pkCount
-	actorNextKarma := actor.karma
-	if targetNextHP == 0 {
-		if targetWasPvPExposed {
-			actorNextPvPKills++
-		} else {
-			actorNextPKCount++
-			actorNextKarma += pkKarmaGain
-		}
-	}
-
-	attackerState := actor.characterPvPCombatStateLocked()
-	attackerState.CurrentMP -= mpCost
-	attackerState.PvPKills = actorNextPvPKills
-	attackerState.PKCount = actorNextPKCount
-	attackerState.Karma = actorNextKarma
-	attackerState.PvPFlagUntil = now.Add(pvpFlagDuration).UTC()
-	targetState := target.characterPvPCombatStateLocked()
-	targetState.CurrentCP = targetNextCP
-	targetState.CurrentHP = targetNextHP
-	targetState.PvPFlagUntil = activePvPFlagUntil(targetState.PvPFlagUntil, now)
-	result := "hit"
-	if targetNextHP == 0 {
-		targetState.PvPFlagUntil = time.Time{}
-		if targetWasPvPExposed {
-			result = "pvp_kill"
-		} else {
-			result = "pk_kill"
-		}
-	}
 	metadata := commandAuditMetadataFromContext(ctx)
-	event := PvPCombatEvent{
-		ID:                    randomID("pvp_event"),
-		AttackerCharacterID:   actor.characterID,
-		AttackerAccountID:     actor.accountID,
-		VictimCharacterID:     target.characterID,
-		VictimAccountID:       target.accountID,
-		ActionType:            command.Type,
-		SkillID:               parsed.skillID,
-		Damage:                cpDamage + hpDamage,
-		CPDamage:              cpDamage,
-		HPDamage:              hpDamage,
-		Result:                result,
-		AttackerFlaggedBefore: attackerWasPvPExposed,
-		AttackerFlaggedAfter:  true,
-		VictimFlaggedBefore:   target.pvpFlaggedAt(now),
-		VictimFlaggedAfter:    !targetState.PvPFlagUntil.IsZero(),
-		PvPKillsBefore:        actor.pvpKills,
-		PvPKillsAfter:         actorNextPvPKills,
-		PKCountBefore:         actor.pkCount,
-		PKCountAfter:          actorNextPKCount,
-		KarmaBefore:           actor.karma,
-		KarmaAfter:            actorNextKarma,
-		KarmaDelta:            actorNextKarma - actor.karma,
-		SessionID:             metadata.SessionID,
-		CommandID:             metadata.CommandID,
-		CommandSeq:            metadata.CommandSeq,
-		CreatedAt:             now.UTC(),
+	commit, err := s.store.Characters.ApplyPvPCombat(ctx, PvPCombatMutation{
+		EventID:             randomID("pvp_event"),
+		AttackerCharacterID: actor.characterID,
+		VictimCharacterID:   target.characterID,
+		ActionType:          command.Type,
+		SkillID:             parsed.skillID,
+		Damage:              damage,
+		MPCost:              mpCost,
+		CooldownID:          cooldownID,
+		CooldownDuration:    cooldownDuration,
+		SessionID:           metadata.SessionID,
+		CommandID:           metadata.CommandID,
+		CommandSeq:          metadata.CommandSeq,
+		OccurredAt:          now,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, errPvPActorDead):
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "combat.actor_dead", "Actor is currently dead."))
+		case errors.Is(err, errPvPTargetDead):
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "combat.target_dead", "Referenced target is already dead."))
+		case errors.Is(err, errPvPInsufficientMP):
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "combat.insufficient_mp", "Actor lacks MP for this skill."))
+		case errors.Is(err, errPvPCooldownActive):
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "combat.cooldown_active", "Attack is still on cooldown."))
+		default:
+			s.recordStoreError("characters.apply_pvp_combat", err)
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist player combat outcome."))
+		}
 	}
-	if err := s.store.Characters.ApplyPvPCombatState(ctx, attackerState, targetState, event); err != nil {
-		s.recordStoreError("characters.apply_pvp_combat_state", err)
-		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to persist player combat outcome."))
-	}
-
+	now = commit.Event.CreatedAt
+	attackerState := commit.Attacker
+	targetState := commit.Victim
+	actor.currentCP = attackerState.CurrentCP
+	actor.currentHP = attackerState.CurrentHP
 	actor.currentMP = attackerState.CurrentMP
 	actor.pvpKills = attackerState.PvPKills
 	actor.pkCount = attackerState.PKCount
@@ -204,7 +170,9 @@ func (s *Server) processPvPCommand(ctx context.Context, session *Session, actor 
 	actor.pvpFlagUntil = attackerState.PvPFlagUntil
 	actor.pvpFlagPersistenceDirty = false
 	actor.targetID = target.characterID
-	actor.cooldownEndsAt[cooldownID] = now.Add(cooldownDuration)
+	if commit.CooldownID != "" {
+		actor.cooldownEndsAt[commit.CooldownID] = commit.CooldownEndsAt
+	}
 	actor.queuedSkill = nil
 	actor.queuedBasicAttack = nil
 	actor.autoBasicAttack = nil
@@ -213,6 +181,10 @@ func (s *Server) processPvPCommand(ctx context.Context, session *Session, actor 
 
 	target.currentCP = targetState.CurrentCP
 	target.currentHP = targetState.CurrentHP
+	target.currentMP = targetState.CurrentMP
+	target.pvpKills = targetState.PvPKills
+	target.pkCount = targetState.PKCount
+	target.karma = targetState.Karma
 	target.pvpFlagUntil = targetState.PvPFlagUntil
 	target.pvpFlagPersistenceDirty = false
 	target.pvpStateDirty = true

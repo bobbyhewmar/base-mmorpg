@@ -131,12 +131,22 @@ func (s *Server) handleInternalPvPEvents(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	suspicious, ok := parseOptionalBoolQuery(w, r, "suspicious")
+	if !ok {
+		return
+	}
+	actionType := strings.TrimSpace(r.URL.Query().Get("action"))
+	if actionType == "" {
+		actionType = strings.TrimSpace(r.URL.Query().Get("action_type"))
+	}
 	events, err := s.store.PvPCombatEvents.ListByFilter(r.Context(), PvPCombatEventQuery{
 		AttackerCharacterID: strings.TrimSpace(r.URL.Query().Get("attacker_character_id")),
 		VictimCharacterID:   strings.TrimSpace(r.URL.Query().Get("victim_character_id")),
+		KillerCharacterID:   strings.TrimSpace(r.URL.Query().Get("killer_character_id")),
 		InvolvedCharacterID: strings.TrimSpace(r.URL.Query().Get("character_id")),
-		ActionType:          strings.TrimSpace(r.URL.Query().Get("action_type")),
+		ActionType:          actionType,
 		Result:              strings.TrimSpace(r.URL.Query().Get("result")),
+		Suspicious:          suspicious,
 		OccurredAfter:       from,
 		OccurredBefore:      to,
 		Limit:               limit,
@@ -150,9 +160,13 @@ func (s *Server) handleInternalPvPEvents(w http.ResponseWriter, r *http.Request)
 	filters := map[string]any{
 		"attacker_character_id": strings.TrimSpace(r.URL.Query().Get("attacker_character_id")),
 		"victim_character_id":   strings.TrimSpace(r.URL.Query().Get("victim_character_id")),
+		"killer_character_id":   strings.TrimSpace(r.URL.Query().Get("killer_character_id")),
 		"character_id":          strings.TrimSpace(r.URL.Query().Get("character_id")),
-		"action_type":           strings.TrimSpace(r.URL.Query().Get("action_type")),
+		"action":                actionType,
 		"result":                strings.TrimSpace(r.URL.Query().Get("result")),
+	}
+	if suspicious != nil {
+		filters["suspicious"] = *suspicious
 	}
 	if from != nil {
 		filters["from"] = from.Format(time.RFC3339)
@@ -221,6 +235,19 @@ func parseOptionalIntQuery(w http.ResponseWriter, r *http.Request, key string) (
 		return 0, false
 	}
 	return parsed, true
+}
+
+func parseOptionalBoolQuery(w http.ResponseWriter, r *http.Request, key string) (*bool, bool) {
+	value := strings.TrimSpace(r.URL.Query().Get(key))
+	if value == "" {
+		return nil, true
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "audit.invalid_query", key+" must be true or false.")
+		return nil, false
+	}
+	return &parsed, true
 }
 
 func parseOptionalTimeQuery(w http.ResponseWriter, r *http.Request, key string) (*time.Time, bool) {

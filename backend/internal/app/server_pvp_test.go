@@ -370,6 +370,9 @@ func TestPvPKillClassificationPersistenceAndAuthoritativeRespawn(t *testing.T) {
 		h := newPvPTestHarness(t, 1)
 		h.target.currentCP = 0
 		h.target.currentHP = 1
+		if err := h.store.Characters.UpdateProgression(context.Background(), h.target.characterID, h.target.characterLevel, h.target.currentXP, 0, 1, h.target.currentMP); err != nil {
+			t.Fatal(err)
+		}
 		h.target.targetID = h.actor.characterID
 		h.target.queuedSkill = &queuedRuntimeSkill{}
 		h.target.queuedBasicAttack = &queuedRuntimeBasicAttack{}
@@ -377,6 +380,9 @@ func TestPvPKillClassificationPersistenceAndAuthoritativeRespawn(t *testing.T) {
 		h.target.queuedLootPickup = &queuedRuntimeLootPickup{}
 		h.target.activeMovement = &runtimeMovementState{}
 		h.target.cooldownEndsAt["crescent_strike"] = time.Now().Add(time.Minute)
+		if err := h.store.CharacterCooldowns.ReplaceByCharacterID(context.Background(), h.target.characterID, h.target.characterCooldownState(time.Now())); err != nil {
+			t.Fatal(err)
+		}
 		messages, _ := h.server.processGameplayCommandWithDedup(context.Background(), h.actorSession, h.actor, pvpCommand("cmd_pk_kill", 1, "basic_attack", map[string]any{"target_id": h.target.characterID}))
 		if pvpRejectReason(messages) != "" {
 			t.Fatalf("kill rejected: %#v", messages)
@@ -416,6 +422,12 @@ func TestPvPKillClassificationPersistenceAndAuthoritativeRespawn(t *testing.T) {
 		h.target.currentCP = 0
 		h.target.currentHP = 1
 		h.target.pvpFlagUntil = time.Now().Add(time.Minute)
+		if err := h.store.Characters.UpdateProgression(context.Background(), h.target.characterID, h.target.characterLevel, h.target.currentXP, 0, 1, h.target.currentMP); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.store.Characters.UpdatePvPFlagUntil(context.Background(), h.target.characterID, h.target.pvpFlagUntil); err != nil {
+			t.Fatal(err)
+		}
 		messages, _ := h.server.processGameplayCommandWithDedup(context.Background(), h.actorSession, h.actor, pvpCommand("cmd_pvp_kill", 1, "basic_attack", map[string]any{"target_id": h.target.characterID}))
 		if pvpRejectReason(messages) != "" {
 			t.Fatalf("kill rejected: %#v", messages)
@@ -552,5 +564,55 @@ func TestInternalPvPAuditEndpointRequiresTokenAndFiltersResults(t *testing.T) {
 	}
 	if len(payload.Events) != 1 || payload.Events[0].CommandID != "cmd_pvp_audit" || payload.Events[0].SessionID != h.actorSession.ID {
 		t.Fatalf("unexpected audit endpoint payload: %+v", payload.Events)
+	}
+
+	now := time.Now().UTC()
+	for index, eventID := range []string{"audit_first_kill", "audit_repeated_kill"} {
+		if err := h.store.Characters.UpdateProgression(context.Background(), h.target.characterID, 1, 0, 0, 1, h.target.currentMP); err != nil {
+			t.Fatal(err)
+		}
+		mutation := pvpStoreMutation(eventID, &Character{ID: h.actor.characterID}, &Character{ID: h.target.characterID}, 10, now.Add(time.Duration(index)*time.Second))
+		mutation.ActionType = "use_skill"
+		mutation.SkillID = "crescent_strike"
+		if _, err := h.store.Characters.ApplyPvPCombat(context.Background(), mutation); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	filteredURL := httpServer.URL + "/internal/pvp/events?killer_character_id=" + h.actor.characterID +
+		"&victim_character_id=" + h.target.characterID +
+		"&suspicious=true&action=use_skill&result=pk_kill&from=" + now.Add(-time.Minute).Format(time.RFC3339)
+	filteredRequest, err := http.NewRequest(http.MethodGet, filteredURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filteredRequest.Header.Set("X-Internal-Audit-Token", "pvp-audit-secret")
+	filteredResponse, err := httpServer.Client().Do(filteredRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer filteredResponse.Body.Close()
+	if filteredResponse.StatusCode != http.StatusOK {
+		t.Fatalf("filtered audit status = %d", filteredResponse.StatusCode)
+	}
+	if err := json.NewDecoder(filteredResponse.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Events) != 1 || payload.Events[0].ID != "audit_repeated_kill" || !payload.Events[0].Suspicious || payload.Events[0].RepeatedKillCount != 2 {
+		t.Fatalf("unexpected filtered repeated-kill payload: %+v", payload.Events)
+	}
+
+	invalidRequest, err := http.NewRequest(http.MethodGet, httpServer.URL+"/internal/pvp/events?suspicious=maybe", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidRequest.Header.Set("X-Internal-Audit-Token", "pvp-audit-secret")
+	invalidResponse, err := httpServer.Client().Do(invalidRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer invalidResponse.Body.Close()
+	if invalidResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid suspicious filter status = %d", invalidResponse.StatusCode)
 	}
 }

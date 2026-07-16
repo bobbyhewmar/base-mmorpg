@@ -103,6 +103,10 @@ CREATE TABLE IF NOT EXISTS pvp_combat_events (
   cp_damage INTEGER NOT NULL,
   hp_damage INTEGER NOT NULL,
   result TEXT NOT NULL,
+  killer_character_id TEXT NULL REFERENCES characters(character_id) ON DELETE SET NULL,
+  assist_character_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  suspicious BOOLEAN NOT NULL DEFAULT FALSE,
+  repeated_kill_count INTEGER NOT NULL DEFAULT 0,
   attacker_flagged_before BOOLEAN NOT NULL,
   attacker_flagged_after BOOLEAN NOT NULL,
   victim_flagged_before BOOLEAN NOT NULL,
@@ -120,9 +124,18 @@ CREATE TABLE IF NOT EXISTS pvp_combat_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE pvp_combat_events ADD COLUMN IF NOT EXISTS killer_character_id TEXT NULL REFERENCES characters(character_id) ON DELETE SET NULL;
+ALTER TABLE pvp_combat_events ADD COLUMN IF NOT EXISTS assist_character_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE pvp_combat_events ADD COLUMN IF NOT EXISTS suspicious BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE pvp_combat_events ADD COLUMN IF NOT EXISTS repeated_kill_count INTEGER NOT NULL DEFAULT 0;
+
 CREATE INDEX IF NOT EXISTS idx_pvp_combat_events_attacker ON pvp_combat_events(attacker_character_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pvp_combat_events_victim ON pvp_combat_events(victim_character_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pvp_combat_events_result ON pvp_combat_events(result, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pvp_combat_events_killer ON pvp_combat_events(killer_character_id, created_at DESC) WHERE killer_character_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_pvp_combat_events_repeated_pair ON pvp_combat_events(attacker_character_id, victim_character_id, created_at DESC) WHERE result IN ('pvp_kill', 'pk_kill');
+CREATE INDEX IF NOT EXISTS idx_pvp_combat_events_suspicious ON pvp_combat_events(created_at DESC) WHERE suspicious = TRUE;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pvp_combat_events_command_once ON pvp_combat_events(session_id, command_seq) WHERE session_id IS NOT NULL AND command_seq > 0;
 
 CREATE TABLE IF NOT EXISTS character_skill_cooldowns (
   character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,

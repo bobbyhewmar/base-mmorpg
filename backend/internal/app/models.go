@@ -83,6 +83,30 @@ type CharacterPvPCombatState struct {
 	PvPFlagUntil time.Time
 }
 
+type PvPCombatMutation struct {
+	EventID             string
+	AttackerCharacterID string
+	VictimCharacterID   string
+	ActionType          string
+	SkillID             string
+	Damage              int
+	MPCost              int
+	CooldownID          string
+	CooldownDuration    time.Duration
+	SessionID           string
+	CommandID           string
+	CommandSeq          int
+	OccurredAt          time.Time
+}
+
+type PvPCombatCommit struct {
+	Attacker       CharacterPvPCombatState
+	Victim         CharacterPvPCombatState
+	Event          PvPCombatEvent
+	CooldownID     string
+	CooldownEndsAt time.Time
+}
+
 type CharacterSkillCooldown struct {
 	CharacterID string    `json:"-"`
 	SkillID     string    `json:"skill_id"`
