@@ -128,6 +128,8 @@ For movement, the authoritative runtime update may arrive after the client has a
 
 For queued gameplay interactions such as loot pickup after approach, the durable mutation happens only when the authoritative runtime reaches legal range. Intermediate approach waypoints are runtime state, not inventory success.
 
+For a remote-owned known player, `select_target` still commits a rejected command outcome. That outcome and its optional `presence.remote_target_notice.v1` outbox row are finalized in one PostgreSQL transaction. The event idempotency key derives from `session_id + command_seq`; identical replay reads the stored command outcome without producing again, and conflicting replay remains `sequence.conflicting_replay`. The informational notice never changes target state and is not a substitute for `delta` or snapshot authority.
+
 If the command was accepted into the pipeline with a dedup reservation, the server finalizes the command record with:
 
 - stable status
@@ -358,7 +360,7 @@ The initial namespaces are:
 | `sequence.conflicting_replay` | Same `command_seq` was reused with conflicting command identity |
 | `world.entity_not_known` | Referenced entity is not in the current `known-set` |
 | `world.entity_not_interactable` | Referenced entity exists but cannot be interacted with |
-| `presence.target_remote` | Known player is online on another server instance and no cross-instance interaction path exists yet |
+| `presence.target_remote` | Known player is online on another server instance; the requested interaction remains unsupported even if an informational notice is queued |
 | `presence.target_offline` | Previously known player no longer has active durable ownership |
 | `world.loot_out_of_reach` | A queued loot pickup finished movement but still could not reach the loot |
 | `combat.out_of_range` | Target is not within valid range |

@@ -4,7 +4,7 @@
 
 Freeze the minimum durable ownership and fencing contract that lets more than one backend instance share PostgreSQL without allowing two instances to author the same online character.
 
-This slice adds no Redis, queue, cross-instance gameplay fanout, shard transfer, map change, or client fallback.
+The ownership slice adds no Redis, external queue, shard transfer, map change, or client fallback. The later PostgreSQL outbox slice now builds one minimum informational fanout path on this ownership registry; its separate contract is `postgres-gameplay-event-outbox.md`.
 
 ## Concept Translation
 
@@ -76,9 +76,11 @@ When a local attachment is replaced after reconnect or expiry, the local registr
 - `offline`: no unexpired ownership exists
 - `unavailable`: ownership claims this instance but the matching ready runtime is not available yet
 
-This classification does not synthesize a remote runtime entity and does not implement cross-instance fanout. It only prevents remote-online characters from collapsing into fake local success or the same meaning as unknown/offline.
+This classification does not synthesize a remote runtime entity. It prevents remote-online characters from collapsing into fake local success or the same meaning as unknown/offline, and it may provide the exact destination ownership used by the durable outbox.
 
 For a player already present in runtime `known-set`, `select_target`, player PvP, party invite, and clan invite return `presence.target_remote` when that player is currently owned by another instance. A previously known player with no active ownership returns the existing domain-unavailable behavior or `presence.target_offline` for selection. A character absent from `known-set` still returns `world.entity_not_known`.
+
+`select_target` now also produces one replay-safe informational remote-target notice for the destination owner. The notice does not select the target, authorize damage, create an invite, or replace `presence.target_remote`. PvP, party, clan, movement, entity, and chat interaction remain local-only until dedicated cross-instance contracts exist.
 
 ## Stable Reason Codes
 
@@ -87,7 +89,7 @@ For a player already present in runtime `known-set`, `select_target`, player PvP
 | `session.invalid_attach_token` | Attach used a consumed, rotated, unknown, or otherwise invalid credential |
 | `session.ownership_conflict` | A different gameplay session attempted to replace an unexpired durable owner |
 | `session.stale_owner` | Gameplay command came from an expired or superseded owner tuple |
-| `presence.target_remote` | Known player is online on another instance but cross-instance interaction fanout is not implemented |
+| `presence.target_remote` | Known player is online on another instance; the command remains unsupported even if an informational notice is queued |
 | `presence.target_offline` | Previously known player has no active durable ownership |
 
 These are backend decisions. The browser only renders rejects and authoritative snapshots or deltas.
@@ -108,7 +110,7 @@ Logs include session, character, instance, fence, and lease deadline when availa
 
 ## Explicitly Deferred
 
-- cross-instance entity or message fanout
+- cross-instance entity, movement, combat, party, clan, or chat fanout beyond the informational remote-target notice
 - remote party/clan invite delivery
 - remote PvP execution
 - Redis, queue, or a new coordination service

@@ -48,6 +48,7 @@ The following data lives in authoritative runtime memory:
 - current eligible party reward subset resolved at mob death
 - current region-local entity presence
 - region-local revision counters used for outbound deltas
+- live PostgreSQL outbox poller identity plus a bounded set of successfully delivered informational event ids
 
 ### Motivation
 
@@ -86,10 +87,13 @@ The following data is durable and authoritative in PostgreSQL:
 - durable session records
 - durable character-to-session ownership with `server_instance_id`, monotonic fence, region, and absolute lease deadline
 - command deduplication records
+- durable cross-instance gameplay event outbox rows, claim leases, retry state, delivery markers, and dead-letter markers
 
 The current implementation persists skill cooldown recovery state in `character_skill_cooldowns` keyed by `character_id + skill_id`.
 
 The multi-instance session foundation persists one `gameplay_session_ownerships` row per currently claimed character. `gameplay_sessions.status = attached` is lifecycle history, not sufficient online truth. Attach acquisition serializes on the character row, renewal matches the exact session, instance, and fence, and conditional release prevents an old socket from closing a newer owner. PostgreSQL time owns deadlines; startup sanitation preserves unexpired owners belonging to other instances.
+
+The minimum fanout foundation persists one exact-instance delivery intent per row in `gameplay_event_outbox`. Command-correlated production commits with the command outcome when applicable. Claim, retry, delivery, dead-letter, and retention state are durable; the worker loop and bounded live-event dedup set are runtime projections. This is an outbox, not event sourcing or frame-level presence persistence.
 
 The hardened PvP/PK slice persists `pvp_kills`, `pk_count`, `karma`, and `pvp_flag_until` on `characters`. The flag deadline is absolute: attach/world-enter restore it only when it is still in the future, while server-time expiry clears the durable value before publishing the expiry transition. A player-combat hit locks both durable character rows in deterministic order and computes the resource transition from that locked truth. The same transaction commits attacker/victim combat resources, both flag deadlines, classification counters, attacker cooldown, lethal victim cooldown cleanup, attribution/anti-feed fields, and one `pvp_combat_events` row before success is published.
 
@@ -138,6 +142,7 @@ The current implementation persists the first chat slice in `chat_messages`, key
 - recoverable session records
 - recoverable session ownership, lease deadline, owning instance, and fencing token
 - replay-safe command records keyed by `session_id + command_seq`
+- replay-safe cross-instance delivery intents keyed by immutable outbox idempotency key
 - last durable position and region checkpoint
 
 ### Explicit Non-Goal
@@ -215,6 +220,8 @@ The following must not generate a durable write by themselves in the initial sli
 - each `known-set` appearance or disappearance
 - each target selection change
 - each visual reconciliation correction
+
+The remote-target notice is a narrow exception about delivery intent, not durable target state: the rejected remote selection may create one command-correlated outbox row, while the selected target remains unset and runtime-only.
 
 ## Treatment of Specific Runtime Concerns
 
@@ -517,6 +524,8 @@ Predicted local-only movement does not update `known-set`. `known-set` changes o
 `known-set` must not be stored as durable truth in PostgreSQL.
 
 When a known player is referenced, runtime legality may additionally consult durable session ownership. A matching ready owner on this process is `local`; an unexpired owner on another `server_instance_id` is `remote`; no unexpired row is `offline`. This classification cannot add an entity to `known-set` and cannot authorize remote interaction by itself.
+
+The remote classification may route an informational outbox notice to the exact owning instance. Delivery still revalidates the target's current ownership and ready local runtime. It cannot authorize combat or synthesize remote `known-set` state.
 
 ## Anti-Examples
 

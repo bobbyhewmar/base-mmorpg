@@ -18,6 +18,8 @@ The PvP/PK study retained only the separation between targeting and attack legal
 
 The session study retained only the lifecycle concepts that one live connection owns a character at a time, connection state advances explicitly before gameplay is accepted, replacement invalidates the previous binding, disconnect first detaches the connection from the character and then performs cleanup, and repeated close or cleanup must be harmless. The reference is process-local, so its implementation was not reused. This project translates those concepts into its own PostgreSQL lease, monotonic fencing token, instance identity, conditional release, early stale-owner reject, and minimal remote-presence lookup. No reference code, class or packet names, storage layout, schema, proprietary identifier, or asset was copied. The project-owned contract is `docs/specs/session-ownership-and-cross-instance-presence.md`.
 
+The cross-instance fanout study retained only the generic responsibilities that recipients come from authoritative presence or visibility, gameplay mutation and outbound delivery are separate responsibilities, and entry or exit from presence must have explicit delivery consequences. The reference remains process-local and has no reusable multi-instance durability contract. This project therefore created its own PostgreSQL outbox, instance-scoped claim lease, immutable idempotency key, retry/dead-letter lifecycle, retention policy, and target-ownership revalidation. No reference code, schema, packet shape, class name, identifier, or asset was copied. The project-owned contract is `docs/specs/postgres-gameplay-event-outbox.md`.
+
 ## What This Direction Locks In
 
 - The project should feel like a classic fantasy MMORPG with dense, compact spaces.

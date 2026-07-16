@@ -84,7 +84,7 @@ Before emitting a successful player-combat delta, the backend opens one PostgreS
 
 The process-local PvP mutex remains only as a local runtime coordination optimization. It is not the multi-instance correctness boundary. The memory adapter uses one critical section and the same mutation resolver, cooldown checks, attribution rules, and anti-feed rules as PostgreSQL.
 
-Session fencing precedes player combat. The actor lease is renewed before command dedup or `ack`; the target's exact local fence is renewed before the combat transaction. A known target owned by another instance rejects as `presence.target_remote`, because this slice deliberately has no remote combat router or fallback.
+Session fencing precedes player combat. The actor lease is renewed before command dedup or `ack`; the target's exact local fence is renewed before the combat transaction. A known target owned by another instance rejects as `presence.target_remote`, because this slice deliberately has no remote combat router or fallback. The separate outbox may carry an informational target notice, but it never carries damage, cooldown, death, flag, counter, karma, or audit mutation.
 
 The handler projects the committed state back into the two locked runtime actors and performs volatile death cleanup before publishing success. The generic post-command progression/cooldown flush is skipped for player combat, preventing a stale runtime snapshot from overwriting the newer locked transaction. Persistence failure returns `system.persistence_failed` without publishing local or runtime success.
 

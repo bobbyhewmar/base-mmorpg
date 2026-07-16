@@ -93,7 +93,10 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Presence cleanup on disconnect is verified.
 - [x] Durable ownership distinguishes a known player online on another instance from an offline or unknown player.
 - [x] `select_target`, PvP, party invite, and clan invite reject remote-owned players with `presence.target_remote` and never create local fallback success.
-- [ ] Cross-instance movement, entity, chat, party, and clan fanout remains a later slice; remote-online is classified but not remotely interactable yet.
+- [x] PostgreSQL outbox provides monotonic ids, immutable idempotency keys, exact-instance claim leases, retry/dead-letter state, delivered-only retention, and a minimum remote-target notice.
+- [x] Remote-target notice production is atomic with command finalization; identical replay cannot duplicate the event and conflicting replay remains rejected.
+- [x] Two independent PostgreSQL stores cannot concurrently claim the same live delivery row.
+- [ ] Cross-instance movement, entity, chat, party, clan, and combat fanout remains a later slice; remote-online is still not remotely interactable.
 
 ### Terrain and Pathfinding Reality
 
