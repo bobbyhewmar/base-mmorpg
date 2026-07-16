@@ -210,10 +210,38 @@ const (
 )
 
 type Session struct {
-	ID              string
-	AccountID       string
-	CharacterID     string
-	AttachToken     string
-	AttachExpiresAt time.Time
-	Status          SessionStatus
+	ID               string
+	AccountID        string
+	CharacterID      string
+	AttachToken      string
+	AttachExpiresAt  time.Time
+	Status           SessionStatus
+	ServerInstanceID string
+	FencingToken     int64
+	LeaseExpiresAt   time.Time
+}
+
+type SessionOwnership struct {
+	CharacterID      string
+	SessionID        string
+	ServerInstanceID string
+	FencingToken     int64
+	RegionID         string
+	LeaseExpiresAt   time.Time
+	AcquiredAt       time.Time
+	RenewedAt        time.Time
+}
+
+type SessionOwnershipChange string
+
+const (
+	sessionOwnershipAcquired SessionOwnershipChange = "acquired"
+	sessionOwnershipReplaced SessionOwnershipChange = "replaced"
+)
+
+type SessionOwnershipAcquisition struct {
+	Session   *Session
+	Ownership SessionOwnership
+	Change    SessionOwnershipChange
+	Previous  *SessionOwnership
 }

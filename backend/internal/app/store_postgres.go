@@ -3386,9 +3386,11 @@ func (p *postgresStoreBackend) HasAttachedForCharacter(ctx context.Context, char
 	row := p.db.QueryRowContext(
 		ctx,
 		`SELECT COUNT(*)
-		 FROM gameplay_sessions
-		 WHERE character_id = $1
-		   AND status = $2`,
+		 FROM gameplay_session_ownerships ownership
+		 JOIN gameplay_sessions session ON session.session_id = ownership.session_id
+		 WHERE ownership.character_id = $1
+		   AND ownership.lease_expires_at > NOW()
+		   AND session.status = $2`,
 		characterID,
 		string(sessionStatusAttached),
 	)
@@ -3424,11 +3426,18 @@ func (p *postgresStoreBackend) SanitizeStartupLifecycle(ctx context.Context, now
 
 	if _, err := tx.ExecContext(
 		ctx,
-		`UPDATE gameplay_sessions
+		`UPDATE gameplay_sessions session
 		 SET status = $2, updated_at = NOW()
-		 WHERE status = $1`,
+		 WHERE status = $1
+		   AND NOT EXISTS (
+		     SELECT 1
+		     FROM gameplay_session_ownerships ownership
+		     WHERE ownership.session_id = session.session_id
+		       AND ownership.lease_expires_at > $3
+		   )`,
 		string(sessionStatusAttached),
 		string(sessionStatusClosed),
+		now,
 	); err != nil {
 		return err
 	}
@@ -3469,8 +3478,364 @@ func (p *postgresStoreBackend) UpdateStatus(ctx context.Context, sessionID strin
 	return nil
 }
 
+func (p *postgresStoreBackend) AcquireSessionOwnership(ctx context.Context, sessionID string, attachToken string, serverInstanceID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnershipAcquisition, error) {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var characterID string
+	if err := tx.QueryRowContext(ctx, `SELECT character_id FROM gameplay_sessions WHERE session_id = $1`, sessionID).Scan(&characterID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errSessionNotFound
+		}
+		return nil, err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT character_id FROM characters WHERE character_id = $1 FOR UPDATE`, characterID).Scan(&characterID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errSessionNotFound
+		}
+		return nil, err
+	}
+
+	row := tx.QueryRowContext(
+		ctx,
+		`SELECT session.session_id, session.account_id, session.character_id, session.attach_token,
+		        session.status, session.attach_expires_at, character.last_region_id, NOW()
+		 FROM gameplay_sessions session
+		 JOIN characters character ON character.character_id = session.character_id
+		 WHERE session.session_id = $1 AND session.character_id = $2
+		 FOR UPDATE OF session`,
+		sessionID,
+		characterID,
+	)
+	session := &Session{}
+	var status string
+	var regionID string
+	var now time.Time
+	if err := row.Scan(&session.ID, &session.AccountID, &session.CharacterID, &session.AttachToken, &status, &session.AttachExpiresAt, &regionID, &now); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errSessionNotFound
+		}
+		return nil, err
+	}
+	session.Status = SessionStatus(status)
+	if session.AttachToken != attachToken {
+		return nil, errInvalidAttachToken
+	}
+	if !session.AttachExpiresAt.After(now) {
+		if _, err := tx.ExecContext(ctx, `UPDATE gameplay_sessions SET status = $2, updated_at = NOW() WHERE session_id = $1`, session.ID, string(sessionStatusExpired)); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return nil, errSessionExpired
+	}
+	if session.Status != sessionStatusPendingAttach && session.Status != sessionStatusAttached {
+		return nil, errSessionNotAttachable
+	}
+	if serverInstanceID == "" || leaseDuration <= 0 || attachTokenTTL <= 0 {
+		return nil, errSessionNotAttachable
+	}
+
+	var previous *SessionOwnership
+	current := &SessionOwnership{}
+	err = tx.QueryRowContext(
+		ctx,
+		`SELECT character_id, session_id, server_instance_id, fencing_token, region_id,
+		        lease_expires_at, acquired_at, renewed_at
+		 FROM gameplay_session_ownerships
+		 WHERE character_id = $1
+		 FOR UPDATE`,
+		session.CharacterID,
+	).Scan(
+		&current.CharacterID,
+		&current.SessionID,
+		&current.ServerInstanceID,
+		&current.FencingToken,
+		&current.RegionID,
+		&current.LeaseExpiresAt,
+		&current.AcquiredAt,
+		&current.RenewedAt,
+	)
+	change := sessionOwnershipAcquired
+	nextToken := int64(1)
+	if err == nil {
+		copy := *current
+		previous = &copy
+		if current.LeaseExpiresAt.After(now) && (current.SessionID != session.ID || current.ServerInstanceID != serverInstanceID) {
+			return nil, errOwnershipConflict
+		}
+		change = sessionOwnershipReplaced
+		nextToken = current.FencingToken + 1
+		if current.SessionID != session.ID {
+			if _, err := tx.ExecContext(ctx, `UPDATE gameplay_sessions SET status = $2, updated_at = NOW() WHERE session_id = $1 AND status = $3`, current.SessionID, string(sessionStatusClosed), string(sessionStatusAttached)); err != nil {
+				return nil, err
+			}
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
+	ownership := SessionOwnership{
+		CharacterID:      session.CharacterID,
+		SessionID:        session.ID,
+		ServerInstanceID: serverInstanceID,
+		FencingToken:     nextToken,
+		RegionID:         regionID,
+		LeaseExpiresAt:   now.Add(leaseDuration),
+		AcquiredAt:       now,
+		RenewedAt:        now,
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO gameplay_session_ownerships (
+		   character_id, session_id, server_instance_id, fencing_token, region_id,
+		   lease_expires_at, acquired_at, renewed_at
+		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (character_id) DO UPDATE SET
+		   session_id = EXCLUDED.session_id,
+		   server_instance_id = EXCLUDED.server_instance_id,
+		   fencing_token = EXCLUDED.fencing_token,
+		   region_id = EXCLUDED.region_id,
+		   lease_expires_at = EXCLUDED.lease_expires_at,
+		   acquired_at = EXCLUDED.acquired_at,
+		   renewed_at = EXCLUDED.renewed_at`,
+		ownership.CharacterID,
+		ownership.SessionID,
+		ownership.ServerInstanceID,
+		ownership.FencingToken,
+		ownership.RegionID,
+		ownership.LeaseExpiresAt,
+		ownership.AcquiredAt,
+		ownership.RenewedAt,
+	); err != nil {
+		return nil, err
+	}
+	session.Status = sessionStatusAttached
+	session.AttachToken = randomID("attach")
+	session.AttachExpiresAt = now.Add(attachTokenTTL)
+	if _, err := tx.ExecContext(
+		ctx,
+		`UPDATE gameplay_sessions
+		 SET status = $2, attach_token = $3, attach_expires_at = $4, updated_at = NOW()
+		 WHERE session_id = $1`,
+		session.ID,
+		string(session.Status),
+		session.AttachToken,
+		session.AttachExpiresAt,
+	); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	applyOwnershipToSession(session, &ownership)
+	return &SessionOwnershipAcquisition{
+		Session:   session,
+		Ownership: ownership,
+		Change:    change,
+		Previous:  previous,
+	}, nil
+}
+
+func (p *postgresStoreBackend) RenewSessionOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error) {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	ownership := &SessionOwnership{}
+	if err := tx.QueryRowContext(
+		ctx,
+		`UPDATE gameplay_session_ownerships
+		 SET region_id = CASE WHEN $5 = '' THEN region_id ELSE $5 END,
+		     lease_expires_at = NOW() + ($6 * INTERVAL '1 millisecond'),
+		     renewed_at = NOW()
+		 WHERE character_id = $1
+		   AND session_id = $2
+		   AND server_instance_id = $3
+		   AND fencing_token = $4
+		   AND lease_expires_at > NOW()
+		 RETURNING character_id, session_id, server_instance_id, fencing_token, region_id,
+		           lease_expires_at, acquired_at, renewed_at`,
+		characterID,
+		sessionID,
+		serverInstanceID,
+		fencingToken,
+		regionID,
+		leaseDuration.Milliseconds(),
+	).Scan(
+		&ownership.CharacterID,
+		&ownership.SessionID,
+		&ownership.ServerInstanceID,
+		&ownership.FencingToken,
+		&ownership.RegionID,
+		&ownership.LeaseExpiresAt,
+		&ownership.AcquiredAt,
+		&ownership.RenewedAt,
+	); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		var leaseExpiresAt time.Time
+		lookupErr := tx.QueryRowContext(ctx, `SELECT lease_expires_at FROM gameplay_session_ownerships WHERE character_id = $1`, characterID).Scan(&leaseExpiresAt)
+		if errors.Is(lookupErr, sql.ErrNoRows) {
+			return nil, errOwnershipStale
+		}
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		var now time.Time
+		if err := tx.QueryRowContext(ctx, `SELECT NOW()`).Scan(&now); err != nil {
+			return nil, err
+		}
+		if !leaseExpiresAt.After(now) {
+			return nil, errOwnershipExpired
+		}
+		return nil, errOwnershipStale
+	}
+	result, err := tx.ExecContext(
+		ctx,
+		`UPDATE gameplay_sessions
+		 SET attach_expires_at = NOW() + ($2 * INTERVAL '1 millisecond'), updated_at = NOW()
+		 WHERE session_id = $1 AND status = $3`,
+		sessionID,
+		attachTokenTTL.Milliseconds(),
+		string(sessionStatusAttached),
+	)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if rows != 1 {
+		return nil, errOwnershipStale
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return ownership, nil
+}
+
+func (p *postgresStoreBackend) ReleaseSessionOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64) (bool, error) {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(
+		ctx,
+		`UPDATE gameplay_session_ownerships
+		 SET lease_expires_at = NOW(), renewed_at = NOW()
+		 WHERE character_id = $1
+		   AND session_id = $2
+		   AND server_instance_id = $3
+		   AND fencing_token = $4
+		   AND lease_expires_at > NOW()`,
+		characterID,
+		sessionID,
+		serverInstanceID,
+		fencingToken,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if rows == 0 {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE gameplay_sessions SET status = $2, updated_at = NOW() WHERE session_id = $1 AND status = $3`, sessionID, string(sessionStatusClosed), string(sessionStatusAttached)); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func scanSessionOwnership(scanner rowScanner) (*SessionOwnership, error) {
+	ownership := &SessionOwnership{}
+	if err := scanner.Scan(
+		&ownership.CharacterID,
+		&ownership.SessionID,
+		&ownership.ServerInstanceID,
+		&ownership.FencingToken,
+		&ownership.RegionID,
+		&ownership.LeaseExpiresAt,
+		&ownership.AcquiredAt,
+		&ownership.RenewedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errRecordNotFound
+		}
+		return nil, err
+	}
+	return ownership, nil
+}
+
+func (p *postgresStoreBackend) GetActiveSessionOwnershipByCharacterID(ctx context.Context, characterID string) (*SessionOwnership, error) {
+	return scanSessionOwnership(p.db.QueryRowContext(
+		ctx,
+		`SELECT ownership.character_id, ownership.session_id, ownership.server_instance_id, ownership.fencing_token, ownership.region_id,
+		        ownership.lease_expires_at, ownership.acquired_at, ownership.renewed_at
+		 FROM gameplay_session_ownerships ownership
+		 JOIN gameplay_sessions session ON session.session_id = ownership.session_id
+		 WHERE ownership.character_id = $1
+		   AND ownership.lease_expires_at > NOW()
+		   AND session.status = $2`,
+		characterID,
+		string(sessionStatusAttached),
+	))
+}
+
+func (p *postgresStoreBackend) GetActiveSessionForCharacter(ctx context.Context, characterID string) (*Session, error) {
+	row := p.db.QueryRowContext(
+		ctx,
+		`SELECT session.session_id, session.account_id, session.character_id, session.attach_token,
+		        session.status, session.attach_expires_at,
+		        ownership.server_instance_id, ownership.fencing_token, ownership.lease_expires_at
+		 FROM gameplay_session_ownerships ownership
+		 JOIN gameplay_sessions session ON session.session_id = ownership.session_id
+		 WHERE ownership.character_id = $1
+		   AND ownership.lease_expires_at > NOW()
+		   AND session.attach_expires_at > NOW()
+		   AND session.status = $2`,
+		characterID,
+		string(sessionStatusAttached),
+	)
+	session := &Session{}
+	var status string
+	if err := row.Scan(
+		&session.ID,
+		&session.AccountID,
+		&session.CharacterID,
+		&session.AttachToken,
+		&status,
+		&session.AttachExpiresAt,
+		&session.ServerInstanceID,
+		&session.FencingToken,
+		&session.LeaseExpiresAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errRecordNotFound
+		}
+		return nil, err
+	}
+	session.Status = SessionStatus(status)
+	return session, nil
+}
+
 func (p *postgresStoreBackend) truncateAllTables(ctx context.Context) error {
-	_, err := p.db.ExecContext(ctx, `TRUNCATE TABLE gameplay_command_records, clan_invites, clan_members, clans, party_invites, party_members, parties, chat_messages, account_sessions, gameplay_sessions, pvp_combat_events, action_logs, storage_transfer_records, character_hotbar_loadouts, character_skill_cooldowns, character_items, character_quests, character_pets, characters, account_credentials, accounts RESTART IDENTITY CASCADE`)
+	_, err := p.db.ExecContext(ctx, `TRUNCATE TABLE gameplay_command_records, gameplay_session_ownerships, clan_invites, clan_members, clans, party_invites, party_members, parties, chat_messages, account_sessions, gameplay_sessions, pvp_combat_events, action_logs, storage_transfer_records, character_hotbar_loadouts, character_skill_cooldowns, character_items, character_quests, character_pets, characters, account_credentials, accounts RESTART IDENTITY CASCADE`)
 	return err
 }
 
@@ -3851,4 +4216,24 @@ func (repo postgresGameplaySessionRepo) SanitizeStartupLifecycle(ctx context.Con
 
 func (repo postgresGameplaySessionRepo) UpdateStatus(ctx context.Context, sessionID string, status SessionStatus) error {
 	return repo.backend.UpdateStatus(ctx, sessionID, status)
+}
+
+func (repo postgresGameplaySessionRepo) AcquireOwnership(ctx context.Context, sessionID string, attachToken string, serverInstanceID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnershipAcquisition, error) {
+	return repo.backend.AcquireSessionOwnership(ctx, sessionID, attachToken, serverInstanceID, leaseDuration, attachTokenTTL)
+}
+
+func (repo postgresGameplaySessionRepo) RenewOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error) {
+	return repo.backend.RenewSessionOwnership(ctx, characterID, sessionID, serverInstanceID, fencingToken, regionID, leaseDuration, attachTokenTTL)
+}
+
+func (repo postgresGameplaySessionRepo) ReleaseOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64) (bool, error) {
+	return repo.backend.ReleaseSessionOwnership(ctx, characterID, sessionID, serverInstanceID, fencingToken)
+}
+
+func (repo postgresGameplaySessionRepo) GetActiveOwnershipByCharacterID(ctx context.Context, characterID string) (*SessionOwnership, error) {
+	return repo.backend.GetActiveSessionOwnershipByCharacterID(ctx, characterID)
+}
+
+func (repo postgresGameplaySessionRepo) GetActiveSessionForCharacter(ctx context.Context, characterID string) (*Session, error) {
+	return repo.backend.GetActiveSessionForCharacter(ctx, characterID)
 }

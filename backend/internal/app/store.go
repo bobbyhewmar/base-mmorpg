@@ -30,6 +30,13 @@ var (
 	errPvPTargetDead         = errors.New("pvp target dead")
 	errPvPInsufficientMP     = errors.New("pvp insufficient mp")
 	errPvPCooldownActive     = errors.New("pvp cooldown active")
+	errSessionNotFound       = errors.New("session not found")
+	errSessionNotAttachable  = errors.New("session not attachable")
+	errSessionExpired        = errors.New("session expired")
+	errInvalidAttachToken    = errors.New("invalid attach token")
+	errOwnershipConflict     = errors.New("session ownership conflict")
+	errOwnershipStale        = errors.New("session ownership stale")
+	errOwnershipExpired      = errors.New("session ownership expired")
 )
 
 type AccountRepository interface {
@@ -175,6 +182,11 @@ type GameplaySessionRepository interface {
 	ExpireStalePendingAttach(ctx context.Context, characterID string, now time.Time) error
 	SanitizeStartupLifecycle(ctx context.Context, now time.Time) error
 	UpdateStatus(ctx context.Context, sessionID string, status SessionStatus) error
+	AcquireOwnership(ctx context.Context, sessionID string, attachToken string, serverInstanceID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnershipAcquisition, error)
+	RenewOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error)
+	ReleaseOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64) (bool, error)
+	GetActiveOwnershipByCharacterID(ctx context.Context, characterID string) (*SessionOwnership, error)
+	GetActiveSessionForCharacter(ctx context.Context, characterID string) (*Session, error)
 }
 
 type authRegistrationWriter interface {

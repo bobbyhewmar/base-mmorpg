@@ -174,6 +174,7 @@ func TestMetricsEndpointTracksGameplayAttachAndCommandSignals(t *testing.T) {
 	assertMetricLine(t, metricsBody, `l2bg_attached_sessions_active 1`)
 	assertMetricLine(t, metricsBody, `l2bg_region_occupancy{region_id="dawn_plaza"} 1`)
 	assertMetricLine(t, metricsBody, `l2bg_ws_attach_attempts_total{reason_code="none",result="accepted"} 1`)
+	assertMetricLine(t, metricsBody, `l2bg_session_ownership_events_total{result="acquired"} 1`)
 	assertMetricLine(t, metricsBody, `l2bg_gameplay_outbound_messages_total{kind="region_context"} 1`)
 	assertMetricLine(t, metricsBody, `l2bg_gameplay_outbound_messages_total{kind="ack"} 1`)
 	assertMetricLine(t, metricsBody, `l2bg_gameplay_outbound_messages_total{kind="delta"} 1`)
@@ -187,6 +188,7 @@ func TestMetricsEndpointTracksGameplayAttachAndCommandSignals(t *testing.T) {
 	waitForMetricLine(t, httpServer.Client(), httpServer.URL, `l2bg_websocket_connections_active 0`)
 	waitForMetricLine(t, httpServer.Client(), httpServer.URL, `l2bg_attached_sessions_active 0`)
 	waitForMetricLine(t, httpServer.Client(), httpServer.URL, `l2bg_region_occupancy{region_id="dawn_plaza"} 0`)
+	waitForMetricLine(t, httpServer.Client(), httpServer.URL, `l2bg_session_ownership_events_total{result="released"} 1`)
 }
 
 func TestMetricsEndpointCountsPersistenceErrors(t *testing.T) {

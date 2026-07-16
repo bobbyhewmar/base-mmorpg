@@ -428,6 +428,21 @@ CREATE INDEX IF NOT EXISTS idx_gameplay_sessions_account_id ON gameplay_sessions
 CREATE INDEX IF NOT EXISTS idx_gameplay_sessions_character_id ON gameplay_sessions(character_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_gameplay_sessions_attach_token ON gameplay_sessions(attach_token);
 
+CREATE TABLE IF NOT EXISTS gameplay_session_ownerships (
+  character_id TEXT PRIMARY KEY REFERENCES characters(character_id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES gameplay_sessions(session_id) ON DELETE CASCADE,
+  server_instance_id TEXT NOT NULL,
+  fencing_token BIGINT NOT NULL CHECK (fencing_token > 0),
+  region_id TEXT NOT NULL,
+  lease_expires_at TIMESTAMPTZ NOT NULL,
+  acquired_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  renewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gameplay_session_ownerships_session_id ON gameplay_session_ownerships(session_id);
+CREATE INDEX IF NOT EXISTS idx_gameplay_session_ownerships_lease ON gameplay_session_ownerships(lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_gameplay_session_ownerships_instance ON gameplay_session_ownerships(server_instance_id, lease_expires_at);
+
 CREATE TABLE IF NOT EXISTS gameplay_command_records (
   session_id TEXT NOT NULL REFERENCES gameplay_sessions(session_id) ON DELETE CASCADE,
   command_seq INTEGER NOT NULL,

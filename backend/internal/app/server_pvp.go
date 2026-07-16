@@ -75,9 +75,27 @@ func (s *Server) processPvPCommand(ctx context.Context, session *Session, actor 
 	}
 	actor.mu.Unlock()
 
-	targetAttached := s.attachedSessionByCharacterID(parsed.targetID)
-	if targetAttached == nil || targetAttached.runtime == nil {
+	presenceScope, targetAttached, _, err := s.resolveCharacterPresence(ctx, parsed.targetID)
+	if err != nil {
+		s.recordStoreError("gameplay_sessions.resolve_pvp_target_presence", err)
+		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve authoritative player presence."))
+	}
+	if presenceScope == characterPresenceRemote {
+		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "presence.target_remote", "Referenced player is online on another server instance and cannot be attacked locally."))
+	}
+	if presenceScope != characterPresenceLocal || targetAttached == nil || targetAttached.runtime == nil {
 		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "pvp.target_unavailable", "Referenced player is no longer available."))
+	}
+	if targetAttached.fencingToken != 0 {
+		targetSession := &Session{
+			ID:               targetAttached.sessionID,
+			CharacterID:      targetAttached.characterID,
+			ServerInstanceID: targetAttached.serverInstanceID,
+			FencingToken:     targetAttached.fencingToken,
+		}
+		if err := s.renewSessionOwnership(ctx, targetSession, targetAttached.runtime.regionIDValue(), false); err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "pvp.target_unavailable", "Referenced player no longer has valid local ownership."))
+		}
 	}
 	target := targetAttached.runtime
 	now := time.Now()

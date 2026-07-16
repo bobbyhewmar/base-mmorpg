@@ -16,9 +16,12 @@ import (
 )
 
 const (
-	passwordAlgorithmSHA256   = "sha256"
-	passwordAlgorithmBcryptV1 = "bcrypt_v1"
-	defaultAccessTokenTTL     = 2 * time.Hour
+	passwordAlgorithmSHA256          = "sha256"
+	passwordAlgorithmBcryptV1        = "bcrypt_v1"
+	defaultAccessTokenTTL            = 2 * time.Hour
+	defaultSessionLeaseDuration      = 30 * time.Second
+	defaultSessionLeaseRenewInterval = 10 * time.Second
+	defaultSessionAttachTokenTTL     = 5 * time.Minute
 )
 
 type RateLimitConfig struct {
@@ -27,12 +30,16 @@ type RateLimitConfig struct {
 }
 
 type ServerConfig struct {
-	AllowedOrigins       []string
-	AccessTokenTTL       time.Duration
-	AuthRateLimit        RateLimitConfig
-	AttachRateLimit      RateLimitConfig
-	InternalAuditEnabled bool
-	InternalAuditToken   string
+	AllowedOrigins            []string
+	AccessTokenTTL            time.Duration
+	AuthRateLimit             RateLimitConfig
+	AttachRateLimit           RateLimitConfig
+	InternalAuditEnabled      bool
+	InternalAuditToken        string
+	ServerInstanceID          string
+	SessionLeaseDuration      time.Duration
+	SessionLeaseRenewInterval time.Duration
+	SessionAttachTokenTTL     time.Duration
 }
 
 type fixedWindowRateLimiter struct {
@@ -58,6 +65,9 @@ func defaultServerConfig() ServerConfig {
 			MaxAttempts: 16,
 			Window:      time.Minute,
 		},
+		SessionLeaseDuration:      defaultSessionLeaseDuration,
+		SessionLeaseRenewInterval: defaultSessionLeaseRenewInterval,
+		SessionAttachTokenTTL:     defaultSessionAttachTokenTTL,
 	}
 }
 
@@ -72,6 +82,19 @@ func normalizeServerConfig(config ServerConfig) ServerConfig {
 	if config.AttachRateLimit.MaxAttempts <= 0 || config.AttachRateLimit.Window <= 0 {
 		config.AttachRateLimit = defaults.AttachRateLimit
 	}
+	if config.SessionLeaseDuration <= 0 {
+		config.SessionLeaseDuration = defaults.SessionLeaseDuration
+	}
+	if config.SessionLeaseRenewInterval <= 0 || config.SessionLeaseRenewInterval >= config.SessionLeaseDuration {
+		config.SessionLeaseRenewInterval = config.SessionLeaseDuration / 3
+		if config.SessionLeaseRenewInterval <= 0 {
+			config.SessionLeaseRenewInterval = time.Millisecond
+		}
+	}
+	if config.SessionAttachTokenTTL <= 0 {
+		config.SessionAttachTokenTTL = defaults.SessionAttachTokenTTL
+	}
+	config.ServerInstanceID = strings.TrimSpace(config.ServerInstanceID)
 	config.AllowedOrigins = normalizeAllowedOrigins(config.AllowedOrigins)
 	return config
 }

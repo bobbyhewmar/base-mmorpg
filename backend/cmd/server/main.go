@@ -35,6 +35,20 @@ func main() {
 	if internalAuditEnabled && internalAuditToken == "" {
 		log.Fatal("L2BG_INTERNAL_AUDIT_ENABLED requires L2BG_INTERNAL_AUDIT_TOKEN")
 	}
+	serverInstanceID := strings.TrimSpace(os.Getenv("L2BG_SERVER_INSTANCE_ID"))
+	if serverInstanceID == "" {
+		hostname, err := os.Hostname()
+		if err != nil || strings.TrimSpace(hostname) == "" {
+			log.Fatal("L2BG_SERVER_INSTANCE_ID is required when hostname is unavailable")
+		}
+		serverInstanceID = strings.TrimSpace(hostname)
+	}
+	sessionLeaseDuration := durationEnv("L2BG_SESSION_LEASE_DURATION", 30*time.Second)
+	sessionLeaseRenewInterval := durationEnv("L2BG_SESSION_LEASE_RENEW_INTERVAL", 10*time.Second)
+	if sessionLeaseRenewInterval >= sessionLeaseDuration {
+		log.Fatal("L2BG_SESSION_LEASE_RENEW_INTERVAL must be shorter than L2BG_SESSION_LEASE_DURATION")
+	}
+	sessionAttachTokenTTL := durationEnv("L2BG_SESSION_ATTACH_TOKEN_TTL", 5*time.Minute)
 	store, err := app.NewStore(databaseURL)
 	if err != nil {
 		log.Fatal(err)
@@ -46,16 +60,32 @@ func main() {
 	}
 
 	server := app.NewServerWithConfig(addr, publicWSURL, store, app.ServerConfig{
-		AllowedOrigins:       allowedOrigins,
-		AccessTokenTTL:       accessTokenTTL,
-		AuthRateLimit:        authRateLimit,
-		AttachRateLimit:      attachRateLimit,
-		InternalAuditEnabled: internalAuditEnabled,
-		InternalAuditToken:   internalAuditToken,
+		AllowedOrigins:            allowedOrigins,
+		AccessTokenTTL:            accessTokenTTL,
+		AuthRateLimit:             authRateLimit,
+		AttachRateLimit:           attachRateLimit,
+		InternalAuditEnabled:      internalAuditEnabled,
+		InternalAuditToken:        internalAuditToken,
+		ServerInstanceID:          serverInstanceID,
+		SessionLeaseDuration:      sessionLeaseDuration,
+		SessionLeaseRenewInterval: sessionLeaseRenewInterval,
+		SessionAttachTokenTTL:     sessionAttachTokenTTL,
 	})
 	if err := server.Start(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func durationEnv(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		log.Fatalf("invalid %s: %q", key, raw)
+	}
+	return value
 }
 
 func splitEnvList(value string) []string {

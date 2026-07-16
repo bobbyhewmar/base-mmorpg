@@ -39,13 +39,18 @@ type Server struct {
 }
 
 type attachedSession struct {
-	sessionID   string
-	runtime     *attachedRuntime
-	send        func(map[string]any) bool
-	ready       bool
-	dispatchMu  sync.Mutex
-	movementMu  sync.Mutex
-	pendingMove *pendingMovementDispatch
+	sessionID        string
+	characterID      string
+	serverInstanceID string
+	fencingToken     int64
+	leaseMu          sync.Mutex
+	leaseExpiresAt   time.Time
+	runtime          *attachedRuntime
+	send             func(map[string]any) bool
+	ready            bool
+	dispatchMu       sync.Mutex
+	movementMu       sync.Mutex
+	pendingMove      *pendingMovementDispatch
 }
 
 type pendingMovementDispatch struct {
@@ -124,6 +129,9 @@ func NewServerWithConfig(addr string, publicWSURL string, store *Store, config S
 		store = newMemoryStore()
 	}
 	config = normalizeServerConfig(config)
+	if config.ServerInstanceID == "" {
+		config.ServerInstanceID = randomID("instance")
+	}
 	corsOrigins := make(map[string]struct{}, len(config.AllowedOrigins))
 	for _, origin := range config.AllowedOrigins {
 		corsOrigins[origin] = struct{}{}
@@ -148,8 +156,9 @@ func NewServerWithConfig(addr string, publicWSURL string, store *Store, config S
 func (s *Server) Start() error {
 	log.Printf("backend stub listening on %s", s.addr)
 	s.observer.log("info", "server_start", map[string]any{
-		"addr":       s.addr,
-		"store_mode": s.store.Mode,
+		"addr":               s.addr,
+		"store_mode":         s.store.Mode,
+		"server_instance_id": s.config.ServerInstanceID,
 	})
 	return http.ListenAndServe(s.addr, s.handler())
 }
@@ -847,6 +856,25 @@ func (s *Server) handleWorldEnter(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "Unable to expire stale gameplay sessions.")
 		return
 	}
+	activeSession, err := s.store.GameplaySessions.GetActiveSessionForCharacter(r.Context(), character.ID)
+	if err != nil && !errors.Is(err, errRecordNotFound) {
+		s.recordStoreError("gameplay_sessions.get_active_for_character", err, errRecordNotFound)
+		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "Unable to inspect active gameplay ownership.")
+		return
+	}
+	if activeSession != nil {
+		wsURL := s.resolveGameplayWSURL(r)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"session_id":           activeSession.ID,
+			"character_id":         character.ID,
+			"attach_token":         activeSession.AttachToken,
+			"attach_expires_at_ms": activeSession.AttachExpiresAt.UnixMilli(),
+			"self_state":           selfState,
+			"item_state":           snapshotCharacterItems(items),
+			"ws_url":               wsURL,
+		})
+		return
+	}
 
 	pendingSession, err := s.store.GameplaySessions.GetLatestPendingForCharacter(r.Context(), character.ID, now)
 	if err != nil {
@@ -968,19 +996,14 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 
 	runtime, err := s.buildAttachedRuntime(r.Context(), session, character, time.Now())
 	if err != nil {
+		s.closeAttachedSession(session.ID, session.FencingToken)
 		s.writeWSReject(ctx, conn, "", 0, "system.persistence_failed", "Unable to load character runtime state.")
 		s.recordAttachAttempt("rejected", "system.persistence_failed", session.ID, character.ID)
 		_ = conn.Close(websocket.StatusInternalError, "attach runtime load failed")
 		return
 	}
 	s.recordAttachAttempt("accepted", "none", session.ID, character.ID)
-	defer func() {
-		s.persistCharacterWorldState(session.CharacterID, runtime)
-		s.persistCharacterProgression(session.CharacterID, runtime)
-		s.persistCharacterCooldownState(session.CharacterID, runtime)
-		s.persistCharacterQuestState(session.CharacterID, runtime)
-		s.closeAttachedSession(session.ID)
-	}()
+	defer s.finalizeOwnedAttachedSession(session, runtime)
 	loopCtx, cancelLoop := context.WithCancel(r.Context())
 	defer cancelLoop()
 	outboundCh := make(chan map[string]any, 32)
@@ -1013,8 +1036,8 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 			return false
 		}
 	}
-	s.stageAttachedSession(session.ID, runtime, sendOutbound)
-	defer s.unregisterAttachedSession(session.ID)
+	s.stageAttachedSession(session.ID, runtime, sendOutbound, session)
+	defer s.unregisterAttachedSession(session.ID, session.FencingToken)
 	attached := s.attachedSessionBySessionID(session.ID)
 	if !sendOutbound(runtime.regionContextMessage()) {
 		return
@@ -1029,11 +1052,27 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		ticker := time.NewTicker(250 * time.Millisecond)
 		defer ticker.Stop()
+		nextOwnershipRenewAt := time.Now().Add(s.config.SessionLeaseRenewInterval)
 		for {
 			select {
 			case <-loopCtx.Done():
 				return
 			case now := <-ticker.C:
+				if session.FencingToken != 0 && (!attached.leaseDeadline().After(now) || !now.Before(nextOwnershipRenewAt)) {
+					if err := s.renewSessionOwnership(loopCtx, session, runtime.regionIDValue(), true); err != nil {
+						reasonCode := "session.stale_owner"
+						message := "Gameplay session ownership is no longer valid on this server instance."
+						if !errors.Is(err, errOwnershipStale) && !errors.Is(err, errOwnershipExpired) {
+							reasonCode = "system.persistence_failed"
+							message = "Unable to renew gameplay session ownership."
+							s.recordStoreError("gameplay_sessions.renew_ownership", err)
+						}
+						sendOutbound(rejectMessage("", 0, reasonCode, message))
+						cancelLoop()
+						return
+					}
+					nextOwnershipRenewAt = now.Add(s.config.SessionLeaseRenewInterval)
+				}
 				var movementChanged bool
 				var respawned bool
 				var tickMessages []map[string]any
@@ -1141,17 +1180,20 @@ func writeWSJSON(ctx context.Context, conn *websocket.Conn, payload any) error {
 	return conn.Write(ctx, websocket.MessageText, bytes)
 }
 
-func (s *Server) registerAttachedSession(sessionID string, runtime *attachedRuntime, send func(map[string]any) bool) {
+func (s *Server) registerAttachedSession(sessionID string, runtime *attachedRuntime, send func(map[string]any) bool, ownedSession ...*Session) {
 	if runtime == nil || send == nil {
 		return
 	}
 	s.attachedMu.Lock()
-	s.attached[sessionID] = &attachedSession{
-		sessionID: sessionID,
-		runtime:   runtime,
-		send:      send,
-		ready:     true,
+	attached := &attachedSession{
+		sessionID:   sessionID,
+		characterID: runtime.characterID,
+		runtime:     runtime,
+		send:        send,
+		ready:       true,
 	}
+	applyAttachedOwnership(attached, ownedSession...)
+	s.attached[sessionID] = attached
 	s.attachedMu.Unlock()
 	s.observer.addGauge("l2bg_attached_sessions_active", "Currently attached gameplay sessions.", nil, 1)
 	s.observer.addGauge("l2bg_region_occupancy", "Currently attached gameplay sessions by region.", map[string]string{
@@ -1159,12 +1201,20 @@ func (s *Server) registerAttachedSession(sessionID string, runtime *attachedRunt
 	}, 1)
 }
 
-func (s *Server) stageAttachedSession(sessionID string, runtime *attachedRuntime, send func(map[string]any) bool) {
+func (s *Server) stageAttachedSession(sessionID string, runtime *attachedRuntime, send func(map[string]any) bool, ownedSession ...*Session) {
 	if runtime == nil || send == nil {
 		return
 	}
 
 	s.attachedMu.Lock()
+	replaced := make([]*attachedSession, 0, 1)
+	for existingSessionID, existing := range s.attached {
+		if existing == nil || existing.runtime == nil || existing.runtime.characterID != runtime.characterID {
+			continue
+		}
+		delete(s.attached, existingSessionID)
+		replaced = append(replaced, existing)
+	}
 	for peerSessionID, attached := range s.attached {
 		if peerSessionID == sessionID || attached == nil || attached.runtime == nil || !attached.ready {
 			continue
@@ -1177,13 +1227,26 @@ func (s *Server) stageAttachedSession(sessionID string, runtime *attachedRuntime
 			runtime.seedKnownEntity(*petEntity)
 		}
 	}
-	s.attached[sessionID] = &attachedSession{
-		sessionID: sessionID,
-		runtime:   runtime,
-		send:      send,
-		ready:     false,
+	attached := &attachedSession{
+		sessionID:   sessionID,
+		characterID: runtime.characterID,
+		runtime:     runtime,
+		send:        send,
+		ready:       false,
 	}
+	applyAttachedOwnership(attached, ownedSession...)
+	s.attached[sessionID] = attached
 	s.attachedMu.Unlock()
+	for _, previous := range replaced {
+		if pending := previous.clearPendingMove(0); pending != nil {
+			pending.cancel()
+			s.finalizeSupersededMovementOutcome(previous.sessionID, pending)
+		}
+		s.observer.addGauge("l2bg_attached_sessions_active", "Currently attached gameplay sessions.", nil, -1)
+		s.observer.addGauge("l2bg_region_occupancy", "Currently attached gameplay sessions by region.", map[string]string{
+			"region_id": metricRegionID(previous.runtime.regionIDValue()),
+		}, -1)
+	}
 	s.observer.addGauge("l2bg_attached_sessions_active", "Currently attached gameplay sessions.", nil, 1)
 	s.observer.addGauge("l2bg_region_occupancy", "Currently attached gameplay sessions by region.", map[string]string{
 		"region_id": metricRegionID(runtime.regionIDValue()),
@@ -1230,6 +1293,8 @@ func (s *Server) activateAttachedSession(sessionID string) []map[string]any {
 			messages := make([]map[string]any, 0, 2)
 			if message := runtime.applyRemotePlayerAppear(selfEntity); message != nil {
 				messages = append(messages, message)
+			} else if message := runtime.applyRemotePlayerState(selfEntity); message != nil {
+				messages = append(messages, message)
 			}
 			if hasSelfPetEntity && selfPetEntity != nil {
 				if message := runtime.applyRemoteEntityAppear(*selfPetEntity); message != nil {
@@ -1274,10 +1339,26 @@ func (s *Server) attachedSessionBySessionID(sessionID string) *attachedSession {
 	return s.attached[sessionID]
 }
 
-func (s *Server) unregisterAttachedSession(sessionID string) {
+func applyAttachedOwnership(attached *attachedSession, ownedSession ...*Session) {
+	if attached == nil || len(ownedSession) == 0 || ownedSession[0] == nil {
+		return
+	}
+	session := ownedSession[0]
+	attached.characterID = session.CharacterID
+	attached.serverInstanceID = session.ServerInstanceID
+	attached.fencingToken = session.FencingToken
+	attached.leaseExpiresAt = session.LeaseExpiresAt
+}
+
+func (s *Server) unregisterAttachedSession(sessionID string, expectedFencingToken ...int64) {
 	s.pvpMu.Lock()
 	s.attachedMu.Lock()
 	attached := s.attached[sessionID]
+	if len(expectedFencingToken) > 0 && attached != nil && attached.fencingToken != expectedFencingToken[0] {
+		s.attachedMu.Unlock()
+		s.pvpMu.Unlock()
+		return
+	}
 	delete(s.attached, sessionID)
 	s.attachedMu.Unlock()
 	s.pvpMu.Unlock()
@@ -1403,43 +1484,75 @@ func (s *Server) fanOutPlayerState(sourceSessionID string, sourceRuntime *attach
 
 func (s *Server) attachSession(sessionID, attachToken string) (*Session, *Character, error) {
 	ctx := context.Background()
+	currentLocal := s.attachedSessionBySessionID(sessionID)
+	if currentLocal != nil {
+		currentLocal.dispatchMu.Lock()
+		defer currentLocal.dispatchMu.Unlock()
+	}
 
-	session, err := s.store.GameplaySessions.GetByID(ctx, sessionID)
+	acquisition, err := s.store.GameplaySessions.AcquireOwnership(
+		ctx,
+		sessionID,
+		attachToken,
+		s.config.ServerInstanceID,
+		s.config.SessionLeaseDuration,
+		s.config.SessionAttachTokenTTL,
+	)
 	if err != nil {
-		if errors.Is(err, errRecordNotFound) {
+		switch {
+		case errors.Is(err, errSessionNotFound):
 			return nil, nil, errors.New("session.not_found")
+		case errors.Is(err, errSessionExpired):
+			return nil, nil, errors.New("session.expired")
+		case errors.Is(err, errInvalidAttachToken):
+			return nil, nil, errors.New("session.invalid_attach_token")
+		case errors.Is(err, errOwnershipConflict):
+			s.recordOwnershipEvent("ownership_conflict", &Session{ID: sessionID}, nil)
+			return nil, nil, errors.New("session.ownership_conflict")
+		case errors.Is(err, errSessionNotAttachable):
+			return nil, nil, errors.New("session.not_attachable")
+		default:
+			s.recordStoreError("gameplay_sessions.acquire_ownership", err)
+			return nil, nil, errors.New("session.not_attachable")
 		}
-		s.recordStoreError("gameplay_sessions.get_by_id", err, errRecordNotFound)
-		return nil, nil, errors.New("session.not_found")
 	}
-	if session.Status == sessionStatusAttached {
-		return nil, nil, errors.New("session.already_attached")
+	session := acquisition.Session
+	if acquisition.Change == sessionOwnershipReplaced && acquisition.Previous != nil &&
+		!acquisition.Previous.LeaseExpiresAt.After(time.Now()) && acquisition.Previous.LeaseExpiresAt.After(acquisition.Previous.RenewedAt) {
+		s.recordOwnershipEvent("expired", nil, acquisition.Previous)
 	}
-	if time.Now().After(session.AttachExpiresAt) {
-		if err := s.store.GameplaySessions.UpdateStatus(ctx, session.ID, sessionStatusExpired); err != nil {
-			s.recordStoreError("gameplay_sessions.update_status", err)
-		}
-		return nil, nil, errors.New("session.expired")
-	}
-	if session.AttachToken != attachToken {
-		return nil, nil, errors.New("session.invalid_attach_token")
-	}
+	s.recordOwnershipEvent(string(acquisition.Change), session, &acquisition.Ownership)
 	character, err := s.store.Characters.GetByID(ctx, session.CharacterID)
 	if err != nil {
 		s.recordStoreError("characters.get_by_id", err)
+		_, _ = s.store.GameplaySessions.ReleaseOwnership(ctx, session.CharacterID, session.ID, s.config.ServerInstanceID, session.FencingToken)
 		return nil, nil, errors.New("session.not_attachable")
 	}
-	if err := s.store.GameplaySessions.UpdateStatus(ctx, session.ID, sessionStatusAttached); err != nil {
-		s.recordStoreError("gameplay_sessions.update_status", err)
-		return nil, nil, errors.New("session.not_attachable")
-	}
-	session.Status = sessionStatusAttached
 	return session, character, nil
 }
 
-func (s *Server) closeAttachedSession(sessionID string) {
+func (s *Server) closeAttachedSession(sessionID string, expectedFencingToken ...int64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	if len(expectedFencingToken) > 0 {
+		session, err := s.store.GameplaySessions.GetByID(ctx, sessionID)
+		if err != nil {
+			s.recordStoreError("gameplay_sessions.get_by_id", err, errRecordNotFound)
+			return
+		}
+		released, err := s.store.GameplaySessions.ReleaseOwnership(ctx, session.CharacterID, session.ID, s.config.ServerInstanceID, expectedFencingToken[0])
+		if err != nil {
+			s.recordStoreError("gameplay_sessions.release_ownership", err)
+			return
+		}
+		if !released {
+			return
+		}
+		s.recordOwnershipEvent("released", &Session{ID: session.ID, CharacterID: session.CharacterID, FencingToken: expectedFencingToken[0]}, nil)
+		s.expirePartyInvitesForDisconnectedCharacter(ctx, session.CharacterID)
+		s.expireClanInvitesForDisconnectedCharacter(ctx, session.CharacterID)
+		return
+	}
 
 	characterID := ""
 	s.attachedMu.Lock()
@@ -1475,6 +1588,22 @@ func (s *Server) closeAttachedSession(sessionID string) {
 	}
 	s.expirePartyInvitesForDisconnectedCharacter(ctx, characterID)
 	s.expireClanInvitesForDisconnectedCharacter(ctx, characterID)
+}
+
+func (s *Server) finalizeOwnedAttachedSession(session *Session, runtime *attachedRuntime) {
+	if s == nil || session == nil || runtime == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err := s.renewSessionOwnership(ctx, session, runtime.regionIDValue(), false)
+	cancel()
+	if err == nil {
+		s.persistCharacterWorldState(session.CharacterID, runtime)
+		s.persistCharacterProgression(session.CharacterID, runtime)
+		s.persistCharacterCooldownState(session.CharacterID, runtime)
+		s.persistCharacterQuestState(session.CharacterID, runtime)
+	}
+	s.closeAttachedSession(session.ID, session.FencingToken)
 }
 
 func (s *Server) persistCharacterWorldState(characterID string, runtime *attachedRuntime) {
@@ -1848,6 +1977,10 @@ func wsReasonMessage(err error) string {
 		return "Session was not found."
 	case "session.already_attached":
 		return "Session is already attached."
+	case "session.ownership_conflict":
+		return "Another server instance currently owns this gameplay session."
+	case "session.stale_owner":
+		return "Gameplay session ownership is no longer valid on this server instance."
 	case "session.expired":
 		return "Session attach token is expired."
 	case "session.invalid_attach_token":

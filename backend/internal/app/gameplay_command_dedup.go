@@ -42,6 +42,11 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 		s.recordCommandObservation("", command, outboundMessages, "rejected", time.Since(startedAt))
 		return outboundMessages, false
 	}
+	if ownershipReject := s.commandOwnershipReject(ctx, session, runtime, command); ownershipReject != nil {
+		outboundMessages := []map[string]any{ownershipReject}
+		s.recordCommandObservation(session.ID, command, outboundMessages, "rejected", time.Since(startedAt))
+		return outboundMessages, false
+	}
 
 	if replay, resolved, shouldFanOut := s.resolveExistingGameplayCommandRecord(ctx, session.ID, command); resolved {
 		result := "replayed"
@@ -112,6 +117,8 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 		outboundMessages = runtime.processWarehouseCommand(auditCtx, s.store, command)
 	} else if command.Type == "equip_item" || command.Type == "unequip_item" || command.Type == "split_item_stack" || command.Type == "merge_item_stacks" || command.Type == "use_item" {
 		outboundMessages = runtime.processItemCommand(auditCtx, s.store, command)
+	} else if command.Type == "select_target" {
+		outboundMessages = s.processTargetCommand(auditCtx, runtime, command)
 	} else {
 		outboundMessages = runtime.processCommand(command)
 	}
@@ -221,6 +228,11 @@ func (s *Server) processAsyncMovementCommandWithDedup(ctx context.Context, sessi
 		s.recordCommandObservation("", command, outboundMessages, "rejected", time.Since(startedAt))
 		return outboundMessages
 	}
+	if ownershipReject := s.commandOwnershipReject(ctx, session, runtime, command); ownershipReject != nil {
+		outboundMessages := []map[string]any{ownershipReject}
+		s.recordCommandObservation(session.ID, command, outboundMessages, "rejected", time.Since(startedAt))
+		return outboundMessages
+	}
 
 	if replay, resolved, _ := s.resolveExistingGameplayCommandRecord(ctx, session.ID, command); resolved {
 		result := "replayed"
@@ -302,6 +314,20 @@ func (s *Server) resolveAsyncMovementCommand(
 
 	resolution := request.Planner.Resolve(ctx, request.RegionID, request.Start, request.Destination, request.Profile)
 	if resolution.Status == movementPlanStatusCanceled || ctx.Err() != nil {
+		return
+	}
+	command := commandEnvelope{
+		CommandID:  request.CommandID,
+		CommandSeq: request.CommandSeq,
+		Type:       "move_intent",
+	}
+	if ownershipReject := s.commandOwnershipReject(ctx, session, runtime, command); ownershipReject != nil {
+		outboundMessages := []map[string]any{ownershipReject}
+		attached.sendSerialized(ownershipReject)
+		if shouldPersist {
+			s.updateGameplayCommandOutcome(session.ID, request.CommandSeq, gameplayCommandRecordStatusRejected, outboundMessages)
+		}
+		s.recordCommandObservation(session.ID, command, outboundMessages, "rejected", time.Since(request.StartedAt))
 		return
 	}
 

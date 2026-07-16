@@ -38,6 +38,7 @@ type memoryStoreBackend struct {
 	claimedLoot        map[string]struct{}
 	nameIndex          map[string]string
 	sessions           map[string]*Session
+	sessionOwnerships  map[string]*SessionOwnership
 }
 
 type memoryAccountRepo struct{ backend *memoryStoreBackend }
@@ -86,6 +87,7 @@ func newMemoryStore() *Store {
 		claimedLoot:        map[string]struct{}{},
 		nameIndex:          map[string]string{},
 		sessions:           map[string]*Session{},
+		sessionOwnerships:  map[string]*SessionOwnership{},
 	}
 	return &Store{
 		Mode:               "memory",
@@ -1784,6 +1786,17 @@ func (repo memoryGameplaySessionRepo) Create(_ context.Context, session *Session
 	repo.backend.mu.Lock()
 	defer repo.backend.mu.Unlock()
 
+	if session == nil || session.ID == "" {
+		return errSessionNotAttachable
+	}
+	if _, exists := repo.backend.sessions[session.ID]; exists {
+		return errRecordConflict
+	}
+	for _, existing := range repo.backend.sessions {
+		if existing.AttachToken == session.AttachToken {
+			return errRecordConflict
+		}
+	}
 	repo.backend.sessions[session.ID] = cloneSession(session)
 	return nil
 }
@@ -1828,12 +1841,12 @@ func (repo memoryGameplaySessionRepo) HasAttachedForCharacter(_ context.Context,
 	repo.backend.mu.Lock()
 	defer repo.backend.mu.Unlock()
 
-	for _, session := range repo.backend.sessions {
-		if session.CharacterID == characterID && session.Status == sessionStatusAttached {
-			return true, nil
-		}
+	ownership := repo.backend.sessionOwnerships[characterID]
+	if ownership == nil || !ownership.LeaseExpiresAt.After(time.Now().UTC()) {
+		return false, nil
 	}
-	return false, nil
+	session := repo.backend.sessions[ownership.SessionID]
+	return session != nil && session.Status == sessionStatusAttached, nil
 }
 
 func (repo memoryGameplaySessionRepo) ExpireStalePendingAttach(_ context.Context, characterID string, now time.Time) error {
@@ -1855,7 +1868,10 @@ func (repo memoryGameplaySessionRepo) SanitizeStartupLifecycle(_ context.Context
 	for _, session := range repo.backend.sessions {
 		switch session.Status {
 		case sessionStatusAttached:
-			session.Status = sessionStatusClosed
+			ownership := repo.backend.sessionOwnerships[session.CharacterID]
+			if ownership == nil || ownership.SessionID != session.ID || !ownership.LeaseExpiresAt.After(now) {
+				session.Status = sessionStatusClosed
+			}
 		case sessionStatusPendingAttach:
 			if now.After(session.AttachExpiresAt) {
 				session.Status = sessionStatusExpired
@@ -1875,6 +1891,169 @@ func (repo memoryGameplaySessionRepo) UpdateStatus(_ context.Context, sessionID 
 	}
 	session.Status = status
 	return nil
+}
+
+func (repo memoryGameplaySessionRepo) AcquireOwnership(_ context.Context, sessionID string, attachToken string, serverInstanceID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnershipAcquisition, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	session, exists := repo.backend.sessions[sessionID]
+	if !exists {
+		return nil, errSessionNotFound
+	}
+	now := time.Now().UTC()
+	if session.AttachToken != attachToken {
+		return nil, errInvalidAttachToken
+	}
+	if !session.AttachExpiresAt.After(now) {
+		session.Status = sessionStatusExpired
+		return nil, errSessionExpired
+	}
+	if session.Status != sessionStatusPendingAttach && session.Status != sessionStatusAttached {
+		return nil, errSessionNotAttachable
+	}
+	if serverInstanceID == "" || leaseDuration <= 0 || attachTokenTTL <= 0 {
+		return nil, errSessionNotAttachable
+	}
+
+	var previous *SessionOwnership
+	change := sessionOwnershipAcquired
+	nextToken := int64(1)
+	if current := repo.backend.sessionOwnerships[session.CharacterID]; current != nil {
+		currentCopy := *current
+		previous = &currentCopy
+		if current.LeaseExpiresAt.After(now) && (current.SessionID != session.ID || current.ServerInstanceID != serverInstanceID) {
+			return nil, errOwnershipConflict
+		}
+		change = sessionOwnershipReplaced
+		nextToken = current.FencingToken + 1
+		if oldSession := repo.backend.sessions[current.SessionID]; oldSession != nil && oldSession.ID != session.ID {
+			oldSession.Status = sessionStatusClosed
+		}
+	}
+
+	ownership := &SessionOwnership{
+		CharacterID:      session.CharacterID,
+		SessionID:        session.ID,
+		ServerInstanceID: serverInstanceID,
+		FencingToken:     nextToken,
+		RegionID:         repo.memoryCharacterRegion(session.CharacterID),
+		LeaseExpiresAt:   now.Add(leaseDuration),
+		AcquiredAt:       now,
+		RenewedAt:        now,
+	}
+	repo.backend.sessionOwnerships[session.CharacterID] = ownership
+	session.Status = sessionStatusAttached
+	session.AttachToken = randomID("attach")
+	session.AttachExpiresAt = now.Add(attachTokenTTL)
+	applyOwnershipToSession(session, ownership)
+	ownershipCopy := *ownership
+	return &SessionOwnershipAcquisition{
+		Session:   cloneSession(session),
+		Ownership: ownershipCopy,
+		Change:    change,
+		Previous:  previous,
+	}, nil
+}
+
+func (repo memoryGameplaySessionRepo) RenewOwnership(_ context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	ownership := repo.backend.sessionOwnerships[characterID]
+	if ownership == nil || ownership.SessionID != sessionID || ownership.ServerInstanceID != serverInstanceID || ownership.FencingToken != fencingToken {
+		return nil, errOwnershipStale
+	}
+	session := repo.backend.sessions[sessionID]
+	if session == nil || session.Status != sessionStatusAttached {
+		return nil, errOwnershipStale
+	}
+	now := time.Now().UTC()
+	if !ownership.LeaseExpiresAt.After(now) {
+		return nil, errOwnershipExpired
+	}
+	ownership.LeaseExpiresAt = now.Add(leaseDuration)
+	ownership.RenewedAt = now
+	if regionID != "" {
+		ownership.RegionID = regionID
+	}
+	session.AttachExpiresAt = now.Add(attachTokenTTL)
+	applyOwnershipToSession(session, ownership)
+	copy := *ownership
+	return &copy, nil
+}
+
+func (repo memoryGameplaySessionRepo) ReleaseOwnership(_ context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64) (bool, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	ownership := repo.backend.sessionOwnerships[characterID]
+	if ownership == nil || ownership.SessionID != sessionID || ownership.ServerInstanceID != serverInstanceID || ownership.FencingToken != fencingToken {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	if !ownership.LeaseExpiresAt.After(now) {
+		return false, nil
+	}
+	ownership.LeaseExpiresAt = now
+	ownership.RenewedAt = now
+	if session := repo.backend.sessions[sessionID]; session != nil && session.Status == sessionStatusAttached {
+		session.Status = sessionStatusClosed
+		session.ServerInstanceID = ""
+		session.LeaseExpiresAt = time.Time{}
+	}
+	return true, nil
+}
+
+func (repo memoryGameplaySessionRepo) GetActiveOwnershipByCharacterID(_ context.Context, characterID string) (*SessionOwnership, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	ownership := repo.backend.sessionOwnerships[characterID]
+	if ownership == nil || !ownership.LeaseExpiresAt.After(time.Now().UTC()) {
+		return nil, errRecordNotFound
+	}
+	session := repo.backend.sessions[ownership.SessionID]
+	if session == nil || session.Status != sessionStatusAttached {
+		return nil, errRecordNotFound
+	}
+	copy := *ownership
+	return &copy, nil
+}
+
+func (repo memoryGameplaySessionRepo) GetActiveSessionForCharacter(_ context.Context, characterID string) (*Session, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	now := time.Now().UTC()
+	ownership := repo.backend.sessionOwnerships[characterID]
+	if ownership == nil || !ownership.LeaseExpiresAt.After(now) {
+		return nil, errRecordNotFound
+	}
+	session := repo.backend.sessions[ownership.SessionID]
+	if session == nil || session.Status != sessionStatusAttached || !session.AttachExpiresAt.After(now) {
+		return nil, errRecordNotFound
+	}
+	copy := cloneSession(session)
+	applyOwnershipToSession(copy, ownership)
+	return copy, nil
+}
+
+func (repo memoryGameplaySessionRepo) memoryCharacterRegion(characterID string) string {
+	character := repo.backend.characters[characterID]
+	if character == nil {
+		return ""
+	}
+	return character.LastRegionID
+}
+
+func applyOwnershipToSession(session *Session, ownership *SessionOwnership) {
+	if session == nil || ownership == nil {
+		return
+	}
+	session.ServerInstanceID = ownership.ServerInstanceID
+	session.FencingToken = ownership.FencingToken
+	session.LeaseExpiresAt = ownership.LeaseExpiresAt
 }
 
 func cloneSession(session *Session) *Session {

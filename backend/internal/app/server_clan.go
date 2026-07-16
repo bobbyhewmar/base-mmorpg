@@ -466,7 +466,14 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 		if inviteTargetID == actorCharacterID {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "clan.target_invalid", "Character cannot invite itself to a clan."))
 		}
-		if s.attachedSessionByCharacterID(inviteTargetID) == nil {
+		presenceScope, _, _, presenceErr := s.resolveCharacterPresence(ctx, inviteTargetID)
+		if presenceErr != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve authoritative player presence."))
+		}
+		if presenceScope == characterPresenceRemote {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "presence.target_remote", "Referenced player is online on another server instance and cannot receive a local clan invite."))
+		}
+		if presenceScope != characterPresenceLocal {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "clan.target_not_online", "Referenced player is not currently available for clan invitation."))
 		}
 

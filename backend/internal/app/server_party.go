@@ -424,8 +424,14 @@ func (s *Server) processPartyCommand(ctx context.Context, session *Session, runt
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.target_invalid", "Character cannot invite itself to a party."))
 		}
 
-		targetAttached := s.attachedSessionByCharacterID(inviteTargetID)
-		if targetAttached == nil || targetAttached.runtime == nil {
+		presenceScope, targetAttached, _, presenceErr := s.resolveCharacterPresence(ctx, inviteTargetID)
+		if presenceErr != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve authoritative player presence."))
+		}
+		if presenceScope == characterPresenceRemote {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "presence.target_remote", "Referenced player is online on another server instance and cannot receive a local party invite."))
+		}
+		if presenceScope != characterPresenceLocal || targetAttached == nil || targetAttached.runtime == nil {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "party.target_not_online", "Referenced player is not currently available for party invitation."))
 		}
 		if targetAttached.runtime.regionIDValue() != actorRegionID {

@@ -1998,7 +1998,7 @@ func TestPendingAttachIsReusedInsteadOfBlockingImmediateRetry(t *testing.T) {
 	}
 }
 
-func TestAttachedSessionStillBlocksWorldEnter(t *testing.T) {
+func TestOwnedSessionIsReissuedByWorldEnterWithoutCompetingAuthority(t *testing.T) {
 	env := newPersistenceTestEnv(t)
 	_, accessToken := registerAndLogin(t, env, "persist.blocked@test")
 
@@ -2026,16 +2026,24 @@ func TestAttachedSessionStillBlocksWorldEnter(t *testing.T) {
 	}
 	firstPayload := decodeBody[map[string]any](t, worldEnterResponse)
 	sessionID := firstPayload["session_id"].(string)
-
-	if err := env.store.GameplaySessions.UpdateStatus(context.Background(), sessionID, sessionStatusAttached); err != nil {
-		t.Fatalf("GameplaySessions.UpdateStatus() error = %v", err)
+	ownedSession, _, err := env.server.attachSession(sessionID, firstPayload["attach_token"].(string))
+	if err != nil {
+		t.Fatalf("attachSession() error = %v", err)
 	}
+	defer env.server.closeAttachedSession(ownedSession.ID, ownedSession.FencingToken)
 
 	secondResponse := postJSON(t, env.httpServer.Client(), env.httpServer.URL+"/v1/world/enter", map[string]any{
 		"character_id": characterID,
 	}, accessToken)
-	if secondResponse.StatusCode != http.StatusConflict {
-		t.Fatalf("expected conflict for attached session, got %d", secondResponse.StatusCode)
+	if secondResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected active-session reissue, got %d", secondResponse.StatusCode)
+	}
+	secondPayload := decodeBody[map[string]any](t, secondResponse)
+	if secondPayload["session_id"] != sessionID {
+		t.Fatalf("world enter created competing authority: first=%+v second=%+v", firstPayload, secondPayload)
+	}
+	if secondPayload["attach_token"] == firstPayload["attach_token"] {
+		t.Fatalf("world enter did not return the credential rotated by ownership acquisition: first=%+v second=%+v", firstPayload, secondPayload)
 	}
 }
 
