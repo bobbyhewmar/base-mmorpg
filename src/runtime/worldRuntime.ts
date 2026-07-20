@@ -80,6 +80,13 @@ type WorldRuntimeOptions = {
   onLeaveClan?: () => void;
   onKickClanMember?: (targetCharacterId: string) => void;
   onDissolveClan?: () => void;
+  onCreateAlliance?: (name: string) => void;
+  onInviteAllianceClan?: () => void;
+  onAcceptAllianceInvite?: (inviteId: string) => void;
+  onDeclineAllianceInvite?: (inviteId: string) => void;
+  onLeaveAlliance?: () => void;
+  onExpelAllianceClan?: (targetClanId: string) => void;
+  onDissolveAlliance?: () => void;
   onSellVendorItem?: (itemId: string, quantity: number) => void;
   onDepositWarehouseItem?: (itemId: string, quantity: number) => void;
   onWithdrawWarehouseItem?: (itemId: string, quantity: number) => void;
@@ -365,6 +372,13 @@ export class WorldRuntime {
         onLeaveClan: options.onLeaveClan,
         onKickClanMember: options.onKickClanMember,
         onDissolveClan: options.onDissolveClan,
+        onCreateAlliance: options.onCreateAlliance,
+        onInviteAllianceClan: options.onInviteAllianceClan,
+        onAcceptAllianceInvite: options.onAcceptAllianceInvite,
+        onDeclineAllianceInvite: options.onDeclineAllianceInvite,
+        onLeaveAlliance: options.onLeaveAlliance,
+        onExpelAllianceClan: options.onExpelAllianceClan,
+        onDissolveAlliance: options.onDissolveAlliance,
         onSellVendorItem: options.onSellVendorItem,
         onDepositWarehouseItem: options.onDepositWarehouseItem,
         onWithdrawWarehouseItem: options.onWithdrawWarehouseItem,
@@ -444,6 +458,13 @@ export class WorldRuntime {
       onLeaveClan: () => void;
       onKickClanMember: (targetCharacterId: string) => void;
       onDissolveClan: () => void;
+      onCreateAlliance: (name: string) => void;
+      onInviteAllianceClan: () => void;
+      onAcceptAllianceInvite: (inviteId: string) => void;
+      onDeclineAllianceInvite: (inviteId: string) => void;
+      onLeaveAlliance: () => void;
+      onExpelAllianceClan: (targetClanId: string) => void;
+      onDissolveAlliance: () => void;
       onSellVendorItem: (itemId: string, quantity: number) => void;
       onDepositWarehouseItem: (itemId: string, quantity: number) => void;
       onWithdrawWarehouseItem: (itemId: string, quantity: number) => void;
@@ -489,6 +510,13 @@ export class WorldRuntime {
       onLeaveClan: handlers.onLeaveClan,
       onKickClanMember: handlers.onKickClanMember,
       onDissolveClan: handlers.onDissolveClan,
+      onCreateAlliance: handlers.onCreateAlliance,
+      onInviteAllianceClan: handlers.onInviteAllianceClan,
+      onAcceptAllianceInvite: handlers.onAcceptAllianceInvite,
+      onDeclineAllianceInvite: handlers.onDeclineAllianceInvite,
+      onLeaveAlliance: handlers.onLeaveAlliance,
+      onExpelAllianceClan: handlers.onExpelAllianceClan,
+      onDissolveAlliance: handlers.onDissolveAlliance,
       onSellVendorItem: handlers.onSellVendorItem,
       onDepositWarehouseItem: handlers.onDepositWarehouseItem,
       onWithdrawWarehouseItem: handlers.onWithdrawWarehouseItem,
@@ -522,6 +550,7 @@ export class WorldRuntime {
       const state = this.store.getState();
       this.scene.update(state);
       this.scene.render();
+      this.hud.setCameraYaw(this.scene.getCameraYaw());
       this.hud.update(state);
       this.frameHandle = requestAnimationFrame(frame);
     };

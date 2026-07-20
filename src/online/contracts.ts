@@ -558,6 +558,71 @@ export interface DissolveClanCommand {
   payload: EmptyCommandPayload;
 }
 
+export interface CreateAllianceCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'create_alliance';
+  payload: CreateClanPayload;
+}
+
+export interface InviteAllianceClanCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'invite_alliance_clan';
+  payload: EmptyCommandPayload;
+}
+
+export interface AcceptAllianceInviteCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'accept_alliance_invite';
+  payload: PartyInviteDecisionPayload;
+}
+
+export interface DeclineAllianceInviteCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'decline_alliance_invite';
+  payload: PartyInviteDecisionPayload;
+}
+
+export interface LeaveAllianceCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'leave_alliance';
+  payload: EmptyCommandPayload;
+}
+
+export interface ExpelAllianceClanCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'expel_alliance_clan';
+  payload: {
+    target_clan_id: string;
+  };
+}
+
+export interface DissolveAllianceCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'dissolve_alliance';
+  payload: EmptyCommandPayload;
+}
+
 export interface SendChatMessageCommand {
   protocol_version: 1;
   command_id: string;
@@ -614,6 +679,13 @@ export type GameplayCommandEnvelope =
   | LeaveClanCommand
   | KickClanMemberCommand
   | DissolveClanCommand
+  | CreateAllianceCommand
+  | InviteAllianceClanCommand
+  | AcceptAllianceInviteCommand
+  | DeclineAllianceInviteCommand
+  | LeaveAllianceCommand
+  | ExpelAllianceClanCommand
+  | DissolveAllianceCommand
   | SendChatMessageCommand
   | SetHotbarStateCommand;
 
@@ -784,6 +856,36 @@ export interface ClanInviteSnapshot {
   expires_at_ms: number;
 }
 
+export interface AllianceMemberSnapshot {
+  clan_id: string;
+  name: string;
+  leader_character_id: string;
+  leader_name: string;
+  member_count: number;
+  is_leader_clan: boolean;
+}
+
+export interface AllianceSnapshot {
+  alliance_id: string;
+  name: string;
+  leader_clan_id: string;
+  leader_clan_name: string;
+  clan_cap: number;
+  members: AllianceMemberSnapshot[];
+}
+
+export interface AllianceInviteSnapshot {
+  invite_id: string;
+  alliance_id: string;
+  alliance_name: string;
+  inviter_character_id: string;
+  inviter_name: string;
+  inviter_clan_id: string;
+  inviter_clan_name: string;
+  target_clan_id: string;
+  expires_at_ms: number;
+}
+
 export interface SelfStateSnapshot {
   level?: number;
   xp?: number;
@@ -806,6 +908,8 @@ export interface SelfStateSnapshot {
   party_invites?: PartyInviteSnapshot[];
   clan?: ClanSnapshot | null;
   clan_invites?: ClanInviteSnapshot[];
+  alliance?: AllianceSnapshot | null;
+  alliance_invites?: AllianceInviteSnapshot[];
   npc_interaction?: NpcInteractionSnapshot | null;
 }
 
@@ -923,6 +1027,31 @@ export interface ClanNoticeMessage extends ServerMessageBase {
   message: string;
 }
 
+export interface AllianceNoticeMessage extends ServerMessageBase {
+  kind: 'alliance_notice';
+  event_id?: number;
+  command_id?: string;
+  command_seq?: number;
+  status:
+    | 'created'
+    | 'invite_sent'
+    | 'invite_received'
+    | 'invite_accepted'
+    | 'invite_declined'
+    | 'invite_expired'
+    | 'clan_joined'
+    | 'clan_left'
+    | 'clan_expelled'
+    | 'alliance_dissolved';
+  alliance_id?: string;
+  invite_id?: string;
+  actor_character_id?: string;
+  actor_name?: string;
+  target_clan_id?: string;
+  target_clan_name?: string;
+  message: string;
+}
+
 export interface ChatMessageServerMessage extends ServerMessageBase {
   kind: 'chat_message';
   event_id?: number;
@@ -948,6 +1077,7 @@ export type GameplayServerMessage =
   | TradeNoticeMessage
   | PartyNoticeMessage
   | ClanNoticeMessage
+  | AllianceNoticeMessage
   | ChatMessageServerMessage;
 
 export const isApiErrorResponse = (value: unknown): value is ApiErrorResponse => {

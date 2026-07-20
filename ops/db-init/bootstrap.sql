@@ -250,6 +250,48 @@ CREATE INDEX IF NOT EXISTS idx_clan_invites_invitee_character_id ON clan_invites
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clan_invites_clan_unique_pending ON clan_invites(clan_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clan_invites_invitee_unique_pending ON clan_invites(invitee_character_id);
 
+CREATE TABLE IF NOT EXISTS alliances (
+  alliance_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  leader_clan_id TEXT NOT NULL REFERENCES clans(clan_id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alliances_name_normalized ON alliances((LOWER(BTRIM(name))));
+CREATE INDEX IF NOT EXISTS idx_alliances_leader_clan_id ON alliances(leader_clan_id);
+
+CREATE TABLE IF NOT EXISTS alliance_members (
+  alliance_id TEXT NOT NULL REFERENCES alliances(alliance_id) ON DELETE CASCADE,
+  clan_id TEXT NOT NULL REFERENCES clans(clan_id) ON DELETE CASCADE,
+  joined_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (alliance_id, clan_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alliance_members_clan_id ON alliance_members(clan_id);
+CREATE INDEX IF NOT EXISTS idx_alliance_members_alliance_id ON alliance_members(alliance_id, joined_at, clan_id);
+
+CREATE TABLE IF NOT EXISTS alliance_invites (
+  invite_id TEXT PRIMARY KEY,
+  alliance_id TEXT NOT NULL REFERENCES alliances(alliance_id) ON DELETE CASCADE,
+  inviter_clan_id TEXT NOT NULL REFERENCES clans(clan_id) ON DELETE CASCADE,
+  inviter_character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
+  target_clan_id TEXT NOT NULL REFERENCES clans(clan_id) ON DELETE CASCADE,
+  invitee_character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_alliance_invites_alliance_id ON alliance_invites(alliance_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_alliance_invites_invitee_character_id ON alliance_invites(invitee_character_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_alliance_invites_inviter_character_id ON alliance_invites(inviter_character_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_alliance_invites_target_clan_id ON alliance_invites(target_clan_id, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alliance_invites_alliance_unique_pending ON alliance_invites(alliance_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alliance_invites_target_clan_unique_pending ON alliance_invites(target_clan_id);
+
 CREATE TABLE IF NOT EXISTS parties (
   party_id TEXT PRIMARY KEY,
   leader_character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,

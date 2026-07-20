@@ -4,6 +4,8 @@ import {
 } from '../game/data/templates';
 import { isCanonicalBaseClass } from '../game/data/characterClasses';
 import type {
+  AllianceMemberClanState,
+  AllianceState,
   BaseClass,
   ClanState,
   DerivedStats,
@@ -12,6 +14,7 @@ import type {
   ItemInstance,
   OwnedPetState,
   PartyState,
+  PendingAllianceInviteState,
   PendingClanInviteState,
   PendingPartyInviteState,
   PlayerHotbarSlot,
@@ -19,6 +22,8 @@ import type {
   PlayerKnownSkill,
 } from '../game/domain/types';
 import type {
+  AllianceInviteSnapshot,
+  AllianceSnapshot,
   ClanInviteSnapshot,
   ClanSnapshot,
   CharacterItemRecord,
@@ -528,6 +533,110 @@ export const parseClanInvites = (value: unknown): PendingClanInviteState[] => {
 export const cloneClanInvites = (
   invites: PendingClanInviteState[],
 ): PendingClanInviteState[] => invites.map((invite) => ({ ...invite }));
+
+export const parseAllianceSnapshot = (value: unknown): AllianceState | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const candidate = value as AllianceSnapshot;
+  if (
+    typeof candidate.alliance_id !== 'string' ||
+    typeof candidate.name !== 'string' ||
+    typeof candidate.leader_clan_id !== 'string' ||
+    typeof candidate.leader_clan_name !== 'string' ||
+    typeof candidate.clan_cap !== 'number' ||
+    !Array.isArray(candidate.members)
+  ) {
+    return null;
+  }
+
+  const members = candidate.members
+    .map((member) => {
+      if (
+        !member ||
+        typeof member.clan_id !== 'string' ||
+        typeof member.name !== 'string' ||
+        typeof member.leader_character_id !== 'string' ||
+        typeof member.leader_name !== 'string' ||
+        typeof member.member_count !== 'number' ||
+        typeof member.is_leader_clan !== 'boolean'
+      ) {
+        return null;
+      }
+      return {
+        clanId: member.clan_id,
+        name: member.name,
+        leaderCharacterId: member.leader_character_id,
+        leaderName: member.leader_name,
+        memberCount: member.member_count,
+        isLeaderClan: member.is_leader_clan,
+      } satisfies AllianceMemberClanState;
+    })
+    .filter((member): member is AllianceMemberClanState => member !== null);
+
+  return {
+    allianceId: candidate.alliance_id,
+    name: candidate.name,
+    leaderClanId: candidate.leader_clan_id,
+    leaderClanName: candidate.leader_clan_name,
+    clanCap: candidate.clan_cap,
+    members,
+  };
+};
+
+export const cloneAllianceState = (alliance: AllianceState | null): AllianceState | null =>
+  alliance
+    ? {
+        allianceId: alliance.allianceId,
+        name: alliance.name,
+        leaderClanId: alliance.leaderClanId,
+        leaderClanName: alliance.leaderClanName,
+        clanCap: alliance.clanCap,
+        members: alliance.members.map((member) => ({ ...member })),
+      }
+    : null;
+
+export const parseAllianceInvites = (value: unknown): PendingAllianceInviteState[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+      const candidate = entry as AllianceInviteSnapshot;
+      if (
+        typeof candidate.invite_id !== 'string' ||
+        typeof candidate.alliance_id !== 'string' ||
+        typeof candidate.alliance_name !== 'string' ||
+        typeof candidate.inviter_character_id !== 'string' ||
+        typeof candidate.inviter_name !== 'string' ||
+        typeof candidate.inviter_clan_id !== 'string' ||
+        typeof candidate.inviter_clan_name !== 'string' ||
+        typeof candidate.target_clan_id !== 'string' ||
+        typeof candidate.expires_at_ms !== 'number'
+      ) {
+        return null;
+      }
+      return {
+        inviteId: candidate.invite_id,
+        allianceId: candidate.alliance_id,
+        allianceName: candidate.alliance_name,
+        inviterCharacterId: candidate.inviter_character_id,
+        inviterName: candidate.inviter_name,
+        inviterClanId: candidate.inviter_clan_id,
+        inviterClanName: candidate.inviter_clan_name,
+        targetClanId: candidate.target_clan_id,
+        expiresAtMs: candidate.expires_at_ms,
+      } satisfies PendingAllianceInviteState;
+    })
+    .filter((invite): invite is PendingAllianceInviteState => invite !== null);
+};
+
+export const cloneAllianceInvites = (
+  invites: PendingAllianceInviteState[],
+): PendingAllianceInviteState[] => invites.map((invite) => ({ ...invite }));
 
 export const parseAuthoritativePath = (
   value: unknown,

@@ -109,6 +109,7 @@ Focus:
 - align backlog wording with shipped code
 - add an explicit readiness checklist for the current online slice
 - align skill guidance with the master prompt
+- reflect that authoritative alliance foundation is now shipped while alliance chat, command channel, siege, and broader political systems remain deferred
 
 ## Depois
 
@@ -185,6 +186,7 @@ Status:
 - `use_item` autoritativo agora cobre consumiveis no inventario e na hotbar
 - actions futuras alem de `basic_attack`/`pick_up_nearby` continuam como expansao separada
 - bottom-right quick access mini menu implemented with `ALT+T`, `ALT+V`, `ALT+M`, `ALT+X`, classic map placeholder, system menu and exit confirmation
+- top-right minimap now projects player-centered region position and camera-direction arc from runtime state; `ALT+M` uses the same position/yaw projection in a classic draggable map window instead of remaining static
 
 ### Fase I - Inventario e economia ampliados
 

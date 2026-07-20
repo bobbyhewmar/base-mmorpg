@@ -66,6 +66,13 @@ type HudOptions = {
   onLeaveClan?: () => void;
   onKickClanMember?: (targetCharacterId: string) => void;
   onDissolveClan?: () => void;
+  onCreateAlliance?: (name: string) => void;
+  onInviteAllianceClan?: () => void;
+  onAcceptAllianceInvite?: (inviteId: string) => void;
+  onDeclineAllianceInvite?: (inviteId: string) => void;
+  onLeaveAlliance?: () => void;
+  onExpelAllianceClan?: (targetClanId: string) => void;
+  onDissolveAlliance?: () => void;
   onSellVendorItem?: (itemId: string, quantity: number) => void;
   onDepositWarehouseItem?: (itemId: string, quantity: number) => void;
   onWithdrawWarehouseItem?: (itemId: string, quantity: number) => void;
@@ -107,6 +114,15 @@ type HudDragState = {
   width: number;
   height: number;
 };
+
+const MINIMAP_WORLD_SIZE = 1024;
+const MINIMAP_HALF_WORLD_SIZE = MINIMAP_WORLD_SIZE / 2;
+const THREE_RAD_TO_DEG = 180 / Math.PI;
+
+const clampNumber = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+
+const minimapPercentForAxis = (value: number): number =>
+  clampNumber(((value + MINIMAP_HALF_WORLD_SIZE) / MINIMAP_WORLD_SIZE) * 100, 0, 100);
 
 export const getPlayerFeedbackState = (
   state: GameState,
@@ -803,7 +819,117 @@ const renderClanGridButton = ({ label, action, disabled = false, pressed = false
   >${label}</button>
 `;
 
-export const renderClanPanel = (state: GameState, clanNameDraft: string, clanInfoOpen = false): string => {
+const renderAllianceMembers = (state: GameState): string => {
+  const alliance = state.alliance;
+  if (!alliance) {
+    return '';
+  }
+  const clan = state.clan;
+  const canManageAlliance = Boolean(clan && state.player.id === clan.leaderCharacterId && alliance.leaderClanId === clan.clanId);
+  return `
+    <div class="lineage-clan-alliance-list">
+      ${alliance.members
+        .map(
+          (member) => `
+            <div class="lineage-clan-alliance-row ${member.isLeaderClan ? 'leader' : ''}">
+              <div class="lineage-clan-alliance-copy">
+                <strong>${escapeHudText(member.name)}${member.isLeaderClan ? ' *' : ''}</strong>
+                <span>Leader ${escapeHudText(member.leaderName)} · Members ${member.memberCount}</span>
+              </div>
+              ${
+                canManageAlliance && !member.isLeaderClan
+                  ? `<button type="button" class="lineage-clan-inline-action" data-alliance-expel="${member.clanId}" data-no-drag>Expel</button>`
+                  : ''
+              }
+            </div>
+          `,
+        )
+        .join('')}
+    </div>
+  `;
+};
+
+const renderAllianceSection = (
+  state: GameState,
+  allianceNameDraft: string,
+): string => {
+  const clan = state.clan;
+  if (!clan) {
+    return '';
+  }
+  const alliance = state.alliance;
+  const isClanLeader = clan.leaderCharacterId === state.player.id;
+  const isAllianceLeaderClan = Boolean(alliance && alliance.leaderClanId === clan.clanId);
+  if (!alliance) {
+    return `
+      <section class="lineage-clan-alliance-surface">
+        <div class="lineage-clan-info-surface-header">
+          <strong>Alliance</strong>
+          <span>No Alliance</span>
+        </div>
+        <div class="lineage-panel-empty-copy compact">
+          <span>${isClanLeader ? 'Create an alliance from your current clan.' : 'Only the current clan leader can create an alliance.'}</span>
+        </div>
+        ${
+          isClanLeader
+            ? `
+              <form class="lineage-clan-create-form" data-alliance-create-form style="display:flex;flex-direction:column;gap:8px;">
+                <input
+                  type="text"
+                  name="alliance_name"
+                  value="${escapeHudText(allianceNameDraft)}"
+                  maxlength="16"
+                  placeholder="Alliance name"
+                  autocomplete="off"
+                  data-alliance-name
+                  data-no-drag
+                />
+                <button type="submit" data-alliance-create-submit data-no-drag>Create Alliance</button>
+              </form>
+            `
+            : ''
+        }
+      </section>
+    `;
+  }
+  return `
+    <section class="lineage-clan-alliance-surface">
+      <div class="lineage-clan-info-surface-header">
+        <strong>Alliance</strong>
+        <span>${escapeHudText(alliance.name)}</span>
+      </div>
+      <div class="lineage-clan-info-grid">
+        <div><span>Leader Clan</span><strong>${escapeHudText(alliance.leaderClanName)}</strong></div>
+        <div><span>Member Clans</span><strong>${alliance.members.length}/${alliance.clanCap}</strong></div>
+      </div>
+      ${renderAllianceMembers(state)}
+      <div class="lineage-clan-info-actions">
+        ${
+          isAllianceLeaderClan
+            ? `<button type="button" data-alliance-invite data-no-drag>Invite Clan</button>`
+            : ''
+        }
+        ${
+          isClanLeader && !isAllianceLeaderClan
+            ? `<button type="button" data-alliance-leave data-no-drag>Leave Alliance</button>`
+            : ''
+        }
+        ${
+          isAllianceLeaderClan
+            ? `<button type="button" data-alliance-dissolve data-no-drag ${alliance.members.length === 1 ? '' : 'disabled aria-disabled="true"'}>Dissolve Alliance</button>`
+            : ''
+        }
+      </div>
+    </section>
+  `;
+};
+
+export const renderClanPanel = (
+  state: GameState,
+  clanNameDraft: string,
+  allianceNameDraft: string,
+  clanInfoOpen = false,
+): string => {
   const clan = state.clan;
   if (!clan) {
     return `
@@ -913,6 +1039,7 @@ export const renderClanPanel = (state: GameState, clanNameDraft: string, clanInf
           `
           : ''
       }
+      ${renderAllianceSection(state, allianceNameDraft)}
       <div class="lineage-clan-action-grid">
         ${gridButtons}
       </div>
@@ -1016,6 +1143,42 @@ export const renderClanInviteModal = (state: GameState, nowMs: number): string =
   `;
 };
 
+export const renderAllianceInviteModal = (state: GameState, nowMs: number): string => {
+  const invite = state.allianceInvites[0];
+  if (!invite) {
+    return '';
+  }
+  const remainingMs = Math.max(0, invite.expiresAtMs - nowMs);
+  const expired = remainingMs <= 0;
+  const fillPercent = Math.max(0, Math.min(100, (remainingMs / PARTY_INVITE_VISUAL_TTL_MS) * 100));
+  const modalStack = state.partyInvites.length + state.clanInvites.length;
+  const bottomOffset = 104 + modalStack * 94;
+  return `
+    <section
+      class="frame-panel classic-window lineage-alliance-invite-modal"
+      data-alliance-invite-modal
+      style="position:absolute;left:50%;bottom:${bottomOffset}px;transform:translateX(-50%);width:316px;z-index:18;"
+    >
+      <div class="lineage-party-invite-timer" aria-hidden="true" style="height:4px;background:rgba(28,60,24,0.85);">
+        <div style="height:100%;width:${fillPercent.toFixed(2)}%;background:linear-gradient(90deg,#63c46b,#2f8a39);"></div>
+      </div>
+      <div class="hud-window-title classic-title compact">
+        <span>Alliance Invitation</span>
+      </div>
+      <div class="lineage-party-invite-body" style="padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px;">
+        <div class="lineage-party-invite-copy">
+          <strong>${escapeHudText(invite.allianceName)}</strong>
+          <span>${expired ? 'Invitation expired.' : `${escapeHudText(invite.inviterName)} invites your clan to join.`}</span>
+        </div>
+        <div class="lineage-party-inline-actions">
+          <button type="button" data-alliance-accept="${invite.inviteId}" data-no-drag ${expired ? 'disabled aria-disabled="true"' : ''}>Accept</button>
+          <button type="button" data-alliance-decline="${invite.inviteId}" data-no-drag>Cancel</button>
+        </div>
+      </div>
+    </section>
+  `;
+};
+
 const renderPartyPanel = (state: GameState): string => {
   const party = state.party;
   const isLeader = party?.leaderCharacterId === state.player.id;
@@ -1075,6 +1238,7 @@ const renderCharacterPanelBody = (
   selectedSkillBookSkills: PlayerKnownSkill[],
   skillBookTab: SkillBookTab,
   clanNameDraft: string,
+  allianceNameDraft: string,
   clanInfoOpen: boolean,
 ): string => {
   if (panelId === 'status') {
@@ -1084,7 +1248,7 @@ const renderCharacterPanelBody = (
     return renderActionsPanel();
   }
   if (panelId === 'clan') {
-    return renderClanPanel(state, clanNameDraft, clanInfoOpen);
+    return renderClanPanel(state, clanNameDraft, allianceNameDraft, clanInfoOpen);
   }
   if (panelId === 'quests') {
     return renderQuestPanel(state);
@@ -1304,6 +1468,13 @@ export class Hud {
   private readonly onLeaveClan?: () => void;
   private readonly onKickClanMember?: (targetCharacterId: string) => void;
   private readonly onDissolveClan?: () => void;
+  private readonly onCreateAlliance?: (name: string) => void;
+  private readonly onInviteAllianceClan?: () => void;
+  private readonly onAcceptAllianceInvite?: (inviteId: string) => void;
+  private readonly onDeclineAllianceInvite?: (inviteId: string) => void;
+  private readonly onLeaveAlliance?: () => void;
+  private readonly onExpelAllianceClan?: (targetClanId: string) => void;
+  private readonly onDissolveAlliance?: () => void;
   private readonly onSellVendorItem?: (itemId: string, quantity: number) => void;
   private readonly onDepositWarehouseItem?: (itemId: string, quantity: number) => void;
   private readonly onWithdrawWarehouseItem?: (itemId: string, quantity: number) => void;
@@ -1329,7 +1500,9 @@ export class Hud {
   private chatDraft = '';
   private whisperTargetDraft = '';
   private clanNameDraft = '';
+  private allianceNameDraft = '';
   private chatFocusField: 'target' | 'text' | null = null;
+  private cameraYaw = 0;
   private visibleHotbarRowCount: HotbarOpenBarCount | null = null;
   private draggedHotbarEntry: HotbarShortcutPayload | null = null;
   private draggedHotbarSourceSlotIndex: number | null = null;
@@ -1347,9 +1520,13 @@ export class Hud {
   private readonly handleDragEndBound = this.handleDragEnd.bind(this);
   private readonly handleSkillPointerMoveBound = this.handleSkillPointerMove.bind(this);
   private readonly handleSkillPointerUpBound = this.handleSkillPointerUp.bind(this);
+  private readonly handleClickReleaseBound = this.releaseHudInteractionLock.bind(this);
   private readonly handleSubmitBound = this.handleSubmit.bind(this);
   private readonly handleInputBound = this.handleInput.bind(this);
   private readonly handleFocusInBound = this.handleFocusIn.bind(this);
+  private hudInteractionLocked = false;
+  private pendingHudState: GameState | null = null;
+  private hudInteractionReleaseTimerId: ReturnType<typeof setTimeout> | null = null;
   private inviteCountdownIntervalId: ReturnType<typeof setInterval> | null = null;
 
   constructor(container: HTMLElement, store: GameStore, controls: HudControls, options?: HudOptions) {
@@ -1382,6 +1559,13 @@ export class Hud {
     this.onLeaveClan = options?.onLeaveClan;
     this.onKickClanMember = options?.onKickClanMember;
     this.onDissolveClan = options?.onDissolveClan;
+    this.onCreateAlliance = options?.onCreateAlliance;
+    this.onInviteAllianceClan = options?.onInviteAllianceClan;
+    this.onAcceptAllianceInvite = options?.onAcceptAllianceInvite;
+    this.onDeclineAllianceInvite = options?.onDeclineAllianceInvite;
+    this.onLeaveAlliance = options?.onLeaveAlliance;
+    this.onExpelAllianceClan = options?.onExpelAllianceClan;
+    this.onDissolveAlliance = options?.onDissolveAlliance;
     this.onSellVendorItem = options?.onSellVendorItem;
     this.onDepositWarehouseItem = options?.onDepositWarehouseItem;
     this.onWithdrawWarehouseItem = options?.onWithdrawWarehouseItem;
@@ -1426,6 +1610,7 @@ export class Hud {
       this.onSendChatMessage
     ) {
       this.root.addEventListener('click', this.handleClick.bind(this));
+      this.root.addEventListener('click', this.handleClickReleaseBound);
     }
     if (this.onSendChatMessage || this.onCreateClan) {
       this.root.addEventListener('submit', this.handleSubmitBound);
@@ -1443,6 +1628,10 @@ export class Hud {
   }
 
   update(state: GameState): void {
+    if (this.hudInteractionLocked) {
+      this.pendingHudState = state;
+      return;
+    }
     if (!state.clan) {
       this.clanInfoOpen = false;
     }
@@ -1473,14 +1662,6 @@ export class Hud {
     const chestAttributeSummary = equipped.chest ? getItemAttributeSummary(equipped.chest) : null;
     const glovesAttributeSummary = equipped.gloves ? getItemAttributeSummary(equipped.gloves) : null;
     const bootsAttributeSummary = equipped.boots ? getItemAttributeSummary(equipped.boots) : null;
-    const activePet = state.player.pets.find((pet) => pet.summoned) ?? state.player.pets[0] ?? null;
-    const companionStatus = activePet
-      ? activePet.mounted
-        ? `${activePet.name} mounted`
-        : activePet.summoned
-          ? `${activePet.name} summoned`
-          : `${activePet.name} resting`
-      : 'No companion';
     const nearbyVendor = getNearbyVendor(state);
     const nearbyWarehouse = getNearbyWarehouse(state);
     const nearbyTradePlayers = getNearbyTradePlayers(state).slice(0, 3);
@@ -1561,6 +1742,7 @@ export class Hud {
         .map((item) => renderInventoryGridSlot(item, buildInventoryItemActions(item))),
       ...Array.from({ length: Math.max(0, INVENTORY_GRID_SLOT_COUNT - inventory.length) }, () => renderEmptyInventorySlot()),
     ].join('');
+    const mapMarkerStyles = this.renderMapMarkerStyles(state);
 
     this.root.innerHTML = `
       ${
@@ -1573,6 +1755,18 @@ export class Hud {
           `
           : ''
       }
+      <div class="lineage-minimap" aria-label="Minimap">
+        <div class="lineage-minimap-map" style="${mapMarkerStyles.mapOffset}">
+          <span class="lineage-minimap-road north"></span>
+          <span class="lineage-minimap-road east"></span>
+          <span class="lineage-minimap-plaza"></span>
+          <span class="lineage-minimap-water"></span>
+          <span class="lineage-minimap-grove a"></span>
+          <span class="lineage-minimap-grove b"></span>
+        </div>
+        <span class="lineage-minimap-camera" style="${mapMarkerStyles.minimapCamera}"></span>
+        <span class="lineage-minimap-player"></span>
+      </div>
       <div class="frame-panel player-frame classic-window ${state.player.deadUntilMs ? 'dead' : ''}" data-hud-panel="player"${this.renderPanelStyle('player')}>
         <div class="hud-drag-rail player-drag-rail" data-hud-drag="player" aria-label="Drag character status"></div>
         <div class="classic-player-identity">
@@ -1605,14 +1799,6 @@ export class Hud {
         <div class="classic-xp-row">
           <strong>${((state.player.xp / xpGoalForLevel(state.player.level)) * 100).toFixed(2)}%</strong>
         </div>
-        <div class="classic-companion-row">
-          <span>Companion</span>
-          <strong>${companionStatus}</strong>
-        </div>
-        <div class="classic-companion-row">
-          <span>Combat</span>
-          <strong>${state.player.pvpFlagged ? 'PvP flagged' : state.player.karma > 0 ? 'PK' : 'Neutral'} · PvP ${state.player.pvpKills} · PK ${state.player.pkCount} · Karma ${state.player.karma}</strong>
-        </div>
       </div>
 
       ${
@@ -1632,6 +1818,7 @@ export class Hud {
       }
       ${renderPartyInviteModal(state, nowMs)}
       ${renderClanInviteModal(state, nowMs)}
+      ${renderAllianceInviteModal(state, nowMs)}
 
       ${
         targetView
@@ -1717,6 +1904,7 @@ export class Hud {
                 selectedSkillBookSkills,
                 this.skillBookTab,
                 this.clanNameDraft,
+                this.allianceNameDraft,
                 this.clanInfoOpen,
               )}
             </div>
@@ -1865,13 +2053,20 @@ export class Hud {
                 <button type="button">Find</button>
                 <button type="button">World Info.</button>
               </div>
-              <div class="lineage-map-canvas" aria-label="Current map">
+              <div class="lineage-map-canvas" aria-label="Current map" style="${mapMarkerStyles.mapOffset}">
+                <span class="lineage-map-road north"></span>
+                <span class="lineage-map-road east"></span>
+                <span class="lineage-map-water"></span>
+                <span class="lineage-map-grove a"></span>
+                <span class="lineage-map-grove b"></span>
+                <span class="lineage-map-plaza"></span>
                 <span class="lineage-map-sun">PM 05 : 15</span>
                 <span class="lineage-map-label warehouse">Warehouse</span>
                 <span class="lineage-map-label gatekeeper">Gatekeeper</span>
                 <span class="lineage-map-label temple">Temple</span>
                 <span class="lineage-map-label magic">Magic Shop</span>
-                <i class="lineage-map-player" aria-hidden="true"></i>
+                <i class="lineage-map-camera" style="${mapMarkerStyles.mapCamera}" aria-hidden="true"></i>
+                <i class="lineage-map-player" style="${mapMarkerStyles.marker}" aria-hidden="true"></i>
               </div>
               <div class="lineage-map-footer">
                 <span>Current Position : ${escapeHudText(getRegionIdForPoint(state.player.position))}</span>
@@ -1998,11 +2193,21 @@ export class Hud {
 
   private handlePointerDown(event: PointerEvent): void {
     const target = event.target as HTMLElement | null;
+    if (event.button === 0 && this.handleImmediateClose(target)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (event.button === 0 && target && target !== this.root) {
+      this.beginHudInteractionLock(750);
+    }
+
     const skillSlot = target?.closest<HTMLElement>('[data-skill-book-skill]');
     if (event.button === 0 && skillSlot) {
       const skillId = skillSlot.dataset.skillBookSkill;
       const knownSkill = skillId ? findKnownSkill(this.store.getState().player.learnedSkills, skillId) : null;
       if (skillId && knownSkill?.category === 'active') {
+        this.beginHudInteractionLock();
         this.draggedHotbarEntry = { entryType: 'skill', skillId };
         this.showHotbarDragGhost(this.draggedHotbarEntry, event.clientX, event.clientY);
         skillSlot.classList.add('is-dragging');
@@ -2030,6 +2235,7 @@ export class Hud {
     if (!panel) {
       return;
     }
+    this.beginHudInteractionLock();
 
     const rootRect = this.root.getBoundingClientRect();
     const panelRect = panel.getBoundingClientRect();
@@ -2051,6 +2257,45 @@ export class Hud {
     window.addEventListener('pointerup', this.handlePointerUpBound, { once: true });
   }
 
+  private handleImmediateClose(target: HTMLElement | null): boolean {
+    if (!target) {
+      return false;
+    }
+
+    if (target.closest<HTMLElement>('[data-character-panel-close]')) {
+      this.activeCharacterPanel = null;
+    } else if (target.closest<HTMLElement>('[data-inventory-close]')) {
+      this.inventoryOpen = false;
+    } else if (target.closest<HTMLElement>('[data-map-close]')) {
+      this.mapOpen = false;
+    } else if (target.closest<HTMLElement>('[data-system-close]')) {
+      this.systemMenuOpen = false;
+      this.exitConfirmOpen = false;
+      this.systemPlaceholderOpen = null;
+    } else if (target.closest<HTMLElement>('[data-system-placeholder-close]')) {
+      this.systemPlaceholderOpen = null;
+    } else if (target.closest<HTMLElement>('[data-party-close]')) {
+      this.partyWindowOpen = false;
+    } else if (target.closest<HTMLElement>('[data-clan-info-close]')) {
+      this.clanInfoOpen = false;
+    } else if (target.closest<HTMLElement>('[data-exit-game-cancel]')) {
+      this.exitConfirmOpen = false;
+    } else if (target.closest<HTMLElement>('[data-close-dialog]')) {
+      if (this.onCloseDialog) {
+        this.onCloseDialog();
+      } else if (this.interactive) {
+        this.store.dispatch({ type: 'closeDialog' });
+      }
+      return true;
+    } else {
+      return false;
+    }
+
+    this.lastSnapshot = '';
+    this.update(this.store.getState());
+    return true;
+  }
+
   private handlePointerMove(event: PointerEvent): void {
     if (!this.dragState) {
       return;
@@ -2069,6 +2314,37 @@ export class Hud {
     this.dragState = null;
     this.root.classList.remove('hud-root--dragging');
     window.removeEventListener('pointermove', this.handlePointerMoveBound);
+    this.releaseHudInteractionLock();
+  }
+
+  private beginHudInteractionLock(autoReleaseMs = 0): void {
+    this.hudInteractionLocked = true;
+    if (this.hudInteractionReleaseTimerId) {
+      clearTimeout(this.hudInteractionReleaseTimerId);
+      this.hudInteractionReleaseTimerId = null;
+    }
+    if (autoReleaseMs > 0) {
+      this.hudInteractionReleaseTimerId = setTimeout(() => {
+        this.releaseHudInteractionLock();
+      }, autoReleaseMs);
+    }
+  }
+
+  private releaseHudInteractionLock(): void {
+    if (this.hudInteractionReleaseTimerId) {
+      clearTimeout(this.hudInteractionReleaseTimerId);
+      this.hudInteractionReleaseTimerId = null;
+    }
+    if (!this.hudInteractionLocked) {
+      return;
+    }
+    this.hudInteractionLocked = false;
+    const pendingState = this.pendingHudState;
+    this.pendingHudState = null;
+    if (pendingState) {
+      this.lastSnapshot = '';
+      this.update(pendingState);
+    }
   }
 
   toggleCharacterPanel(panelId: CharacterPanelId): void {
@@ -2085,6 +2361,13 @@ export class Hud {
     this.inventoryOpen = !this.inventoryOpen;
     this.lastSnapshot = '';
     this.update(this.store.getState());
+  }
+
+  setCameraYaw(cameraYaw: number): void {
+    if (!Number.isFinite(cameraYaw)) {
+      return;
+    }
+    this.cameraYaw = cameraYaw;
   }
 
   toggleMap(): void {
@@ -2159,6 +2442,26 @@ export class Hud {
       case 'restart':
         return 'Restart placeholder. Character restart will require an authoritative logout/session teardown flow before it becomes active.';
     }
+  }
+
+  private renderMapMarkerStyles(state: GameState): {
+    mapOffset: string;
+    marker: string;
+    minimapCamera: string;
+    mapCamera: string;
+  } {
+    const xPercent = minimapPercentForAxis(state.player.position.x);
+    const zPercent = minimapPercentForAxis(state.player.position.z);
+    const mapOffsetX = 50 - xPercent;
+    const mapOffsetY = 50 - zPercent;
+    const cameraYaw = Number.isFinite(this.cameraYaw) ? this.cameraYaw : 0;
+    const cameraDegrees = THREE_RAD_TO_DEG * cameraYaw + 90;
+    return {
+      mapOffset: `--map-offset-x:${mapOffsetX.toFixed(2)}%;--map-offset-y:${mapOffsetY.toFixed(2)}%;`,
+      marker: `left:${xPercent.toFixed(2)}%;top:${zPercent.toFixed(2)}%;`,
+      minimapCamera: `transform:translate(-50%, -50%) rotate(${cameraDegrees.toFixed(2)}deg);`,
+      mapCamera: `left:${xPercent.toFixed(2)}%;top:${zPercent.toFixed(2)}%;transform:translate(-50%, -50%) rotate(${cameraDegrees.toFixed(2)}deg);`,
+    };
   }
 
   togglePartyPanel(): void {
@@ -2426,6 +2729,7 @@ export class Hud {
     if (!payload) {
       return;
     }
+    this.beginHudInteractionLock();
     this.draggedHotbarEntry = payload;
     this.draggedHotbarSourceSlotIndex = sourceSlotIndex;
     this.hotbarDropHandled = false;
@@ -2497,6 +2801,7 @@ export class Hud {
     this.root.querySelectorAll('.is-dragging, .drop-ready').forEach((element) => {
       element.classList.remove('is-dragging', 'drop-ready');
     });
+    this.releaseHudInteractionLock();
   }
 
   private createSnapshot(state: GameState): string {
@@ -2550,6 +2855,9 @@ export class Hud {
       systemMenuOpen: this.systemMenuOpen,
       exitConfirmOpen: this.exitConfirmOpen,
       systemPlaceholderOpen: this.systemPlaceholderOpen,
+      cameraYaw: Number((Number.isFinite(this.cameraYaw) ? this.cameraYaw : 0).toFixed(4)),
+      minimapX: Number(minimapPercentForAxis(state.player.position.x).toFixed(2)),
+      minimapZ: Number(minimapPercentForAxis(state.player.position.z).toFixed(2)),
       partyWindowOpen: this.partyWindowOpen,
       clanInfoOpen: this.clanInfoOpen,
       quest: state.quest,
@@ -2580,6 +2888,15 @@ export class Hud {
       this.onCreateClan(nextName);
       return;
     }
+    if (target.matches('[data-alliance-create-form]')) {
+      event.preventDefault();
+      const nextName = this.allianceNameDraft.trim();
+      if (!nextName || !this.onCreateAlliance) {
+        return;
+      }
+      this.onCreateAlliance(nextName);
+      return;
+    }
     if (!target.matches('[data-chat-compose]')) {
       return;
     }
@@ -2602,6 +2919,10 @@ export class Hud {
     }
     if (target.matches('[data-clan-name]')) {
       this.clanNameDraft = target.value;
+      return;
+    }
+    if (target.matches('[data-alliance-name]')) {
+      this.allianceNameDraft = target.value;
     }
   }
 
@@ -3028,6 +3349,60 @@ export class Hud {
       return;
     }
 
+    const allianceAcceptButton = target.closest<HTMLElement>('[data-alliance-accept]');
+    if (allianceAcceptButton) {
+      const inviteId = allianceAcceptButton.dataset.allianceAccept;
+      if (!inviteId || !this.onAcceptAllianceInvite) {
+        return;
+      }
+      this.onAcceptAllianceInvite(inviteId);
+      return;
+    }
+
+    const allianceDeclineButton = target.closest<HTMLElement>('[data-alliance-decline]');
+    if (allianceDeclineButton) {
+      const inviteId = allianceDeclineButton.dataset.allianceDecline;
+      if (!inviteId || !this.onDeclineAllianceInvite) {
+        return;
+      }
+      this.onDeclineAllianceInvite(inviteId);
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-alliance-invite]')) {
+      if (!this.onInviteAllianceClan) {
+        return;
+      }
+      this.onInviteAllianceClan();
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-alliance-leave]')) {
+      if (!this.onLeaveAlliance) {
+        return;
+      }
+      this.onLeaveAlliance();
+      return;
+    }
+
+    const allianceExpelButton = target.closest<HTMLElement>('[data-alliance-expel]');
+    if (allianceExpelButton) {
+      const targetClanId = allianceExpelButton.dataset.allianceExpel;
+      if (!targetClanId || !this.onExpelAllianceClan) {
+        return;
+      }
+      this.onExpelAllianceClan(targetClanId);
+      return;
+    }
+
+    if (target.closest<HTMLElement>('[data-alliance-dissolve]')) {
+      if (!this.onDissolveAlliance) {
+        return;
+      }
+      this.onDissolveAlliance();
+      return;
+    }
+
     const depositButton = target.closest<HTMLElement>('[data-deposit-item]');
     if (depositButton) {
       const itemId = depositButton.dataset.depositItem;
@@ -3106,7 +3481,9 @@ export class Hud {
     }
 
     if (target.closest<HTMLElement>('[data-inventory-close]')) {
-      this.toggleInventory();
+      this.inventoryOpen = false;
+      this.lastSnapshot = '';
+      this.update(this.store.getState());
       return;
     }
 
@@ -3146,7 +3523,9 @@ export class Hud {
     }
 
     if (target.closest<HTMLElement>('[data-party-close]')) {
-      this.togglePartyPanel();
+      this.partyWindowOpen = false;
+      this.lastSnapshot = '';
+      this.update(this.store.getState());
       return;
     }
 

@@ -171,6 +171,8 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent,
 		deliveryErr = s.deliverRemotePartyNotice(ctx, event)
 	case remoteClanNoticeEventType:
 		deliveryErr = s.deliverRemoteClanNotice(ctx, event)
+	case remoteAllianceNoticeEventType:
+		deliveryErr = s.deliverRemoteAllianceNotice(ctx, event)
 	case regionPlayerProjectionEventType:
 		deliveryErr = s.deliverRegionPlayerProjection(ctx, event)
 	default:

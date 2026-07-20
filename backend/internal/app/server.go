@@ -27,6 +27,7 @@ type Server struct {
 	attachedMu            sync.Mutex
 	partyMu               sync.Mutex
 	clanMu                sync.Mutex
+	allianceMu            sync.Mutex
 	pvpMu                 sync.Mutex
 	store                 *Store
 	config                ServerConfig
@@ -870,8 +871,13 @@ func (s *Server) handleWorldEnter(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "Unable to load character clan state.")
 		return
 	}
+	allianceState, allianceInvites, err := s.loadCharacterAllianceState(r.Context(), character.ID, now)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "Unable to load character alliance state.")
+		return
+	}
 	cooldownSnapshot := cooldownSnapshotFromRecords(cooldowns, now)
-	selfState := selfStateFromItems(character, items, cooldownSnapshot, hotbarState, pets, questState, partyState, partyInvites, clanState, clanInvites)
+	selfState := selfStateFromItems(character, items, cooldownSnapshot, hotbarState, pets, questState, partyState, partyInvites, clanState, clanInvites, allianceState, allianceInvites)
 
 	if err := s.store.GameplaySessions.ExpireStalePendingAttach(r.Context(), character.ID, now); err != nil {
 		s.recordStoreError("gameplay_sessions.expire_stale_pending_attach", err)
@@ -1146,6 +1152,9 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 					}
 					if attached.runtime.clanInviteExpirationDue(now) {
 						s.sendClanStateRefresh(loopCtx, session.CharacterID)
+					}
+					if attached.runtime.allianceInviteExpirationDue(now) {
+						s.sendAllianceStateRefresh(loopCtx, session.CharacterID)
 					}
 				}
 			}
@@ -1592,6 +1601,7 @@ func (s *Server) closeAttachedSession(sessionID string, expectedFencingToken ...
 		s.recordOwnershipEvent("released", &Session{ID: session.ID, CharacterID: session.CharacterID, FencingToken: expectedFencingToken[0]}, nil)
 		s.expirePartyInvitesForDisconnectedCharacter(ctx, session.CharacterID)
 		s.expireClanInvitesForDisconnectedCharacter(ctx, session.CharacterID)
+		s.expireAllianceInvitesForDisconnectedCharacter(ctx, session.CharacterID)
 		return
 	}
 
@@ -1608,6 +1618,7 @@ func (s *Server) closeAttachedSession(sessionID string, expectedFencingToken ...
 		if characterID != "" {
 			s.expirePartyInvitesForDisconnectedCharacter(ctx, characterID)
 			s.expireClanInvitesForDisconnectedCharacter(ctx, characterID)
+			s.expireAllianceInvitesForDisconnectedCharacter(ctx, characterID)
 		}
 		return
 	}
@@ -1618,6 +1629,7 @@ func (s *Server) closeAttachedSession(sessionID string, expectedFencingToken ...
 		if characterID != "" {
 			s.expirePartyInvitesForDisconnectedCharacter(ctx, characterID)
 			s.expireClanInvitesForDisconnectedCharacter(ctx, characterID)
+			s.expireAllianceInvitesForDisconnectedCharacter(ctx, characterID)
 		}
 		return
 	}
@@ -1629,6 +1641,7 @@ func (s *Server) closeAttachedSession(sessionID string, expectedFencingToken ...
 	}
 	s.expirePartyInvitesForDisconnectedCharacter(ctx, characterID)
 	s.expireClanInvitesForDisconnectedCharacter(ctx, characterID)
+	s.expireAllianceInvitesForDisconnectedCharacter(ctx, characterID)
 }
 
 func (s *Server) finalizeOwnedAttachedSession(session *Session, runtime *attachedRuntime) {
@@ -1739,6 +1752,10 @@ func (s *Server) buildAttachedRuntime(ctx context.Context, session *Session, cha
 	if err != nil {
 		return nil, err
 	}
+	allianceState, allianceInvites, err := s.loadCharacterAllianceState(ctx, character.ID, now)
+	if err != nil {
+		return nil, err
+	}
 
 	runtime := newCleanAttachedRuntime(session.ID, character)
 	runtime.deferRewardResolution = true
@@ -1750,6 +1767,7 @@ func (s *Server) buildAttachedRuntime(ctx context.Context, session *Session, cha
 	runtime.loadQuestState([]CharacterQuestState{questState})
 	runtime.loadPartyState(partyState, partyInvites)
 	runtime.loadClanState(clanState, clanInvites)
+	runtime.loadAllianceState(allianceState, allianceInvites)
 	runtime.reconcileResourcePools()
 	return runtime, nil
 }

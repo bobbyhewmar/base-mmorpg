@@ -161,6 +161,29 @@ type ClanRepository interface {
 	ExpireInvites(ctx context.Context, now time.Time) error
 }
 
+type AllianceRepository interface {
+	GetByID(ctx context.Context, allianceID string) (*Alliance, error)
+	GetByName(ctx context.Context, name string) (*Alliance, error)
+	GetByClanID(ctx context.Context, clanID string) (*Alliance, error)
+	GetByCharacterID(ctx context.Context, characterID string) (*Alliance, error)
+	ListMembers(ctx context.Context, allianceID string) ([]AllianceMember, error)
+	Create(ctx context.Context, alliance *Alliance, founder AllianceMember) error
+	AddMember(ctx context.Context, member *AllianceMember) error
+	AcceptInvite(ctx context.Context, inviteID string, member *AllianceMember) error
+	RemoveMember(ctx context.Context, allianceID string, clanID string) error
+	Delete(ctx context.Context, allianceID string) error
+	ListPendingInvitesByInvitee(ctx context.Context, characterID string, now time.Time) ([]AllianceInvite, error)
+	ListPendingInvitesByInviter(ctx context.Context, characterID string, now time.Time) ([]AllianceInvite, error)
+	ListPendingInvitesByAlliance(ctx context.Context, allianceID string, now time.Time) ([]AllianceInvite, error)
+	ListPendingInvitesByTargetClan(ctx context.Context, clanID string, now time.Time) ([]AllianceInvite, error)
+	GetInviteByID(ctx context.Context, inviteID string) (*AllianceInvite, error)
+	CreateInvite(ctx context.Context, invite *AllianceInvite) error
+	DeleteInvite(ctx context.Context, inviteID string) error
+	DeleteInvitesByAlliance(ctx context.Context, allianceID string) error
+	DeletePendingInviteForTargetClan(ctx context.Context, allianceID string, targetClanID string) error
+	ExpireInvites(ctx context.Context, now time.Time) error
+}
+
 type ChatMessageRepository interface {
 	Create(ctx context.Context, record ChatMessageRecord) error
 	ListByCharacterID(ctx context.Context, characterID string) ([]ChatMessageRecord, error)
@@ -237,6 +260,7 @@ type Store struct {
 	CharacterQuests    CharacterQuestRepository
 	Parties            PartyRepository
 	Clans              ClanRepository
+	Alliances          AllianceRepository
 	ChatMessages       ChatMessageRepository
 	Items              CharacterItemRepository
 	StorageTransfers   StorageTransferRecordRepository
@@ -291,6 +315,7 @@ func NewStore(databaseURL string) (*Store, error) {
 		CharacterQuests:    postgresCharacterQuestRepo{backend: backend},
 		Parties:            postgresPartyRepo{backend: backend},
 		Clans:              postgresClanRepo{backend: backend},
+		Alliances:          postgresAllianceRepo{backend: backend},
 		ChatMessages:       postgresChatMessageRepo{backend: backend},
 		Items:              postgresCharacterItemRepo{backend: backend},
 		StorageTransfers:   postgresStorageTransferRecordRepo{backend: backend},

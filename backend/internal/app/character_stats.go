@@ -12,28 +12,30 @@ type CharacterDerivedStats struct {
 }
 
 type CharacterSelfState struct {
-	Level          int                            `json:"level"`
-	XP             int                            `json:"xp"`
-	CP             int                            `json:"cp"`
-	HP             int                            `json:"hp"`
-	MP             int                            `json:"mp"`
-	Dead           bool                           `json:"dead"`
-	PvPFlagged     bool                           `json:"pvp_flagged"`
-	PvPFlagUntilMS *int64                         `json:"pvp_flag_until_ms"`
-	PvPKills       int                            `json:"pvp_kills"`
-	PKCount        int                            `json:"pk_count"`
-	Karma          int                            `json:"karma"`
-	Cooldowns      map[string]int                 `json:"cooldowns,omitempty"`
-	Stats          CharacterDerivedStats          `json:"stats"`
-	KnownSkills    []CharacterKnownSkill          `json:"known_skills"`
-	Hotbar         CharacterHotbarState           `json:"hotbar"`
-	Pets           []CharacterPetSnapshot         `json:"pets,omitempty"`
-	Quest          CharacterQuestSnapshot         `json:"quest"`
-	Party          *CharacterPartySnapshot        `json:"party,omitempty"`
-	PartyInvites   []CharacterPartyInviteSnapshot `json:"party_invites,omitempty"`
-	Clan           *CharacterClanSnapshot         `json:"clan,omitempty"`
-	ClanInvites    []CharacterClanInviteSnapshot  `json:"clan_invites,omitempty"`
-	NPCInteraction *CharacterNPCInteraction       `json:"npc_interaction,omitempty"`
+	Level           int                               `json:"level"`
+	XP              int                               `json:"xp"`
+	CP              int                               `json:"cp"`
+	HP              int                               `json:"hp"`
+	MP              int                               `json:"mp"`
+	Dead            bool                              `json:"dead"`
+	PvPFlagged      bool                              `json:"pvp_flagged"`
+	PvPFlagUntilMS  *int64                            `json:"pvp_flag_until_ms"`
+	PvPKills        int                               `json:"pvp_kills"`
+	PKCount         int                               `json:"pk_count"`
+	Karma           int                               `json:"karma"`
+	Cooldowns       map[string]int                    `json:"cooldowns,omitempty"`
+	Stats           CharacterDerivedStats             `json:"stats"`
+	KnownSkills     []CharacterKnownSkill             `json:"known_skills"`
+	Hotbar          CharacterHotbarState              `json:"hotbar"`
+	Pets            []CharacterPetSnapshot            `json:"pets,omitempty"`
+	Quest           CharacterQuestSnapshot            `json:"quest"`
+	Party           *CharacterPartySnapshot           `json:"party,omitempty"`
+	PartyInvites    []CharacterPartyInviteSnapshot    `json:"party_invites,omitempty"`
+	Clan            *CharacterClanSnapshot            `json:"clan,omitempty"`
+	ClanInvites     []CharacterClanInviteSnapshot     `json:"clan_invites,omitempty"`
+	Alliance        *CharacterAllianceSnapshot        `json:"alliance,omitempty"`
+	AllianceInvites []CharacterAllianceInviteSnapshot `json:"alliance_invites,omitempty"`
+	NPCInteraction  *CharacterNPCInteraction          `json:"npc_interaction,omitempty"`
 }
 
 func baseCharacterDerivedStats(character *Character) CharacterDerivedStats {
@@ -271,6 +273,8 @@ func selfStateFromItems(
 	partyInvites []CharacterPartyInviteSnapshot,
 	clan *CharacterClanSnapshot,
 	clanInvites []CharacterClanInviteSnapshot,
+	alliance *CharacterAllianceSnapshot,
+	allianceInvites []CharacterAllianceInviteSnapshot,
 ) CharacterSelfState {
 	state, stats := resourcePoolsForCharacter(character, items)
 	stats = applyMountedPetMoveSpeed(stats, pets)
@@ -280,27 +284,29 @@ func selfStateFromItems(
 		pvpFlagUntilMS = &value
 	}
 	return CharacterSelfState{
-		Level:          state.Level,
-		XP:             state.XP,
-		CP:             state.CurrentCP,
-		HP:             state.CurrentHP,
-		MP:             state.CurrentMP,
-		Dead:           false,
-		PvPFlagged:     pvpFlagUntilMS != nil,
-		PvPFlagUntilMS: pvpFlagUntilMS,
-		PvPKills:       state.PvPKills,
-		PKCount:        state.PKCount,
-		Karma:          state.Karma,
-		Cooldowns:      cooldowns,
-		Stats:          stats,
-		KnownSkills:    learnedSkillsForCharacter(state.BaseClass, state.Level),
-		Hotbar:         normalizeCharacterHotbarState(hotbar, &state),
-		Pets:           petSnapshots(pets),
-		Quest:          questSnapshot(quest),
-		Party:          cloneCharacterPartySnapshot(party),
-		PartyInvites:   cloneCharacterPartyInviteSnapshots(partyInvites),
-		Clan:           cloneCharacterClanSnapshot(clan),
-		ClanInvites:    cloneCharacterClanInviteSnapshots(clanInvites),
+		Level:           state.Level,
+		XP:              state.XP,
+		CP:              state.CurrentCP,
+		HP:              state.CurrentHP,
+		MP:              state.CurrentMP,
+		Dead:            false,
+		PvPFlagged:      pvpFlagUntilMS != nil,
+		PvPFlagUntilMS:  pvpFlagUntilMS,
+		PvPKills:        state.PvPKills,
+		PKCount:         state.PKCount,
+		Karma:           state.Karma,
+		Cooldowns:       cooldowns,
+		Stats:           stats,
+		KnownSkills:     learnedSkillsForCharacter(state.BaseClass, state.Level),
+		Hotbar:          normalizeCharacterHotbarState(hotbar, &state),
+		Pets:            petSnapshots(pets),
+		Quest:           questSnapshot(quest),
+		Party:           cloneCharacterPartySnapshot(party),
+		PartyInvites:    cloneCharacterPartyInviteSnapshots(partyInvites),
+		Clan:            cloneCharacterClanSnapshot(clan),
+		ClanInvites:     cloneCharacterClanInviteSnapshots(clanInvites),
+		Alliance:        cloneCharacterAllianceSnapshot(alliance),
+		AllianceInvites: cloneCharacterAllianceInviteSnapshots(allianceInvites),
 	}
 }
 

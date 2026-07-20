@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	remoteChatMessageEventType = "social.chat_message.v1"
-	remotePartyNoticeEventType = "social.party_notice.v1"
-	remoteClanNoticeEventType  = "social.clan_notice.v1"
+	remoteChatMessageEventType    = "social.chat_message.v1"
+	remotePartyNoticeEventType    = "social.party_notice.v1"
+	remoteClanNoticeEventType     = "social.clan_notice.v1"
+	remoteAllianceNoticeEventType = "social.alliance_notice.v1"
 )
 
 type gameplayEventCollectorContextKey struct{}
@@ -233,6 +234,8 @@ func socialEventCategory(eventType string) string {
 		return "party_notice"
 	case remoteClanNoticeEventType:
 		return "clan_notice"
+	case remoteAllianceNoticeEventType:
+		return "alliance_notice"
 	default:
 		return ""
 	}
@@ -365,6 +368,28 @@ func (s *Server) deliverRemoteClanNotice(ctx context.Context, event *GameplayEve
 	payload.Message["event_id"] = event.ID
 	if !attached.dispatchAll(func(runtime *attachedRuntime) []map[string]any {
 		return []map[string]any{runtime.clanDeltaMessage(clan, invites), payload.Message}
+	}) {
+		return errors.New("social.socket_delivery_failed")
+	}
+	return nil
+}
+
+func (s *Server) deliverRemoteAllianceNotice(ctx context.Context, event *GameplayEvent) error {
+	payload, err := decodeRemoteSocialDelivery(event, allianceNoticeKind)
+	if err != nil {
+		return err
+	}
+	attached, _, err := s.resolveRemoteSocialRecipient(ctx, event, payload.RecipientFencingToken)
+	if err != nil {
+		return err
+	}
+	alliance, invites, err := s.loadCharacterAllianceState(ctx, event.TargetCharacterID, timeNowUTC())
+	if err != nil {
+		return errors.New("social.state_hydration_failed")
+	}
+	payload.Message["event_id"] = event.ID
+	if !attached.dispatchAll(func(runtime *attachedRuntime) []map[string]any {
+		return []map[string]any{runtime.allianceDeltaMessage(alliance, invites), payload.Message}
 	}) {
 		return errors.New("social.socket_delivery_failed")
 	}

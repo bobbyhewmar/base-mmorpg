@@ -7,6 +7,7 @@ import {
 } from '../game/data/templates';
 import { isCanonicalBaseClass } from '../game/data/characterClasses';
 import type {
+  AllianceState,
   AppearanceOptionIndex,
   BaseClass,
   CharacterRace,
@@ -21,6 +22,7 @@ import type {
   NpcState,
   OwnedPetState,
   OtherPlayerState,
+  PendingAllianceInviteState,
   PendingClanInviteState,
   PendingPartyInviteState,
   PendingTradeOfferState,
@@ -32,6 +34,7 @@ import type {
 } from '../game/domain/types';
 import type {
   AckMessage,
+  AllianceNoticeMessage,
   ChatChannel,
   ChatMessageServerMessage,
   CharacterSummary,
@@ -69,6 +72,8 @@ import {
   shortestAngleDelta,
 } from './readModelMovement';
 import {
+  cloneAllianceInvites,
+  cloneAllianceState,
   activePetIdFromRoster,
   cloneClanInvites,
   cloneClanState,
@@ -86,6 +91,8 @@ import {
   parseAuthoritativePath,
   parseAuthoritativeStats,
   parseAuthoritativeXP,
+  parseAllianceInvites,
+  parseAllianceSnapshot,
   parseClanInvites,
   parseClanSnapshot,
   parseHotbarState,
@@ -409,6 +416,8 @@ export class OnlineReadModel {
   private authoritativePartyInvites: PendingPartyInviteState[] = [];
   private authoritativeClan: ClanState | null;
   private authoritativeClanInvites: PendingClanInviteState[] = [];
+  private authoritativeAlliance: AllianceState | null;
+  private authoritativeAllianceInvites: PendingAllianceInviteState[] = [];
   private activeNpcInteraction: OnlineNpcInteraction | null;
   private incomingTradeOffer: PendingTradeOfferState | null = null;
   private outgoingTradeOffer: PendingTradeOfferState | null = null;
@@ -463,6 +472,8 @@ export class OnlineReadModel {
     this.authoritativePartyInvites = parsePartyInvites(selfState?.party_invites);
     this.authoritativeClan = parseClanSnapshot(selfState?.clan);
     this.authoritativeClanInvites = parseClanInvites(selfState?.clan_invites);
+    this.authoritativeAlliance = parseAllianceSnapshot(selfState?.alliance);
+    this.authoritativeAllianceInvites = parseAllianceInvites(selfState?.alliance_invites);
     this.activeNpcInteraction = parseNpcInteractionSnapshot(selfState?.npc_interaction);
     if (selfState?.cooldowns && typeof selfState.cooldowns === 'object') {
       this.syncCooldownSnapshot(selfState.cooldowns, Date.now());
@@ -553,6 +564,8 @@ export class OnlineReadModel {
     state.partyInvites = clonePartyInvites(this.authoritativePartyInvites);
     state.clan = cloneClanState(this.authoritativeClan);
     state.clanInvites = cloneClanInvites(this.authoritativeClanInvites);
+    state.alliance = cloneAllianceState(this.authoritativeAlliance);
+    state.allianceInvites = cloneAllianceInvites(this.authoritativeAllianceInvites);
     state.incomingTradeOffer = clonePendingTradeOffer(this.incomingTradeOffer);
     state.outgoingTradeOffer = clonePendingTradeOffer(this.outgoingTradeOffer);
     state.floatingTexts = this.projectFloatingTexts();
@@ -1960,6 +1973,307 @@ export class OnlineReadModel {
     return envelope;
   }
 
+  createAlliance(name: string): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    const normalizedName = name.trim();
+    if (!normalizedName) {
+      this.pushLog('Alliance create failed: choose an alliance name first.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeClan) {
+      this.pushLog('Alliance create failed: character must belong to a clan first.', 'warning');
+      return null;
+    }
+    if (this.authoritativeClan.leaderCharacterId !== this.character.character_id) {
+      this.pushLog('Alliance create failed: only the current clan leader can create an alliance.', 'warning');
+      return null;
+    }
+    if (this.authoritativeAlliance) {
+      this.pushLog('Alliance create failed: clan is already in an alliance.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'create_alliance',
+      payload: { name: normalizedName },
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createInviteAllianceClan(targetCharacterId?: string | null): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    const resolvedTargetCharacterId = targetCharacterId ?? this.targetId;
+    if (!resolvedTargetCharacterId) {
+      this.pushLog('Alliance invite failed: player is no longer known in the current region.', 'warning');
+      return null;
+    }
+    const target = this.entities.get(resolvedTargetCharacterId);
+    if (!target || target.entityType !== 'player') {
+      this.pushLog('Alliance invite failed: player is no longer known in the current region.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeClan) {
+      this.pushLog('Alliance invite failed: character is not currently in a clan.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeAlliance) {
+      this.pushLog('Alliance invite failed: clan is not currently in an alliance.', 'warning');
+      return null;
+    }
+    if (this.authoritativeClan.leaderCharacterId !== this.character.character_id) {
+      this.pushLog('Alliance invite failed: only the current clan leader can send alliance invites.', 'warning');
+      return null;
+    }
+    const leaderClan = this.authoritativeAlliance.members.find((member) => member.isLeaderClan);
+    if (!leaderClan || leaderClan.clanId !== this.authoritativeClan.clanId) {
+      this.pushLog('Alliance invite failed: only the leader clan can invite new clans.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'invite_alliance_clan',
+      payload: {},
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createAcceptAllianceInvite(inviteId: string): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeAllianceInvites.some((invite) => invite.inviteId === inviteId)) {
+      this.pushLog('Alliance accept failed: invite is no longer available.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'accept_alliance_invite',
+      payload: { invite_id: inviteId },
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createDeclineAllianceInvite(inviteId: string): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeAllianceInvites.some((invite) => invite.inviteId === inviteId)) {
+      this.pushLog('Alliance decline failed: invite is no longer available.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'decline_alliance_invite',
+      payload: { invite_id: inviteId },
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createLeaveAlliance(): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeAlliance || !this.authoritativeClan) {
+      this.pushLog('Alliance leave failed: clan is not currently in an alliance.', 'warning');
+      return null;
+    }
+    if (this.authoritativeClan.leaderCharacterId !== this.character.character_id) {
+      this.pushLog('Alliance leave failed: only the current clan leader can do that.', 'warning');
+      return null;
+    }
+    if (this.authoritativeAlliance.leaderClanId === this.authoritativeClan.clanId) {
+      this.pushLog('Alliance leave failed: leader clan cannot leave the alliance in this phase.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'leave_alliance',
+      payload: {},
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createExpelAllianceClan(targetClanId: string): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeAlliance || !this.authoritativeClan) {
+      this.pushLog('Alliance expel failed: clan is not currently in an alliance.', 'warning');
+      return null;
+    }
+    if (this.authoritativeClan.leaderCharacterId !== this.character.character_id) {
+      this.pushLog('Alliance expel failed: only the current clan leader can do that.', 'warning');
+      return null;
+    }
+    if (this.authoritativeAlliance.leaderClanId !== this.authoritativeClan.clanId) {
+      this.pushLog('Alliance expel failed: only the leader clan can expel member clans.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeAlliance.members.some((member) => member.clanId === targetClanId && !member.isLeaderClan)) {
+      this.pushLog('Alliance expel failed: clan is no longer part of the alliance.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'expel_alliance_clan',
+      payload: {
+        target_clan_id: targetClanId,
+      },
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
+  createDissolveAlliance(): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    if (!this.authoritativeAlliance || !this.authoritativeClan) {
+      this.pushLog('Alliance dissolve failed: clan is not currently in an alliance.', 'warning');
+      return null;
+    }
+    if (this.authoritativeClan.leaderCharacterId !== this.character.character_id) {
+      this.pushLog('Alliance dissolve failed: only the current clan leader can do that.', 'warning');
+      return null;
+    }
+    if (this.authoritativeAlliance.leaderClanId !== this.authoritativeClan.clanId) {
+      this.pushLog('Alliance dissolve failed: only the leader clan can dissolve the alliance.', 'warning');
+      return null;
+    }
+    if (this.authoritativeAlliance.members.length !== 1) {
+      this.pushLog('Alliance dissolve failed: only the leader clan may remain.', 'warning');
+      return null;
+    }
+
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'dissolve_alliance',
+      payload: {},
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
+  }
+
   createPartySlashCommand(text: string): GameplayCommandEnvelope | null | undefined {
     const trimmed = text.trim();
     if (!trimmed.startsWith('/')) {
@@ -2218,6 +2532,8 @@ export class OnlineReadModel {
         return this.applyPartyNotice(message);
       case 'clan_notice':
         return this.applyClanNotice(message);
+      case 'alliance_notice':
+        return this.applyAllianceNotice(message);
       case 'chat_message':
         return this.applyChatMessage(message);
       default:
@@ -2341,6 +2657,12 @@ export class OnlineReadModel {
     }
     if (self.clan_invites !== undefined) {
       this.authoritativeClanInvites = parseClanInvites(self.clan_invites);
+    }
+    if (self.alliance !== undefined) {
+      this.authoritativeAlliance = self.alliance === null ? null : parseAllianceSnapshot(self.alliance);
+    }
+    if (self.alliance_invites !== undefined) {
+      this.authoritativeAllianceInvites = parseAllianceInvites(self.alliance_invites);
     }
     const maybeDead = parseAuthoritativeDead(self.dead);
     if (maybeDead !== null) {
@@ -2625,6 +2947,29 @@ export class OnlineReadModel {
 
     const tone =
       message.status === 'created' || message.status === 'invite_accepted' || message.status === 'member_joined'
+        ? 'success'
+        : message.status === 'invite_received' || message.status === 'invite_sent'
+          ? 'neutral'
+          : 'warning';
+    this.pushLog(message.message, tone, 'system');
+    return { changed: true };
+  }
+
+  private applyAllianceNotice(message: AllianceNoticeMessage): { changed: boolean } {
+    if (!this.acceptRemoteSocialEvent(message.event_id)) {
+      return { changed: false };
+    }
+    if (message.command_id) {
+      const pending = this.pendingCommands.get(message.command_id);
+      if (pending) {
+        pending.status = 'applied';
+      }
+    }
+
+    const tone =
+      message.status === 'created' ||
+      message.status === 'invite_accepted' ||
+      message.status === 'clan_joined'
         ? 'success'
         : message.status === 'invite_received' || message.status === 'invite_sent'
           ? 'neutral'

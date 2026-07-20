@@ -16,6 +16,7 @@ The current client already implements:
 - player status frame with level, character name, and CP/HP/MP bars
 - target frame centered near the top when a mob, NPC, or player is selected
 - bottom-left chat/system log
+- top-right minimap with player-centered map projection and camera-direction arc
 - bottom-center hotbar with compact `32x32px` slots
 - shared character-window navigation with `ALT+T` Status, `ALT+K` Skills, `ALT+C` Actions, `ALT+N` Clan, and `ALT+U` Quests
 - character windows using the same compact top navigation buttons instead of duplicating skills above the `Active` and `Passive` tabs
@@ -77,6 +78,22 @@ Required buttons for the first slice:
 The system menu must be a classic square window above the mini menu and include icon rows for future features such as Community, Macro, Help, Petition, Options, Restart, and Exit Game. Only implemented actions may mutate state. Unimplemented rows may be disabled or informational, but they must not fake success.
 
 `Exit Game` opens a classic confirmation modal with warning icon, message `Do you wish to exit the game?`, and `OK` plus `Cancel` buttons. `Cancel` closes only the modal. `OK` currently performs an explicit client reload to return to the pre-game flow until a fuller logout/session-teardown endpoint exists.
+
+## Minimap And Map Window
+
+Status: implemented as a first synchronized HUD slice.
+
+The top-right minimap and the `ALT+M` map window must use the same presentation source:
+
+- player position from the current `GameState`
+- current camera yaw exposed by the Three.js scene
+- canonical `1024x1024` region projection for the current clean plain map
+
+The minimap is fixed in the top-right corner and is not draggable. It keeps the player marker visually centered, shifts the illustrative map underneath it, and renders a small camera-direction arc around the center marker.
+
+The `ALT+M` map window remains a classic draggable window, but it must not be static. It uses the same player position and camera yaw as the minimap, renders the current player marker in map coordinates, and rotates the camera-direction arc with the scene camera.
+
+Until a full authored map-texture pipeline exists, both surfaces may use a procedural illustrative map. They must not invent gameplay authority, hidden locations, or map blockers; they are navigation presentation only.
 
 ## Inventory Rules
 

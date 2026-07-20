@@ -1375,6 +1375,10 @@ export class Scene3D {
     this.movementVisualMode = mode;
   }
 
+  getCameraYaw(): number {
+    return this.cameraYaw;
+  }
+
   private createActors(state: GameState): void {
     for (const otherPlayer of Object.values(state.otherPlayers)) {
       this.ensureOtherPlayerVisual(otherPlayer);

@@ -659,6 +659,130 @@ describe('online read model', () => {
     expect(model.snapshot.clanInvites).toEqual([]);
   });
 
+  it('projects authoritative alliance state and pending alliance invites from self state and deltas only', () => {
+    const model = new OnlineReadModel(partyRegionContext, character, initialItemState, {
+      ...initialSelfState,
+      clan: {
+        clan_id: 'clan_1',
+        name: 'Nightfall',
+        leader_character_id: 'char_1',
+        members: [
+          {
+            character_id: 'char_1',
+            name: 'Arden',
+            level: 1,
+            base_class: 'Fighter',
+            online: true,
+            is_leader: true,
+          },
+        ],
+      },
+      alliance: {
+        alliance_id: 'alliance_1',
+        name: 'Eclipse',
+        leader_clan_id: 'clan_1',
+        leader_clan_name: 'Nightfall',
+        clan_cap: 3,
+        members: [
+          {
+            clan_id: 'clan_1',
+            name: 'Nightfall',
+            leader_character_id: 'char_1',
+            leader_name: 'Arden',
+            member_count: 1,
+            is_leader_clan: true,
+          },
+        ],
+      },
+      alliance_invites: [
+        {
+          invite_id: 'alliance_invite_1',
+          alliance_id: 'alliance_2',
+          alliance_name: 'Moonrise',
+          inviter_character_id: 'char_2',
+          inviter_name: 'Selene',
+          inviter_clan_id: 'clan_2',
+          inviter_clan_name: 'Dawnbreak',
+          target_clan_id: 'clan_1',
+          expires_at_ms: Date.now() + 30_000,
+        },
+      ],
+    });
+
+    expect(model.snapshot.alliance).toEqual({
+      allianceId: 'alliance_1',
+      name: 'Eclipse',
+      leaderClanId: 'clan_1',
+      leaderClanName: 'Nightfall',
+      clanCap: 3,
+      members: [
+        {
+          clanId: 'clan_1',
+          name: 'Nightfall',
+          leaderCharacterId: 'char_1',
+          leaderName: 'Arden',
+          memberCount: 1,
+          isLeaderClan: true,
+        },
+      ],
+    });
+    expect(model.snapshot.allianceInvites).toEqual([
+      {
+        inviteId: 'alliance_invite_1',
+        allianceId: 'alliance_2',
+        allianceName: 'Moonrise',
+        inviterCharacterId: 'char_2',
+        inviterName: 'Selene',
+        inviterClanId: 'clan_2',
+        inviterClanName: 'Dawnbreak',
+        targetClanId: 'clan_1',
+        expiresAtMs: expect.any(Number),
+      },
+    ]);
+
+    const inviteCommand = model.createAcceptAllianceInvite('alliance_invite_1');
+    expect(inviteCommand?.type).toBe('accept_alliance_invite');
+
+    model.applyMessage({
+      kind: 'delta',
+      emitted_at_ms: Date.now(),
+      revision: 1,
+      applies_to_command_id: inviteCommand!.command_id,
+      applies_to_command_seq: inviteCommand!.command_seq,
+      self: {
+        alliance: {
+          alliance_id: 'alliance_1',
+          name: 'Eclipse',
+          leader_clan_id: 'clan_1',
+          leader_clan_name: 'Nightfall',
+          clan_cap: 3,
+          members: [
+            {
+              clan_id: 'clan_1',
+              name: 'Nightfall',
+              leader_character_id: 'char_1',
+              leader_name: 'Arden',
+              member_count: 1,
+              is_leader_clan: true,
+            },
+            {
+              clan_id: 'clan_2',
+              name: 'Dawnbreak',
+              leader_character_id: 'char_2',
+              leader_name: 'Selene',
+              member_count: 2,
+              is_leader_clan: false,
+            },
+          ],
+        },
+        alliance_invites: [],
+      },
+    });
+
+    expect(model.snapshot.alliance?.members).toHaveLength(2);
+    expect(model.snapshot.allianceInvites).toEqual([]);
+  });
+
   it('creates authoritative chat envelopes and projects region plus whisper messages into logs', () => {
     const model = new OnlineReadModel(partyRegionContext, character, initialItemState, {
       ...initialSelfState,

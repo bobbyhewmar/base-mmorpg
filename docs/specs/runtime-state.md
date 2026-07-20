@@ -454,6 +454,47 @@ The browser may render an incoming clan invite as a dedicated countdown modal an
 
 The runtime does not persist clan administration layout, privileges, rich crest presentation, clan chat buffers, warehouse state, alliance membership, or any frame-level roster rearrangement. Alliance, siege, clan war expansion, clan chat, clan warehouse, clan skills, academy, subunits, rich crest UX, complex privileges, and manual leader transfer remain outside this slice.
 
+For the first authoritative alliance slice, the canonical durable state is:
+
+- `alliances`
+- `alliance_members`
+- `alliance_invites`
+
+Alliance persists as its own entity with:
+
+- `alliance_id`
+- `name`
+- `leader_clan_id`
+- `created_at`
+- `updated_at`
+
+Alliance membership is keyed by `alliance_id + clan_id`, because the unit of membership is the clan rather than the character. Character alliance truth is always derived from the character's current clan membership.
+
+The current canonical minimum alliance semantics are:
+
+- `create_alliance` immediately creates the alliance, persists the founder clan as the first member, and marks that clan as leader clan
+- `invite_alliance_clan` resolves the target from the actor's current runtime player target, then validates that the target is the current leader of the target clan
+- pending alliance invites are ephemeral, use a 10-second TTL, and do not create fake local membership
+- no more than one live outbound invite may exist for the same leader alliance
+- no more than one live inbound invite may exist for the same target clan
+- `accept_alliance_invite` atomically adds the target clan and consumes the invite after recipient, target-clan, leader-clan, expiry, and membership validation
+- `leave_alliance` is valid only for a non-leader clan and only when issued by that clan's current leader
+- `expel_alliance_clan` and `dissolve_alliance` are leader-clan-only
+- the leader clan cannot use `leave_alliance` in this phase
+- `dissolve_alliance` is only valid when only the leader clan remains
+- manual leader transfer, auto-transfer, alliance chat, command channel, siege, clan war expansion, alliance warehouse, rich crest UX, complex privileges, and 24h classical cooldowns remain out of scope
+
+This slice rehydrates:
+
+- `world/enter.self_state.alliance`
+- `world/enter.self_state.alliance_invites`
+- attach-time runtime alliance validation
+- runtime deltas and `alliance_notice` messages for create, invite, accept, decline, leave, expel, and dissolve
+
+Affected alliance recipients owned by another instance receive a `social.alliance_notice.v1` outbox event. At delivery, the owner rehydrates current durable alliance or invite truth and sends an authoritative delta before the notice. The notice and its ack cannot mutate alliance projection by themselves.
+
+The browser may render an incoming alliance invite as a dedicated countdown modal and may disable `Accept` visually when `expires_at_ms` reaches zero, but the invite is not removed until the backend updates `self_state.alliance_invites`.
+
 ### Chat State
 
 Chat delivery scope and rate-limit counters are runtime-only state.

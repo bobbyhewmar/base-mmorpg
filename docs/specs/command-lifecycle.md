@@ -168,6 +168,21 @@ For canonical-minimum clan rules, the same authoritative boundary is also respon
 - keeping the clan valid at one member until explicit `dissolve_clan`
 - leaving manual leader transfer and automatic leader transfer out of scope
 
+For alliance mutations such as `create_alliance`, `invite_alliance_clan`, `accept_alliance_invite`, `decline_alliance_invite`, `leave_alliance`, `expel_alliance_clan`, and `dissolve_alliance`, the same authoritative commit boundary is responsible for persisting alliance identity, leader clan, clan membership, or invite state in `alliances`, `alliance_members`, and `alliance_invites`. Alliance UI remains a projection of backend truth and does not invent membership or invite success locally.
+
+`accept_alliance_invite` adds the target clan and consumes the invite in one repository transaction or one memory-store critical section. A failed validation or persistence step must leave both membership and invite state unchanged. Storage also enforces at most one live outbound invite per leader alliance and one live inbound invite per target clan, in addition to runtime validation.
+
+For canonical-minimum alliance rules, the same authoritative boundary is also responsible for:
+
+- trimming, validating, and globally de-duplicating alliance names
+- expiring invites after 10 seconds
+- canceling pending invites when inviter or invitee disconnects
+- enforcing current-target invite semantics plus leader-clan-only invite, expel, and dissolve
+- enforcing that the target invite recipient is the current leader of the target clan
+- preventing the leader clan from using `leave_alliance` in this phase
+- allowing `dissolve_alliance` only when only the leader clan remains
+- leaving manual leader transfer, auto-transfer, alliance chat, command channel, siege, clan war expansion, alliance warehouse, rich crest UX, complex privileges, and 24h classical cooldowns out of scope
+
 For `send_chat_message`, the same authoritative commit boundary is responsible for persisting minimum chat history in `chat_messages`. Delivery scope remains server truth derived from current region, party membership, canonical character identity, and durable ownership. A remote whisper stores chat history, command outcome, and one `social.chat_message.v1` delivery intent atomically. Region chat stores the same history/outcome plus one exact-owner event per remote recipient and delivers to still-eligible local recipients only after commit. The current slice exposes only `region`, `party`, and `whisper`; party fanout remains local-instance. `local` remains reserved for a later distinct scope. The client never authors the final recipient set.
 
 For player combat, a process-local mutex may coordinate runtime projection but cannot be the correctness boundary. PostgreSQL-backed mode serializes attacker/victim mutations through deterministic row locks and computes damage, death classification, counters, deadlines, cooldown mutation, attribution, repeated-pair signal, and audit from the locked durable state. The memory adapter mirrors this in one critical section. The generic post-command progression/cooldown flush must not run after this transaction, because it could overwrite a newer multi-instance combat state.
@@ -187,11 +202,13 @@ The server emits authoritative outbound messages to the issuing client and to an
 
 For state mutation flows, that outbound is usually `delta`.
 
-For scoped social flows, the outbound may instead be a typed notice or message such as `trade_notice`, `party_notice`, `clan_notice`, or `chat_message`.
+For scoped social flows, the outbound may instead be a typed notice or message such as `trade_notice`, `party_notice`, `clan_notice`, `alliance_notice`, or `chat_message`.
 
-When a social recipient is remotely owned, the server writes `social.chat_message.v1`, `social.party_notice.v1`, or `social.clan_notice.v1` to the exact destination instance/session. The dispatcher reserves a durable receipt, revalidates ownership, and records consumption after socket acceptance. Party/clan consumers rehydrate current durable state and emit its delta before the notice. A consumed receipt suppresses redelivery after consumer restart; every remote social message also carries the monotonic outbox `event_id` for live runtime/browser duplicate suppression. Ownership drift does not reroute: an unconsumed reservation is released and the event retries or dead-letters with `social.recipient_offline` or `social.recipient_stale_owner`.
+When a social recipient is remotely owned, the server writes `social.chat_message.v1`, `social.party_notice.v1`, `social.clan_notice.v1`, or `social.alliance_notice.v1` to the exact destination instance/session. The dispatcher reserves a durable receipt, revalidates ownership, and records consumption after socket acceptance. Party/clan/alliance consumers rehydrate current durable state and emit its delta before the notice. A consumed receipt suppresses redelivery after consumer restart; every remote social message also carries the monotonic outbox `event_id` for live runtime/browser duplicate suppression. Ownership drift does not reroute: an unconsumed reservation is released and the event retries or dead-letters with `social.recipient_offline` or `social.recipient_stale_owner`.
 
 Every successful clan mutation sends the issuing client a `delta` carrying `applies_to_command_id` and `applies_to_command_seq`. An `ack` or uncorrelated `clan_notice` may provide lifecycle feedback, but cannot mark the command applied or mutate projected clan truth.
+
+Every successful alliance mutation sends the issuing client a `delta` carrying `applies_to_command_id` and `applies_to_command_seq`. An `ack` or uncorrelated `alliance_notice` may provide lifecycle feedback, but cannot mark the command applied or mutate projected alliance truth.
 
 ## Message Semantics
 

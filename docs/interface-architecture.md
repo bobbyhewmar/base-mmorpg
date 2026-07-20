@@ -64,7 +64,7 @@ Keep layout-heavy and text-heavy UI outside the scene:
 - cast-state and selected-skill feedback
 - inventory and equipment
 - quest tracker only when the quest system needs it; do not show a default task tracker in the combat HUD
-- minimap and region name
+- top-right minimap, classic map window, and region name
 - chat and system log
 - dialogs, vendors, storage, and settings
 
@@ -84,6 +84,7 @@ The HUD shortcut/action surface must include:
 - `ALT+C` action drag to hotbar through authoritative `set_hotbar_state` in online mode
 - a bottom-right classic quick access mini menu with `32x32px` icon buttons for Status, Inventory, Map, and System
 - mini-menu shortcuts matching the classic labels: `ALT+T`, `ALT+V`, `ALT+M`, and `ALT+X`
+- a top-right minimap driven by player position and scene camera yaw, with player marker and camera-direction arc
 - dragged skill or item icon visually follows the cursor until dropped or cancelled
 - hover-driven skill tooltips instead of permanently expanded text blocks
 - cooldown overlay feedback directly above the icon
@@ -92,7 +93,7 @@ The inventory and classic window surface must include:
 
 - inventory closed by default
 - `ALT+V` toggling the inventory window
-- `ALT+M` opening a classic map window placeholder until the full minimap/map data contract is implemented
+- `ALT+M` opening a classic map window synchronized with the minimap projection and scene camera yaw
 - `ALT+X` opening a classic system menu with an explicit Exit Game confirmation modal
 - square-corner dark window body with blue title bar
 - real clickable close controls
@@ -158,6 +159,7 @@ Responsibilities:
 - host login, registration, character list, and character-creation flows before world entry
 - host the skill hotbar stack, skill-book popup, and cooldown readability layer
 - host classic inventory/equipment windows using shared visual primitives rather than one-off CSS recreations
+- render minimap and map-window projection from runtime view state, not from local map authority
 
 Should not own:
 

@@ -479,6 +479,75 @@ func (runtime *attachedRuntime) preValidate(command commandEnvelope) (*parsedCom
 			commandType: command.Type,
 			targetID:    payload.TargetCharacterID,
 		}, nil
+	case "create_alliance":
+		var payload struct {
+			Name string `json:"name"`
+		}
+		if err := decodeCommandPayloadStrict(command.Payload, &payload); err != nil {
+			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Alliance create payload is invalid.")
+		}
+		return &parsedCommand{
+			commandType: command.Type,
+			clanName:    payload.Name,
+		}, nil
+	case "invite_alliance_clan":
+		var payload struct{}
+		if err := decodeCommandPayloadStrict(command.Payload, &payload); err != nil {
+			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Alliance invite payload is invalid.")
+		}
+		return &parsedCommand{
+			commandType: command.Type,
+		}, nil
+	case "accept_alliance_invite":
+		var payload struct {
+			InviteID string `json:"invite_id"`
+		}
+		if err := decodeCommandPayloadStrict(command.Payload, &payload); err != nil {
+			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Alliance accept payload is invalid.")
+		}
+		if payload.InviteID == "" {
+			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Alliance accept payload is invalid.")
+		}
+		return &parsedCommand{
+			commandType: command.Type,
+			inviteID:    payload.InviteID,
+		}, nil
+	case "decline_alliance_invite":
+		var payload struct {
+			InviteID string `json:"invite_id"`
+		}
+		if err := decodeCommandPayloadStrict(command.Payload, &payload); err != nil {
+			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Alliance decline payload is invalid.")
+		}
+		if payload.InviteID == "" {
+			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Alliance decline payload is invalid.")
+		}
+		return &parsedCommand{
+			commandType: command.Type,
+			inviteID:    payload.InviteID,
+		}, nil
+	case "leave_alliance", "dissolve_alliance":
+		var payload struct{}
+		if err := decodeCommandPayloadStrict(command.Payload, &payload); err != nil {
+			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Alliance payload is invalid.")
+		}
+		return &parsedCommand{
+			commandType: command.Type,
+		}, nil
+	case "expel_alliance_clan":
+		var payload struct {
+			TargetClanID string `json:"target_clan_id"`
+		}
+		if err := decodeCommandPayloadStrict(command.Payload, &payload); err != nil {
+			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Alliance expel payload is invalid.")
+		}
+		if payload.TargetClanID == "" {
+			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Alliance expel payload is invalid.")
+		}
+		return &parsedCommand{
+			commandType: command.Type,
+			targetID:    payload.TargetClanID,
+		}, nil
 	case "accept_party_invite":
 		var payload struct {
 			InviteID string `json:"invite_id"`

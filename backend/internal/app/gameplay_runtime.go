@@ -151,6 +151,8 @@ type attachedRuntime struct {
 	partyInvites            []CharacterPartyInviteSnapshot
 	clan                    *CharacterClanSnapshot
 	clanInvites             []CharacterClanInviteSnapshot
+	alliance                *CharacterAllianceSnapshot
+	allianceInvites         []CharacterAllianceInviteSnapshot
 	pets                    []CharacterPet
 	characterItems          []CharacterItem
 	movementPlanner         movementPlanner
@@ -1187,6 +1189,8 @@ func (runtime *attachedRuntime) selfDelta(now time.Time, extra map[string]any) m
 		"party_invites":     cloneCharacterPartyInviteSnapshots(runtime.partyInvites),
 		"clan":              cloneCharacterClanSnapshot(runtime.clan),
 		"clan_invites":      cloneCharacterClanInviteSnapshots(runtime.clanInvites),
+		"alliance":          cloneCharacterAllianceSnapshot(runtime.alliance),
+		"alliance_invites":  cloneCharacterAllianceInviteSnapshots(runtime.allianceInvites),
 	}
 	for key, value := range extra {
 		payload[key] = value
@@ -1235,6 +1239,14 @@ func (runtime *attachedRuntime) loadClanState(clan *CharacterClanSnapshot, invit
 	runtime.clanInvites = cloneCharacterClanInviteSnapshots(invites)
 }
 
+func (runtime *attachedRuntime) loadAllianceState(alliance *CharacterAllianceSnapshot, invites []CharacterAllianceInviteSnapshot) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	runtime.alliance = cloneCharacterAllianceSnapshot(alliance)
+	runtime.allianceInvites = cloneCharacterAllianceInviteSnapshots(invites)
+}
+
 func (runtime *attachedRuntime) partyInviteExpirationDue(now time.Time) bool {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
@@ -1252,6 +1264,18 @@ func (runtime *attachedRuntime) clanInviteExpirationDue(now time.Time) bool {
 	defer runtime.mu.Unlock()
 
 	for _, invite := range runtime.clanInvites {
+		if invite.ExpiresAtMS <= now.UnixMilli() {
+			return true
+		}
+	}
+	return false
+}
+
+func (runtime *attachedRuntime) allianceInviteExpirationDue(now time.Time) bool {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	for _, invite := range runtime.allianceInvites {
 		if invite.ExpiresAtMS <= now.UnixMilli() {
 			return true
 		}
@@ -1298,6 +1322,36 @@ func (runtime *attachedRuntime) clanDeltaMessageForCommand(
 
 	runtime.clan = cloneCharacterClanSnapshot(clan)
 	runtime.clanInvites = cloneCharacterClanInviteSnapshots(invites)
+	runtime.revision++
+	return deltaMessage(runtime.revision, commandID, commandSeq, runtime.selfDelta(time.Now(), nil), nil, nil)
+}
+
+func (runtime *attachedRuntime) allianceDeltaMessage(
+	alliance *CharacterAllianceSnapshot,
+	invites []CharacterAllianceInviteSnapshot,
+) map[string]any {
+	return runtime.allianceDeltaMessageForCommand(alliance, invites, "", 0)
+}
+
+func (runtime *attachedRuntime) allianceCommandDeltaMessage(
+	alliance *CharacterAllianceSnapshot,
+	invites []CharacterAllianceInviteSnapshot,
+	command commandEnvelope,
+) map[string]any {
+	return runtime.allianceDeltaMessageForCommand(alliance, invites, command.CommandID, command.CommandSeq)
+}
+
+func (runtime *attachedRuntime) allianceDeltaMessageForCommand(
+	alliance *CharacterAllianceSnapshot,
+	invites []CharacterAllianceInviteSnapshot,
+	commandID string,
+	commandSeq int,
+) map[string]any {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+
+	runtime.alliance = cloneCharacterAllianceSnapshot(alliance)
+	runtime.allianceInvites = cloneCharacterAllianceInviteSnapshots(invites)
 	runtime.revision++
 	return deltaMessage(runtime.revision, commandID, commandSeq, runtime.selfDelta(time.Now(), nil), nil, nil)
 }

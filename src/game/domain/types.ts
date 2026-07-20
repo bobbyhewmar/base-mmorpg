@@ -345,6 +345,36 @@ export interface PendingClanInviteState {
   expiresAtMs: number;
 }
 
+export interface AllianceMemberClanState {
+  clanId: string;
+  name: string;
+  leaderCharacterId: string;
+  leaderName: string;
+  memberCount: number;
+  isLeaderClan: boolean;
+}
+
+export interface AllianceState {
+  allianceId: string;
+  name: string;
+  leaderClanId: string;
+  leaderClanName: string;
+  clanCap: number;
+  members: AllianceMemberClanState[];
+}
+
+export interface PendingAllianceInviteState {
+  inviteId: string;
+  allianceId: string;
+  allianceName: string;
+  inviterCharacterId: string;
+  inviterName: string;
+  inviterClanId: string;
+  inviterClanName: string;
+  targetClanId: string;
+  expiresAtMs: number;
+}
+
 export interface QuestState {
   id: string;
   title: string;
@@ -427,6 +457,8 @@ export interface GameState {
   partyInvites: PendingPartyInviteState[];
   clan: ClanState | null;
   clanInvites: PendingClanInviteState[];
+  alliance: AllianceState | null;
+  allianceInvites: PendingAllianceInviteState[];
   incomingTradeOffer: PendingTradeOfferState | null;
   outgoingTradeOffer: PendingTradeOfferState | null;
   logs: LogEntry[];

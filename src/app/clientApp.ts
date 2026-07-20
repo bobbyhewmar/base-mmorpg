@@ -56,6 +56,13 @@ declare global {
       sendLeaveClan: () => void;
       sendKickClanMember: (targetCharacterId: string) => void;
       sendDissolveClan: () => void;
+      sendCreateAlliance: (name: string) => void;
+      sendInviteAllianceClan: () => void;
+      sendAcceptAllianceInvite: (inviteId: string) => void;
+      sendDeclineAllianceInvite: (inviteId: string) => void;
+      sendLeaveAlliance: () => void;
+      sendExpelAllianceClan: (targetClanId: string) => void;
+      sendDissolveAlliance: () => void;
       sendChatMessage: (
         channel: 'region' | 'party' | 'whisper',
         text: string,
@@ -105,7 +112,7 @@ const GAME_WORLDS: readonly GameWorldConfig[] = [
   {
     id: 'detona-500x',
     no: '01',
-    name: 'L2 DETONA 500x',
+    name: 'Warriors of Bartz',
     traffic: 'Light',
     ping: 0,
     type: '',
@@ -657,6 +664,27 @@ export class ClientApp {
       onDissolveClan: () => {
         this.sendDissolveClan();
       },
+      onCreateAlliance: (name) => {
+        this.sendCreateAlliance(name);
+      },
+      onInviteAllianceClan: () => {
+        this.sendInviteAllianceClan();
+      },
+      onAcceptAllianceInvite: (inviteId) => {
+        this.sendAcceptAllianceInvite(inviteId);
+      },
+      onDeclineAllianceInvite: (inviteId) => {
+        this.sendDeclineAllianceInvite(inviteId);
+      },
+      onLeaveAlliance: () => {
+        this.sendLeaveAlliance();
+      },
+      onExpelAllianceClan: (targetClanId) => {
+        this.sendExpelAllianceClan(targetClanId);
+      },
+      onDissolveAlliance: () => {
+        this.sendDissolveAlliance();
+      },
       onSendChatMessage: (channel, text, targetCharacterName) => {
         return this.sendChatMessage(channel, text, targetCharacterName);
       },
@@ -1121,6 +1149,97 @@ export class ClientApp {
     this.renderStatus();
   }
 
+  private sendCreateAlliance(name: string): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createAlliance(name);
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendInviteAllianceClan(): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createInviteAllianceClan();
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendAcceptAllianceInvite(inviteId: string): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createAcceptAllianceInvite(inviteId);
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendDeclineAllianceInvite(inviteId: string): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createDeclineAllianceInvite(inviteId);
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendLeaveAlliance(): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createLeaveAlliance();
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendExpelAllianceClan(targetClanId: string): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createExpelAllianceClan(targetClanId);
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
+  private sendDissolveAlliance(): void {
+    if (!this.onlineReadModel || !this.sessionClient) {
+      return;
+    }
+    const command = this.onlineReadModel.createDissolveAlliance();
+    if (!command) {
+      this.refreshOnlineRuntime();
+      return;
+    }
+    this.sessionClient.sendCommand(command);
+    this.renderStatus();
+  }
+
   private sendChatMessage(
     channel: 'region' | 'party' | 'whisper',
     text: string,
@@ -1394,14 +1513,10 @@ export class ClientApp {
   private renderEulaScreen(error: string): string {
     return `
       <section class="pregame-screen classic-prelogin-screen eula-screen" aria-label="User agreement">
-        <div class="classic-login-mark" aria-hidden="true">
-          <strong>LINEAGE</strong>
-          <span>THE CHAOTIC THRONE</span>
-        </div>
         <article class="classic-eula-window">
           <div class="classic-scroll-rail" aria-hidden="true"><span></span><i></i></div>
           <div class="classic-eula-content">
-            <p>Lineage II User Agreement (the Agreement)</p>
+            <p>Game User Agreement (the Agreement)</p>
             <p>Last Modified January 2007</p>
             <h3>1. TERMS OF AGREEMENT</h3>
             <p>
@@ -1433,10 +1548,6 @@ export class ClientApp {
     const selectedWorldId = this.state.selectedWorldId ?? GAME_WORLDS[0]?.id ?? '';
     return `
       <section class="pregame-screen classic-prelogin-screen server-select-screen" aria-label="Server selection">
-        <div class="classic-login-mark classic-login-mark--server" aria-hidden="true">
-          <strong>LINEAGE</strong>
-          <span>THE CHAOTIC THRONE</span>
-        </div>
         <div class="classic-server-stack">
           <section class="classic-server-window" aria-label="World list">
             <div class="classic-server-table">
@@ -2088,6 +2199,27 @@ export class ClientApp {
       },
       sendDissolveClan: () => {
         this.sendDissolveClan();
+      },
+      sendCreateAlliance: (name) => {
+        this.sendCreateAlliance(name);
+      },
+      sendInviteAllianceClan: () => {
+        this.sendInviteAllianceClan();
+      },
+      sendAcceptAllianceInvite: (inviteId) => {
+        this.sendAcceptAllianceInvite(inviteId);
+      },
+      sendDeclineAllianceInvite: (inviteId) => {
+        this.sendDeclineAllianceInvite(inviteId);
+      },
+      sendLeaveAlliance: () => {
+        this.sendLeaveAlliance();
+      },
+      sendExpelAllianceClan: (targetClanId) => {
+        this.sendExpelAllianceClan(targetClanId);
+      },
+      sendDissolveAlliance: () => {
+        this.sendDissolveAlliance();
       },
       sendChatMessage: (channel, text, targetCharacterName) => {
         this.sendChatMessage(channel, text, targetCharacterName);

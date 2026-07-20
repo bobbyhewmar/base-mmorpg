@@ -811,6 +811,8 @@ export const createInitialState = (): GameState => {
     partyInvites: [],
     clan: null,
     clanInvites: [],
+    alliance: null,
+    allianceInvites: [],
     incomingTradeOffer: null,
     outgoingTradeOffer: null,
     logs: [{ id: 'log_1', text: 'You arrive in a clean 1024x1024 prototype region.', tone: 'neutral' }],

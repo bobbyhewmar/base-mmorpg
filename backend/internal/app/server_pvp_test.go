@@ -485,7 +485,7 @@ func TestPvPHydrationRestoresActiveFlagAndDropsExpiredFlag(t *testing.T) {
 	if snapshot["pvp_flagged"] != true || snapshot["pvp_flag_until_ms"] != flagUntil.UnixMilli() {
 		t.Fatalf("active PvP flag missing after reconnect hydration: %#v", snapshot)
 	}
-	selfState := selfStateFromItems(character, nil, nil, CharacterHotbarState{}, nil, CharacterQuestState{}, nil, nil, nil, nil)
+	selfState := selfStateFromItems(character, nil, nil, CharacterHotbarState{}, nil, CharacterQuestState{}, nil, nil, nil, nil, nil, nil)
 	if !selfState.PvPFlagged || selfState.PvPFlagUntilMS == nil || *selfState.PvPFlagUntilMS != flagUntil.UnixMilli() {
 		t.Fatalf("world-enter snapshot omitted active PvP flag: %+v", selfState)
 	}

@@ -35,6 +35,11 @@ type memoryStoreBackend struct {
 	clanByCharacter     map[string]string
 	clanInvites         map[string]*ClanInvite
 	clanByName          map[string]string
+	alliances           map[string]*Alliance
+	allianceMembers     map[string][]AllianceMember
+	allianceByClan      map[string]string
+	allianceInvites     map[string]*AllianceInvite
+	allianceByName      map[string]string
 	chatMessages        map[string][]ChatMessageRecord
 	characterItems      map[string][]CharacterItem
 	storageTransfers    map[string][]StorageTransferRecord
@@ -59,6 +64,7 @@ type memoryCharacterPetRepo struct{ backend *memoryStoreBackend }
 type memoryCharacterQuestRepo struct{ backend *memoryStoreBackend }
 type memoryPartyRepo struct{ backend *memoryStoreBackend }
 type memoryClanRepo struct{ backend *memoryStoreBackend }
+type memoryAllianceRepo struct{ backend *memoryStoreBackend }
 type memoryChatMessageRepo struct{ backend *memoryStoreBackend }
 type memoryCharacterItemRepo struct{ backend *memoryStoreBackend }
 type memoryStorageTransferRecordRepo struct{ backend *memoryStoreBackend }
@@ -94,6 +100,11 @@ func newMemoryStoreBackend() *memoryStoreBackend {
 		clanByCharacter:    map[string]string{},
 		clanInvites:        map[string]*ClanInvite{},
 		clanByName:         map[string]string{},
+		alliances:          map[string]*Alliance{},
+		allianceMembers:    map[string][]AllianceMember{},
+		allianceByClan:     map[string]string{},
+		allianceInvites:    map[string]*AllianceInvite{},
+		allianceByName:     map[string]string{},
 		chatMessages:       map[string][]ChatMessageRecord{},
 		characterItems:     map[string][]CharacterItem{},
 		storageTransfers:   map[string][]StorageTransferRecord{},
@@ -124,6 +135,7 @@ func newMemoryStoreWithBackend(backend *memoryStoreBackend) *Store {
 		CharacterQuests:    memoryCharacterQuestRepo{backend: backend},
 		Parties:            memoryPartyRepo{backend: backend},
 		Clans:              memoryClanRepo{backend: backend},
+		Alliances:          memoryAllianceRepo{backend: backend},
 		ChatMessages:       memoryChatMessageRepo{backend: backend},
 		Items:              memoryCharacterItemRepo{backend: backend},
 		StorageTransfers:   memoryStorageTransferRecordRepo{backend: backend},

@@ -29,7 +29,7 @@ func gameplayCommandRecordStatusFromOutbound(messages []map[string]any) Gameplay
 	for _, message := range messages {
 		kind, _ := message["kind"].(string)
 		switch kind {
-		case "delta", "entity_appear", "entity_disappear", "position_correction", tradeNoticeKind, partyNoticeKind, chatMessageKind:
+		case "delta", "entity_appear", "entity_disappear", "position_correction", tradeNoticeKind, partyNoticeKind, clanNoticeKind, allianceNoticeKind, chatMessageKind:
 			return gameplayCommandRecordStatusApplied
 		}
 	}
@@ -39,7 +39,8 @@ func gameplayCommandRecordStatusFromOutbound(messages []map[string]any) Gameplay
 func isTransactionalSocialCommand(commandType string) bool {
 	switch commandType {
 	case "invite_party_member", "accept_party_invite", "decline_party_invite", "leave_party", "kick_party_member",
-		"create_clan", "invite_clan_member", "accept_clan_invite", "decline_clan_invite", "leave_clan", "kick_clan_member", "dissolve_clan":
+		"create_clan", "invite_clan_member", "accept_clan_invite", "decline_clan_invite", "leave_clan", "kick_clan_member", "dissolve_clan",
+		"create_alliance", "invite_alliance_clan", "accept_alliance_invite", "decline_alliance_invite", "leave_alliance", "expel_alliance_clan", "dissolve_alliance":
 		return true
 	default:
 		return false
@@ -55,6 +56,13 @@ func (s *Server) rehydrateSocialRuntimeAfterRollback(ctx context.Context, sessio
 		party, invites, err := s.loadCharacterPartyState(ctx, session.CharacterID, now)
 		if err == nil {
 			_ = runtime.partyDeltaMessage(party, invites)
+		}
+		return
+	}
+	if strings.Contains(commandType, "alliance") {
+		alliance, invites, err := s.loadCharacterAllianceState(ctx, session.CharacterID, now)
+		if err == nil {
+			_ = runtime.allianceDeltaMessage(alliance, invites)
 		}
 		return
 	}
@@ -164,6 +172,8 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 		outboundMessages = s.processPartyCommand(auditCtx, session, runtime, command)
 	} else if command.Type == "create_clan" || command.Type == "invite_clan_member" || command.Type == "accept_clan_invite" || command.Type == "decline_clan_invite" || command.Type == "leave_clan" || command.Type == "kick_clan_member" || command.Type == "dissolve_clan" {
 		outboundMessages = s.processClanCommand(auditCtx, session, runtime, command)
+	} else if command.Type == "create_alliance" || command.Type == "invite_alliance_clan" || command.Type == "accept_alliance_invite" || command.Type == "decline_alliance_invite" || command.Type == "leave_alliance" || command.Type == "expel_alliance_clan" || command.Type == "dissolve_alliance" {
+		outboundMessages = s.processAllianceCommand(auditCtx, session, runtime, command)
 	} else if command.Type == "basic_attack" || command.Type == "use_skill" {
 		outboundMessages, playerCombatCommand = s.processCombatCommand(auditCtx, session, runtime, command)
 	} else if command.Type == "send_chat_message" {
@@ -328,6 +338,20 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 			s.recordStoreError("clans.kick", errors.New("critical persistence failure"))
 		case "dissolve_clan":
 			s.recordStoreError("clans.dissolve", errors.New("critical persistence failure"))
+		case "create_alliance":
+			s.recordStoreError("alliances.create", errors.New("critical persistence failure"))
+		case "invite_alliance_clan":
+			s.recordStoreError("alliances.invite", errors.New("critical persistence failure"))
+		case "accept_alliance_invite":
+			s.recordStoreError("alliances.accept", errors.New("critical persistence failure"))
+		case "decline_alliance_invite":
+			s.recordStoreError("alliances.decline", errors.New("critical persistence failure"))
+		case "leave_alliance":
+			s.recordStoreError("alliances.leave", errors.New("critical persistence failure"))
+		case "expel_alliance_clan":
+			s.recordStoreError("alliances.expel", errors.New("critical persistence failure"))
+		case "dissolve_alliance":
+			s.recordStoreError("alliances.dissolve", errors.New("critical persistence failure"))
 		case "send_chat_message":
 			s.recordStoreError("chat_messages.create", errors.New("critical persistence failure"))
 		}

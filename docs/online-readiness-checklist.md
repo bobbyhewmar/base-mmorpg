@@ -133,6 +133,8 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Character-window top row switches panels instead of duplicating skill icons.
 - [x] Bottom-right quick access mini menu matches the classic reference with `32x32px` Status, Inventory, Map, and System buttons plus `ALT+T`, `ALT+V`, `ALT+M`, and `ALT+X` shortcuts.
 - [x] System menu opens as a classic square window and `Exit Game` shows an explicit `OK` or `Cancel` confirmation modal.
+- [x] Top-right minimap projects the current region, player marker, and camera-direction arc from runtime player position plus Three.js camera yaw.
+- [x] `ALT+M` opens a classic map window using the same player-position and camera-yaw projection as the minimap instead of a static placeholder.
 - [x] Skill book opens through `ALT+K`.
 - [x] Skill book separates `Active` and `Passive` skills with compact icon grids.
 - [x] Active skills can be dragged to hotbar slots for immediate local UI rebinding with the icon following the cursor during drag.
@@ -146,6 +148,7 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Quest and NPC dialogs are projected from authoritative quest or interaction snapshots rather than local fallback truth.
 - [x] Incoming party invites use a dedicated small modal above the hotbar with `Accept`, `Cancel`, and a visual countdown derived from authoritative `expires_at_ms`.
 - [x] The invite modal may show an expired visual state locally, but final invite removal still comes only from authoritative backend state.
+- [x] Incoming clan and alliance invites use dedicated small non-draggable modals above the hotbar with `Accept`, `Cancel`, and a visual countdown derived from authoritative `expires_at_ms`.
 
 ### Companion and Mount Reality
 
@@ -192,6 +195,14 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] `world/enter` and attach-time runtime hydration restore authoritative `clan` and `clan_invites` snapshots without client-authored success.
 - [x] Docker Compose browser smoke covers two characters through create, invite, accept, reconnect hydration, leave, decline, reaccept, kick, and dissolve.
 - [x] `ALT+N` projects a compact clan panel with `Create Clan`, joined roster, leader-only `Invite` or `Kick` or `Dissolve`, member-only `Leave`, and a dedicated non-draggable clan invite modal above the hotbar.
+- [x] `alliances`, `alliance_members`, and `alliance_invites` persist the canonical minimum alliance slice with replay-safe leader clan, clan membership, and short-lived invite state.
+- [x] `create_alliance`, `invite_alliance_clan`, `accept_alliance_invite`, `decline_alliance_invite`, `leave_alliance`, `expel_alliance_clan`, and `dissolve_alliance` execute only through the authoritative gameplay command lifecycle.
+- [x] Alliance is clan-of-clans: the founder clan becomes first member plus leader clan, membership is keyed by clan, the leader clan cannot use `leave_alliance`, and `dissolve_alliance` is explicit plus allowed only when only the leader clan remains.
+- [x] Alliance invites use the actor's current player target to resolve the target clan leader, expire after 10 seconds, reject self-invite or target-already-in-alliance, and cancel when inviter or invitee disconnects.
+- [x] Alliance invite acceptance adds the target clan and consumes the invite atomically, with storage-level uniqueness for one live outbound invite per leader alliance and one live inbound invite per target clan.
+- [x] `world/enter` and attach-time runtime hydration restore authoritative `alliance` and `alliance_invites` snapshots without client-authored success.
+- [x] `ALT+N` also projects minimum alliance truth on top of clan truth with `Create Alliance`, joined alliance summary, authority-only `Invite Clan` or `Expel` or `Dissolve Alliance`, leader-clan-only restrictions, and a dedicated non-draggable alliance invite modal above the hotbar.
+- [x] Alliance chat, command channel, siege, clan war expansion, alliance warehouse, rich crest UX, complex privileges, cooldowns classicos de 24h, and manual leader transfer remain intentionally out of scope for this slice.
 - [x] Alliance, siege, clan war expansion, clan chat, clan warehouse, clan skills, academy or subunits, rich crest UX, complex privileges, and manual leader transfer remain intentionally out of scope for this slice.
 - [x] `/invite Nome`, command channel, round-robin, master loot, dice or distribution UI, clan or alliance reward sharing, party finder, matchmaking, offline mail, manual leader transfer, and advanced moderation remain intentionally out of scope for this slice.
 

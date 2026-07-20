@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2326,7 +2327,9 @@ func TestWorldEnterReflectsPersistedPartyStateAndInvites(t *testing.T) {
 			"name":       name,
 		}, token)
 		if response.StatusCode != http.StatusCreated {
-			t.Fatalf("create character %s status = %d", name, response.StatusCode)
+			body, _ := io.ReadAll(response.Body)
+			_ = response.Body.Close()
+			t.Fatalf("create character %s status = %d body = %s", name, response.StatusCode, strings.TrimSpace(string(body)))
 		}
 		payload := decodeBody[map[string]any](t, response)
 		return payload["character"].(map[string]any)["character_id"].(string)
@@ -2490,5 +2493,132 @@ func TestWorldEnterReflectsPersistedClanStateAndInvites(t *testing.T) {
 	}
 	if firstInvite["invite_id"] != "persist_clan_invite_1" || firstInvite["clan_id"] != clan.ID || firstInvite["clan_name"] != "Nightfall" {
 		t.Fatalf("unexpected clan invite snapshot = %+v", firstInvite)
+	}
+}
+
+func TestWorldEnterReflectsPersistedAllianceStateAndInvites(t *testing.T) {
+	env := newPersistenceTestEnv(t)
+	_, leaderToken := registerAndLogin(t, env, "persist.alliance.leader@test")
+	_, targetLeaderToken := registerAndLogin(t, env, "persist.alliance.target@test")
+
+	createCharacter := func(token string, name string) string {
+		response := postJSON(t, env.httpServer.Client(), env.httpServer.URL+"/v1/characters", map[string]any{
+			"race":       "Human",
+			"base_class": "Fighter",
+			"sex":        "Male",
+			"hair_style": 1,
+			"hair_color": "#6b4e37",
+			"skin_type":  2,
+			"name":       name,
+		}, token)
+		if response.StatusCode != http.StatusCreated {
+			t.Fatalf("create character %s status = %d", name, response.StatusCode)
+		}
+		payload := decodeBody[map[string]any](t, response)
+		return payload["character"].(map[string]any)["character_id"].(string)
+	}
+
+	leaderCharacterID := createCharacter(leaderToken, "Allred")
+	targetLeaderCharacterID := createCharacter(targetLeaderToken, "Alltar")
+	now := time.Now().UTC()
+	founderClan := &Clan{
+		ID:                "persist_alliance_founder_clan",
+		Name:              "Nightfall",
+		LeaderCharacterID: leaderCharacterID,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	if err := env.store.Clans.Create(context.Background(), founderClan, ClanMember{
+		ClanID:      founderClan.ID,
+		CharacterID: leaderCharacterID,
+		JoinedAt:    now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}); err != nil {
+		t.Fatalf("Clans.Create(founder) error = %v", err)
+	}
+	targetClan := &Clan{
+		ID:                "persist_alliance_target_clan",
+		Name:              "Moonrise",
+		LeaderCharacterID: targetLeaderCharacterID,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	if err := env.store.Clans.Create(context.Background(), targetClan, ClanMember{
+		ClanID:      targetClan.ID,
+		CharacterID: targetLeaderCharacterID,
+		JoinedAt:    now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}); err != nil {
+		t.Fatalf("Clans.Create(target) error = %v", err)
+	}
+	alliance := &Alliance{
+		ID:           "persist_alliance_1",
+		Name:         "Eclipse",
+		LeaderClanID: founderClan.ID,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := env.store.Alliances.Create(context.Background(), alliance, AllianceMember{
+		AllianceID: alliance.ID,
+		ClanID:     founderClan.ID,
+		JoinedAt:   now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}); err != nil {
+		t.Fatalf("Alliances.Create() error = %v", err)
+	}
+	if err := env.store.Alliances.CreateInvite(context.Background(), &AllianceInvite{
+		ID:                 "persist_alliance_invite_1",
+		AllianceID:         alliance.ID,
+		InviterClanID:      founderClan.ID,
+		InviterCharacterID: leaderCharacterID,
+		TargetClanID:       targetClan.ID,
+		InviteeCharacterID: targetLeaderCharacterID,
+		ExpiresAt:          now.Add(time.Minute),
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}); err != nil {
+		t.Fatalf("Alliances.CreateInvite() error = %v", err)
+	}
+
+	leaderWorldEnterResponse := postJSON(t, env.httpServer.Client(), env.httpServer.URL+"/v1/world/enter", map[string]any{
+		"character_id": leaderCharacterID,
+	}, leaderToken)
+	if leaderWorldEnterResponse.StatusCode != http.StatusOK {
+		t.Fatalf("leader world enter status = %d", leaderWorldEnterResponse.StatusCode)
+	}
+	leaderWorldEnterPayload := decodeBody[map[string]any](t, leaderWorldEnterResponse)
+	leaderSelfState := leaderWorldEnterPayload["self_state"].(map[string]any)
+	leaderAlliance, ok := leaderSelfState["alliance"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected leader alliance snapshot, got %+v", leaderSelfState["alliance"])
+	}
+	if leaderAlliance["alliance_id"] != alliance.ID || leaderAlliance["leader_clan_id"] != founderClan.ID || leaderAlliance["name"] != "Eclipse" {
+		t.Fatalf("unexpected leader alliance snapshot = %+v", leaderAlliance)
+	}
+
+	targetWorldEnterResponse := postJSON(t, env.httpServer.Client(), env.httpServer.URL+"/v1/world/enter", map[string]any{
+		"character_id": targetLeaderCharacterID,
+	}, targetLeaderToken)
+	if targetWorldEnterResponse.StatusCode != http.StatusOK {
+		t.Fatalf("target world enter status = %d", targetWorldEnterResponse.StatusCode)
+	}
+	targetWorldEnterPayload := decodeBody[map[string]any](t, targetWorldEnterResponse)
+	targetSelfState := targetWorldEnterPayload["self_state"].(map[string]any)
+	if allianceValue, exists := targetSelfState["alliance"]; exists && allianceValue != nil {
+		t.Fatalf("expected target clan leader to have no joined alliance yet, got %+v", allianceValue)
+	}
+	invites, ok := targetSelfState["alliance_invites"].([]any)
+	if !ok || len(invites) != 1 {
+		t.Fatalf("expected one persisted alliance invite, got %+v", targetSelfState["alliance_invites"])
+	}
+	firstInvite, ok := invites[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected alliance invite snapshot map, got %+v", invites[0])
+	}
+	if firstInvite["invite_id"] != "persist_alliance_invite_1" || firstInvite["alliance_id"] != alliance.ID || firstInvite["alliance_name"] != "Eclipse" {
+		t.Fatalf("unexpected alliance invite snapshot = %+v", firstInvite)
 	}
 }

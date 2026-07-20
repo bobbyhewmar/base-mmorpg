@@ -7,6 +7,7 @@ import {
   getPlayerFeedbackState,
   getSkillButtonState,
   Hud,
+  renderAllianceInviteModal,
   renderClanInviteModal,
   renderClanPanel,
   renderPartyInviteModal,
@@ -221,7 +222,7 @@ describe('hud skill gating', () => {
 
   it('renders clan panel states for no clan, leader and regular member affordances', () => {
     const state = createInitialState();
-    const emptyMarkup = renderClanPanel(state, 'Nightfall');
+    const emptyMarkup = renderClanPanel(state, 'Nightfall', '');
     expect(emptyMarkup).toContain('No Clan');
     expect(emptyMarkup).toContain('Create Clan');
     expect(emptyMarkup).toContain('value="Nightfall"');
@@ -249,7 +250,7 @@ describe('hud skill gating', () => {
         },
       ],
     };
-    const leaderMarkup = renderClanPanel(state, '');
+    const leaderMarkup = renderClanPanel(state, '', '');
     expect(leaderMarkup).toContain('Name');
     expect(leaderMarkup).toContain('Lv');
     expect(leaderMarkup).toContain('Cls');
@@ -273,7 +274,7 @@ describe('hud skill gating', () => {
         member.characterId === state.player.id ? { ...member, isLeader: false } : { ...member, isLeader: true },
       ),
     };
-    const memberMarkup = renderClanPanel(state, '');
+    const memberMarkup = renderClanPanel(state, '', '');
     expect(memberMarkup).toContain('data-clan-leave');
     expect(memberMarkup).toContain('data-clan-invite');
     expect(memberMarkup).not.toContain('data-clan-dissolve');
@@ -298,13 +299,14 @@ describe('hud skill gating', () => {
         },
       },
       '',
+      '',
       true,
     );
     expect(leaderInfoMarkup).toContain('data-clan-info-surface');
     expect(leaderInfoMarkup).toContain('data-clan-dissolve');
     expect(leaderInfoMarkup).toContain('Dissolve Clan');
 
-    const memberInfoMarkup = renderClanPanel(state, '', true);
+    const memberInfoMarkup = renderClanPanel(state, '', '', true);
     expect(memberInfoMarkup).toContain('data-clan-info-surface');
     expect(memberInfoMarkup).not.toContain('data-clan-dissolve');
   });
@@ -326,8 +328,8 @@ describe('hud skill gating', () => {
         },
       ],
     };
-    const defaultMarkup = renderClanPanel(state, '');
-    const infoMarkup = renderClanPanel(state, '', true);
+    const defaultMarkup = renderClanPanel(state, '', '');
+    const infoMarkup = renderClanPanel(state, '', '', true);
 
     expect(defaultMarkup).toContain('data-clan-info-toggle');
     expect(defaultMarkup).toContain('disabled aria-disabled="true"');
@@ -355,6 +357,90 @@ describe('hud skill gating', () => {
     expect(activeMarkup).toContain('data-clan-invite-modal');
     expect(activeMarkup).toContain('Nightfall');
     expect(activeMarkup).toContain('Selene invites you to join.');
+    expect(activeMarkup).not.toContain('disabled aria-disabled="true"');
+    expect(expiredMarkup).toContain('Invitation expired.');
+    expect(expiredMarkup).toContain('disabled aria-disabled="true"');
+  });
+
+  it('renders alliance affordances inside the clan panel from authoritative state only', () => {
+    const state = createInitialState();
+    state.clan = {
+      clanId: 'clan_1',
+      name: 'Nightfall',
+      leaderCharacterId: state.player.id,
+      members: [
+        {
+          characterId: state.player.id,
+          name: state.player.name,
+          level: state.player.level,
+          baseClass: state.player.baseClass,
+          online: true,
+          isLeader: true,
+        },
+      ],
+    };
+
+    const noAllianceMarkup = renderClanPanel(state, '', 'Eclipse');
+    expect(noAllianceMarkup).toContain('No Alliance');
+    expect(noAllianceMarkup).toContain('Create Alliance');
+    expect(noAllianceMarkup).toContain('value="Eclipse"');
+
+    state.alliance = {
+      allianceId: 'alliance_1',
+      name: 'Eclipse',
+      leaderClanId: 'clan_1',
+      leaderClanName: 'Nightfall',
+      clanCap: 3,
+      members: [
+        {
+          clanId: 'clan_1',
+          name: 'Nightfall',
+          leaderCharacterId: state.player.id,
+          leaderName: state.player.name,
+          memberCount: 1,
+          isLeaderClan: true,
+        },
+        {
+          clanId: 'clan_2',
+          name: 'Dawnbreak',
+          leaderCharacterId: 'char_2',
+          leaderName: 'Selene',
+          memberCount: 2,
+          isLeaderClan: false,
+        },
+      ],
+    };
+
+    const allianceMarkup = renderClanPanel(state, '', '');
+    expect(allianceMarkup).toContain('Alliance');
+    expect(allianceMarkup).toContain('Eclipse');
+    expect(allianceMarkup).toContain('Invite Clan');
+    expect(allianceMarkup).toContain('data-alliance-expel="clan_2"');
+    expect(allianceMarkup).toContain('data-alliance-dissolve');
+  });
+
+  it('renders the dedicated alliance invite modal and disables accept after authoritative expiry time passes', () => {
+    const state = createInitialState();
+    state.allianceInvites = [
+      {
+        inviteId: 'alliance_invite_1',
+        allianceId: 'alliance_1',
+        allianceName: 'Eclipse',
+        inviterCharacterId: 'char_2',
+        inviterName: 'Selene',
+        inviterClanId: 'clan_2',
+        inviterClanName: 'Dawnbreak',
+        targetClanId: 'clan_1',
+        expiresAtMs: 15_000,
+      },
+    ];
+
+    const activeMarkup = renderAllianceInviteModal(state, 10_000);
+    const expiredMarkup = renderAllianceInviteModal(state, 15_001);
+
+    expect(activeMarkup).toContain('data-alliance-invite-modal');
+    expect(activeMarkup).toContain('Eclipse');
+    expect(activeMarkup).toContain('Selene invites your clan to join.');
     expect(activeMarkup).not.toContain('disabled aria-disabled="true"');
     expect(expiredMarkup).toContain('Invitation expired.');
     expect(expiredMarkup).toContain('disabled aria-disabled="true"');
