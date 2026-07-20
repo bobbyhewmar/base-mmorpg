@@ -3007,7 +3007,9 @@ button {
 
 .lineage-clan-roster-header {
   color: #f1e3bd;
-  font-size: 9px;
+  align-items: center;
+  min-height: 16px;
+  font-size: 8px;
   background:
     linear-gradient(180deg, rgba(24, 46, 78, 0.96), rgba(8, 14, 28, 0.98)),
     rgba(8, 12, 18, 0.94);
@@ -3023,8 +3025,11 @@ button {
 }
 
 .lineage-clan-roster-header span {
-  min-height: 16px;
-  padding: 2px 4px;
+  display: flex;
+  align-items: center;
+  min-height: 14px;
+  padding: 1px 4px;
+  line-height: 1;
 }
 
 .lineage-clan-roster-header span:last-child,

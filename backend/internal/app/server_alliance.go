@@ -343,6 +343,78 @@ func (s *Server) fanOutAllianceStateForCharacter(ctx context.Context, characterI
 	s.fanOutAllianceStateForCharacterExcept(ctx, characterID, "")
 }
 
+func (s *Server) expireAllianceInvitesForCharacter(ctx context.Context, characterID string) {
+	if s == nil || s.store == nil || s.store.Alliances == nil || characterID == "" {
+		return
+	}
+
+	now := time.Now().UTC()
+	s.allianceMu.Lock()
+	defer s.allianceMu.Unlock()
+
+	expiredInvites, err := s.store.Alliances.ListExpiredInvitesByInvitee(ctx, characterID, now)
+	if err != nil {
+		if errors.Is(err, errRecordNotFound) {
+			return
+		}
+		s.recordStoreError("alliances.list_expired_invites_by_invitee", err, errRecordNotFound)
+		return
+	}
+
+	affected := make([]string, 0, len(expiredInvites)*2)
+	for _, invite := range expiredInvites {
+		if err := s.store.Alliances.DeleteInvite(ctx, invite.ID); err != nil && !errors.Is(err, errRecordNotFound) {
+			s.recordStoreError("alliances.delete_invite", err, errRecordNotFound)
+			continue
+		}
+
+		targetClanName := invite.TargetClanID
+		if clan, clanErr := s.store.Clans.GetByID(ctx, invite.TargetClanID); clanErr == nil && clan.Name != "" {
+			targetClanName = clan.Name
+		}
+
+		affected = appendUniqueCharacterIDs(affected, invite.InviterCharacterID, invite.InviteeCharacterID)
+		if err := s.sendOrProduceLifecycleSocialMessage(
+			ctx,
+			invite.InviterCharacterID,
+			remoteAllianceNoticeEventType,
+			fmt.Sprintf("alliance-invite/%s/expired/%s", invite.ID, invite.InviterCharacterID),
+			allianceNoticeMessage(
+				allianceNoticeStatusInviteExpired,
+				invite.AllianceID,
+				invite.ID,
+				invite.InviteeCharacterID,
+				"",
+				invite.TargetClanID,
+				targetClanName,
+				"Alliance invitation to "+targetClanName+" expired.",
+			),
+		); err != nil {
+			s.recordStoreError("alliances.publish_expiry", err)
+		}
+		if err := s.sendOrProduceLifecycleSocialMessage(
+			ctx,
+			invite.InviteeCharacterID,
+			remoteAllianceNoticeEventType,
+			fmt.Sprintf("alliance-invite/%s/expired/%s", invite.ID, invite.InviteeCharacterID),
+			allianceNoticeMessage(
+				allianceNoticeStatusInviteExpired,
+				invite.AllianceID,
+				invite.ID,
+				invite.InviterCharacterID,
+				"",
+				invite.TargetClanID,
+				targetClanName,
+				"Alliance invitation from the leader clan expired.",
+			),
+		); err != nil {
+			s.recordStoreError("alliances.publish_expiry", err)
+		}
+	}
+
+	s.refreshAllianceStates(ctx, affected)
+}
+
 func (s *Server) expireAllianceInvitesForDisconnectedCharacter(ctx context.Context, characterID string) {
 	if s == nil || s.store == nil || s.store.Alliances == nil || characterID == "" {
 		return

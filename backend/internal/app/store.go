@@ -176,6 +176,7 @@ type AllianceRepository interface {
 	ListPendingInvitesByInviter(ctx context.Context, characterID string, now time.Time) ([]AllianceInvite, error)
 	ListPendingInvitesByAlliance(ctx context.Context, allianceID string, now time.Time) ([]AllianceInvite, error)
 	ListPendingInvitesByTargetClan(ctx context.Context, clanID string, now time.Time) ([]AllianceInvite, error)
+	ListExpiredInvitesByInvitee(ctx context.Context, characterID string, now time.Time) ([]AllianceInvite, error)
 	GetInviteByID(ctx context.Context, inviteID string) (*AllianceInvite, error)
 	CreateInvite(ctx context.Context, invite *AllianceInvite) error
 	DeleteInvite(ctx context.Context, inviteID string) error

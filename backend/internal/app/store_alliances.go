@@ -258,6 +258,23 @@ func (repo memoryAllianceRepo) ListPendingInvitesByTargetClan(_ context.Context,
 	}, now)
 }
 
+func (repo memoryAllianceRepo) ListExpiredInvitesByInvitee(_ context.Context, characterID string, now time.Time) ([]AllianceInvite, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	invites := make([]AllianceInvite, 0)
+	for _, invite := range repo.backend.allianceInvites {
+		if invite == nil || invite.InviteeCharacterID != characterID || invite.ExpiresAt.After(now) {
+			continue
+		}
+		invites = append(invites, *invite)
+	}
+	if len(invites) == 0 {
+		return nil, errRecordNotFound
+	}
+	return normalizeAllianceInvites(invites), nil
+}
+
 func (repo memoryAllianceRepo) GetInviteByID(_ context.Context, inviteID string) (*AllianceInvite, error) {
 	repo.backend.mu.Lock()
 	defer repo.backend.mu.Unlock()
@@ -702,6 +719,19 @@ func (p *postgresStoreBackend) ListPendingAllianceInvitesByTargetClan(ctx contex
 	)
 }
 
+func (p *postgresStoreBackend) ListExpiredAllianceInvitesByInvitee(ctx context.Context, characterID string, now time.Time) ([]AllianceInvite, error) {
+	return p.listAllianceInvites(
+		ctx,
+		`SELECT invite_id, alliance_id, inviter_clan_id, inviter_character_id, target_clan_id, invitee_character_id, expires_at, created_at, updated_at
+		 FROM alliance_invites
+		 WHERE invitee_character_id = $1
+		   AND expires_at <= $2
+		 ORDER BY expires_at, invite_id`,
+		characterID,
+		now,
+	)
+}
+
 func (p *postgresStoreBackend) GetAllianceInviteByID(ctx context.Context, inviteID string) (*AllianceInvite, error) {
 	row := postgresExecutorFromContext(ctx, p.db).QueryRowContext(
 		ctx,
@@ -851,6 +881,10 @@ func (repo postgresAllianceRepo) ListPendingInvitesByAlliance(ctx context.Contex
 
 func (repo postgresAllianceRepo) ListPendingInvitesByTargetClan(ctx context.Context, clanID string, now time.Time) ([]AllianceInvite, error) {
 	return repo.backend.ListPendingAllianceInvitesByTargetClan(ctx, clanID, now)
+}
+
+func (repo postgresAllianceRepo) ListExpiredInvitesByInvitee(ctx context.Context, characterID string, now time.Time) ([]AllianceInvite, error) {
+	return repo.backend.ListExpiredAllianceInvitesByInvitee(ctx, characterID, now)
 }
 
 func (repo postgresAllianceRepo) GetInviteByID(ctx context.Context, inviteID string) (*AllianceInvite, error) {

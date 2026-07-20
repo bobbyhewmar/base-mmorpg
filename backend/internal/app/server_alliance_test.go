@@ -241,6 +241,54 @@ func TestServerAllianceRejectsInvalidTargetAndExpiresInvites(t *testing.T) {
 	requireRejectReason(t, disconnectAcceptOutbound, "alliance.invite_expired")
 }
 
+func TestServerAllianceInviteExpiryPublishesLifecycleNotice(t *testing.T) {
+	store := newMemoryStore()
+	server := NewServer(":0", "", store)
+
+	founder := setupAllianceClanLeader(t, server, store, "sess_alliance_notice_founder", "char_alliance_notice_founder", "acc_alliance_notice_founder", "Founder", "Nightfall", -8)
+	targetLeader := setupAllianceClanLeader(t, server, store, "sess_alliance_notice_target", "char_alliance_notice_target", "acc_alliance_notice_target", "TargetLeader", "Moonrise", -9)
+
+	_ = dispatchPartyCommand(t, server, founder, "cmd_alliance_notice_create", 2, "create_alliance", map[string]any{
+		"name": "Eclipse",
+	})
+	founder.resetMessages()
+
+	aimPartyInviteTarget(founder, targetLeader)
+	inviteOutbound := dispatchPartyCommand(t, server, founder, "cmd_alliance_notice_invite", 3, "invite_alliance_clan", map[string]any{})
+	if findAllianceNotice(inviteOutbound, allianceNoticeStatusInviteSent) == nil {
+		t.Fatalf("expected invite sent notice, got %+v", inviteOutbound)
+	}
+	targetInvite := findAllianceNotice(targetLeader.messages, allianceNoticeStatusInviteReceived)
+	inviteID, _ := targetInvite["invite_id"].(string)
+	if inviteID == "" {
+		t.Fatalf("expected invite id, got %+v", targetInvite)
+	}
+	founder.resetMessages()
+	targetLeader.resetMessages()
+
+	repo, ok := store.Alliances.(memoryAllianceRepo)
+	if !ok {
+		t.Fatalf("expected memoryAllianceRepo, got %T", store.Alliances)
+	}
+	repo.backend.mu.Lock()
+	if invite, exists := repo.backend.allianceInvites[inviteID]; exists && invite != nil {
+		invite.ExpiresAt = time.Now().Add(-time.Second)
+	}
+	repo.backend.mu.Unlock()
+
+	server.expireAllianceInvitesForCharacter(context.Background(), targetLeader.session.CharacterID)
+
+	if notice := findAllianceNotice(founder.messages, allianceNoticeStatusInviteExpired); notice == nil {
+		t.Fatalf("expected founder to receive invite_expired notice, got %+v", founder.messages)
+	}
+	if notice := findAllianceNotice(targetLeader.messages, allianceNoticeStatusInviteExpired); notice == nil {
+		t.Fatalf("expected target leader to receive invite_expired notice, got %+v", targetLeader.messages)
+	}
+	if _, err := store.Alliances.GetInviteByID(context.Background(), inviteID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("expected invite to be deleted after expiry, got err = %v", err)
+	}
+}
+
 func mustClanIDForCharacter(t *testing.T, store *Store, characterID string) string {
 	t.Helper()
 	clan, err := store.Clans.GetByCharacterID(context.Background(), characterID)

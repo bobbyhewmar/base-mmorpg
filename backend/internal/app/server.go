@@ -1154,7 +1154,7 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 						s.sendClanStateRefresh(loopCtx, session.CharacterID)
 					}
 					if attached.runtime.allianceInviteExpirationDue(now) {
-						s.sendAllianceStateRefresh(loopCtx, session.CharacterID)
+						s.expireAllianceInvitesForCharacter(loopCtx, session.CharacterID)
 					}
 				}
 			}
