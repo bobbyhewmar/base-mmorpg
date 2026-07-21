@@ -410,10 +410,11 @@ func (runtime *attachedRuntime) syncMovementTo(now time.Time) {
 }
 
 func (runtime *attachedRuntime) collectTickMessages(now time.Time) ([]map[string]any, bool, bool) {
-	return runtime.collectTickMessagesWithStore(now, nil)
+	messages, changed, respawned, _ := runtime.collectTickMessagesWithStore(now, nil)
+	return messages, changed, respawned
 }
 
-func (runtime *attachedRuntime) collectTickMessagesWithStore(now time.Time, store *Store) ([]map[string]any, bool, bool) {
+func (runtime *attachedRuntime) collectTickMessagesWithStore(now time.Time, store *Store) ([]map[string]any, bool, bool, *PvPKarmaRecoveryEvent) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 
@@ -422,6 +423,7 @@ func (runtime *attachedRuntime) collectTickMessagesWithStore(now time.Time, stor
 	mobPatches, mobAIChanged := runtime.resolveMobAILocked(now)
 	pvpPresenceChanged := runtime.pvpStateDirty
 	pvpFlagReason := ""
+	var karmaRecoveryEvent *PvPKarmaRecoveryEvent
 	if !runtime.pvpFlagUntil.IsZero() && !now.Before(runtime.pvpFlagUntil) {
 		runtime.pvpFlagPersistenceDirty = true
 		if store == nil || store.Characters == nil || store.Characters.UpdatePvPFlagUntil(context.Background(), runtime.characterID, time.Time{}) == nil {
@@ -433,6 +435,18 @@ func (runtime *attachedRuntime) collectTickMessagesWithStore(now time.Time, stor
 	} else if runtime.pvpFlagPersistenceDirty {
 		if store == nil || store.Characters == nil || store.Characters.UpdatePvPFlagUntil(context.Background(), runtime.characterID, runtime.pvpFlagUntil) == nil {
 			runtime.pvpFlagPersistenceDirty = false
+		}
+	}
+	if store != nil && store.Characters != nil && !runtime.karmaRecoveryDueAt.IsZero() && !now.Before(runtime.karmaRecoveryDueAt) {
+		recoveryCommit, err := store.Characters.ApplyKarmaRecovery(context.Background(), runtime.characterID, now.UTC(), "tick")
+		if err == nil && recoveryCommit != nil {
+			runtime.karma = recoveryCommit.State.Karma
+			runtime.karmaRecoveryDueAt = recoveryCommit.State.KarmaRecoveryDueAt
+			if recoveryCommit.Event != nil {
+				karmaRecoveryEvent = recoveryCommit.Event
+				pvpPresenceChanged = true
+				runtime.pvpStateDirty = true
+			}
 		}
 	}
 	runtime.pvpStateDirty = false
@@ -471,5 +485,5 @@ func (runtime *attachedRuntime) collectTickMessagesWithStore(now time.Time, stor
 
 	lifecycleMessages := runtime.collectLifecycleMessagesLocked(now)
 	outbound = append(outbound, lifecycleMessages...)
-	return outbound, movementChanged || pvpPresenceChanged, containsPlayerRespawnDelta(lifecycleMessages)
+	return outbound, movementChanged || pvpPresenceChanged, containsPlayerRespawnDelta(lifecycleMessages), karmaRecoveryEvent
 }

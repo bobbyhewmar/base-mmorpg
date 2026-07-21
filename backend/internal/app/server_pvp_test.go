@@ -18,36 +18,40 @@ type pvpTestHarness struct {
 	target        *attachedRuntime
 }
 
-func newPvPTestHarness(t *testing.T, targetX float64) *pvpTestHarness {
+func newPvPTestHarnessWithCharacters(t *testing.T, actorCharacter *Character, targetCharacter *Character) *pvpTestHarness {
 	t.Helper()
 	store := newMemoryStore()
-	actorCharacter := &Character{
-		ID:           "char_pvp_actor",
-		AccountID:    "acct_pvp_actor",
-		Name:         "PvpActor",
-		Race:         "Human",
-		BaseClass:    "Fighter",
-		Sex:          "Male",
-		HairColor:    defaultHairColor,
-		Level:        1,
-		LastRegionID: startingRegionID,
-		PositionX:    0,
-		PositionZ:    0,
-		IsEnterable:  true,
+	if actorCharacter == nil {
+		actorCharacter = &Character{
+			ID:           "char_pvp_actor",
+			AccountID:    "acct_pvp_actor",
+			Name:         "PvpActor",
+			Race:         "Human",
+			BaseClass:    "Fighter",
+			Sex:          "Male",
+			HairColor:    defaultHairColor,
+			Level:        1,
+			LastRegionID: startingRegionID,
+			PositionX:    0,
+			PositionZ:    0,
+			IsEnterable:  true,
+		}
 	}
-	targetCharacter := &Character{
-		ID:           "char_pvp_target",
-		AccountID:    "acct_pvp_target",
-		Name:         "PvpTarget",
-		Race:         "Elf",
-		BaseClass:    "Mage",
-		Sex:          "Female",
-		HairColor:    defaultHairColor,
-		Level:        1,
-		LastRegionID: startingRegionID,
-		PositionX:    targetX,
-		PositionZ:    0,
-		IsEnterable:  true,
+	if targetCharacter == nil {
+		targetCharacter = &Character{
+			ID:           "char_pvp_target",
+			AccountID:    "acct_pvp_target",
+			Name:         "PvpTarget",
+			Race:         "Elf",
+			BaseClass:    "Mage",
+			Sex:          "Female",
+			HairColor:    defaultHairColor,
+			Level:        1,
+			LastRegionID: startingRegionID,
+			PositionX:    1,
+			PositionZ:    0,
+			IsEnterable:  true,
+		}
 	}
 	if err := store.Characters.Create(context.Background(), actorCharacter); err != nil {
 		t.Fatalf("create actor: %v", err)
@@ -65,11 +69,29 @@ func newPvPTestHarness(t *testing.T, targetX float64) *pvpTestHarness {
 	return &pvpTestHarness{
 		server:        server,
 		store:         store,
-		actorSession:  &Session{ID: actor.sessionID, CharacterID: actor.characterID, Status: sessionStatusAttached},
-		targetSession: &Session{ID: target.sessionID, CharacterID: target.characterID, Status: sessionStatusAttached},
+		actorSession:  &Session{ID: actor.sessionID, AccountID: actorCharacter.AccountID, CharacterID: actor.characterID, Status: sessionStatusAttached},
+		targetSession: &Session{ID: target.sessionID, AccountID: targetCharacter.AccountID, CharacterID: target.characterID, Status: sessionStatusAttached},
 		actor:         actor,
 		target:        target,
 	}
+}
+
+func newPvPTestHarness(t *testing.T, targetX float64) *pvpTestHarness {
+	t.Helper()
+	return newPvPTestHarnessWithCharacters(t, nil, &Character{
+		ID:           "char_pvp_target",
+		AccountID:    "acct_pvp_target",
+		Name:         "PvpTarget",
+		Race:         "Elf",
+		BaseClass:    "Mage",
+		Sex:          "Female",
+		HairColor:    defaultHairColor,
+		Level:        1,
+		LastRegionID: startingRegionID,
+		PositionX:    targetX,
+		PositionZ:    0,
+		IsEnterable:  true,
+	})
 }
 
 func pvpCommand(commandID string, commandSeq int, commandType string, payload map[string]any) commandEnvelope {
@@ -475,7 +497,7 @@ func TestPvPFlagExpiresThroughAuthoritativeTick(t *testing.T) {
 	if err := h.store.Characters.UpdatePvPFlagUntil(context.Background(), h.actor.characterID, flagUntil); err != nil {
 		t.Fatal(err)
 	}
-	messages, presenceChanged, _ := h.actor.collectTickMessagesWithStore(time.Now().Add(2*time.Second), h.store)
+	messages, presenceChanged, _, _ := h.actor.collectTickMessagesWithStore(time.Now().Add(2*time.Second), h.store)
 	if !presenceChanged || len(messages) == 0 || h.actor.pvpFlaggedAt(time.Now().Add(2*time.Second)) {
 		t.Fatalf("flag expiration was not projected authoritatively: changed=%v messages=%#v", presenceChanged, messages)
 	}
@@ -640,5 +662,128 @@ func TestInternalPvPAuditEndpointRequiresTokenAndFiltersResults(t *testing.T) {
 	defer invalidResponse.Body.Close()
 	if invalidResponse.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid suspicious filter status = %d", invalidResponse.StatusCode)
+	}
+}
+
+func TestPvPKarmaStateProjectsThroughAuthoritativeTick(t *testing.T) {
+	h := newPvPTestHarness(t, 1)
+	now := time.Now().UTC()
+	h.actor.karma = 20
+	h.actor.karmaRecoveryDueAt = now.Add(5 * time.Minute)
+	h.actor.pvpStateDirty = true
+
+	messages, presenceChanged, _, recoveryEvent := h.actor.collectTickMessagesWithStore(now, nil)
+	if !presenceChanged || recoveryEvent != nil || len(messages) == 0 {
+		t.Fatalf("authoritative tick did not project karma state: changed=%v event=%+v messages=%#v", presenceChanged, recoveryEvent, messages)
+	}
+	self, _ := messages[0]["self"].(map[string]any)
+	if self["karma"] != 20 {
+		t.Fatalf("self delta missing karma state: %#v", self)
+	}
+}
+
+func TestInternalPvPRecoveryCorrelationAndHighKarmaEndpoints(t *testing.T) {
+	now := time.Now().UTC()
+	h := newPvPTestHarnessWithCharacters(t, &Character{
+		ID:                 "char_pvp_actor",
+		AccountID:          "acct_pvp_actor",
+		Name:               "PvpActor",
+		Race:               "Human",
+		BaseClass:          "Fighter",
+		Sex:                "Male",
+		HairColor:          defaultHairColor,
+		Level:              1,
+		Karma:              240,
+		KarmaRecoveryDueAt: now.Add(-time.Second),
+		KarmaHighSince:     now.Add(-20 * time.Minute),
+		LastRegionID:       startingRegionID,
+		PositionX:          0,
+		PositionZ:          0,
+		IsEnterable:        true,
+	}, nil)
+	h.server.config.InternalAuditEnabled = true
+	h.server.config.InternalAuditToken = "pvp-audit-secret"
+
+	if _, err := h.store.Characters.ApplyKarmaRecovery(context.Background(), h.actor.characterID, now, "attach"); err != nil {
+		t.Fatal(err)
+	}
+	storedActor, err := h.store.Characters.GetByID(context.Background(), h.actor.characterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedActor.Karma != 220 {
+		t.Fatalf("unexpected actor state after attach recovery: %+v", storedActor)
+	}
+	recoveryEvents, err := h.store.PvPCombatEvents.ListKarmaRecoveryEvents(context.Background(), PvPKarmaRecoveryEventQuery{
+		CharacterID: h.actor.characterID,
+		Limit:       10,
+	})
+	if err != nil || len(recoveryEvents) != 1 || recoveryEvents[0].Trigger != "attach" {
+		t.Fatalf("unexpected direct recovery events: events=%+v err=%v", recoveryEvents, err)
+	}
+	for index, eventID := range []string{"corr_http_first", "corr_http_second"} {
+		if err := h.store.Characters.UpdateProgression(context.Background(), h.target.characterID, 1, 0, 0, 1, h.target.currentMP); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.store.Characters.ApplyPvPCombat(context.Background(), pvpStoreMutation(eventID, &Character{ID: h.actor.characterID}, &Character{ID: h.target.characterID}, 10, now.Add(time.Duration(index)*time.Second))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	recoveryRequest := httptest.NewRequest(http.MethodGet, "/internal/pvp/recovery?character_id="+h.actor.characterID+"&limit=10", nil)
+	recoveryRequest.Header.Set("X-Internal-Audit-Token", "pvp-audit-secret")
+	recoveryRecorder := httptest.NewRecorder()
+	h.server.handleInternalPvPKarmaRecoveryEvents(recoveryRecorder, recoveryRequest)
+	recoveryResponse := recoveryRecorder.Result()
+	defer recoveryResponse.Body.Close()
+	if recoveryResponse.StatusCode != http.StatusOK {
+		t.Fatalf("recovery endpoint status = %d", recoveryResponse.StatusCode)
+	}
+	var recoveryPayload struct {
+		Events []PvPKarmaRecoveryEvent `json:"events"`
+	}
+	if err := json.NewDecoder(recoveryResponse.Body).Decode(&recoveryPayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(recoveryPayload.Events) != 1 || recoveryPayload.Events[0].Trigger != "attach" {
+		t.Fatalf("unexpected recovery endpoint payload: body=%s events=%+v", recoveryRecorder.Body.String(), recoveryPayload.Events)
+	}
+
+	correlationRequest := httptest.NewRequest(http.MethodGet, "/internal/pvp/correlations?account_id="+h.actorSession.AccountID+"&min_repeated_kill_count=2&limit=10", nil)
+	correlationRequest.Header.Set("X-Internal-Audit-Token", "pvp-audit-secret")
+	correlationRecorder := httptest.NewRecorder()
+	h.server.handleInternalPvPCorrelations(correlationRecorder, correlationRequest)
+	correlationResponse := correlationRecorder.Result()
+	defer correlationResponse.Body.Close()
+	if correlationResponse.StatusCode != http.StatusOK {
+		t.Fatalf("correlation endpoint status = %d", correlationResponse.StatusCode)
+	}
+	var correlationPayload struct {
+		Correlations []PvPAccountCorrelationRecord `json:"correlations"`
+	}
+	if err := json.NewDecoder(correlationResponse.Body).Decode(&correlationPayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(correlationPayload.Correlations) != 1 || correlationPayload.Correlations[0].MaxRepeatedKillCount != 2 {
+		t.Fatalf("unexpected correlation payload: %+v", correlationPayload.Correlations)
+	}
+
+	highKarmaRequest := httptest.NewRequest(http.MethodGet, "/internal/pvp/high-karma?persistent=true&minimum_karma=100&limit=10", nil)
+	highKarmaRequest.Header.Set("X-Internal-Audit-Token", "pvp-audit-secret")
+	highKarmaRecorder := httptest.NewRecorder()
+	h.server.handleInternalPvPHighKarma(highKarmaRecorder, highKarmaRequest)
+	highKarmaResponse := highKarmaRecorder.Result()
+	defer highKarmaResponse.Body.Close()
+	if highKarmaResponse.StatusCode != http.StatusOK {
+		t.Fatalf("high-karma endpoint status = %d", highKarmaResponse.StatusCode)
+	}
+	var highKarmaPayload struct {
+		Characters []PvPHighKarmaRecord `json:"characters"`
+	}
+	if err := json.NewDecoder(highKarmaResponse.Body).Decode(&highKarmaPayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(highKarmaPayload.Characters) != 1 || highKarmaPayload.Characters[0].CharacterID != h.actor.characterID || !highKarmaPayload.Characters[0].PersistentHighKarma {
+		t.Fatalf("unexpected high-karma payload: %+v", highKarmaPayload.Characters)
 	}
 }

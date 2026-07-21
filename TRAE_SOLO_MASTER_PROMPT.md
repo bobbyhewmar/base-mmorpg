@@ -1247,7 +1247,7 @@ Ainda falta:
 - input validation central por DTO
 - anti-abuse logs
 - checagem de origem WebSocket robusta
-- alerting, correlacao e operacao anti-abuse acima das consultas minimas ja entregues
+- alerting e operacao anti-abuse alem da correlacao account-first, recovery de karma e consultas internas read-only ja entregues
 
 ### 8. Conteudo e sistemas de jogo
 
@@ -1677,10 +1677,10 @@ Tarefas:
 2. [concluido no slice minimo] target player legality separada de `select_target`, com known-set, attach, regiao, vida, party, clan, alliance, range, skill, MP e cooldown backend-owned
 3. [concluido no hardening] PvP flag de 30s persistida como deadline absoluto, refresh por hit hostil, reconnect/restart logico enquanto valida e expiracao server-owned com limpeza duravel
 4. [concluido no slice minimo] classificacao de kill PvP versus PK no instante da morte
-5. [parcial] `pvp_kills`, `pk_count` e karma fixo persistentes; decay, recovery e penalidades economicas seguem futuras
+5. [concluido no slice minimo estendido] `pvp_kills`, `pk_count` e karma persistem; recovery minimo backend-owned agora reduz karma em cadencia fixa e duravel, enquanto decay mais rico, quests de limpeza e penalidades economicas seguem futuras
 6. [concluido no hardening minimo] morte e respawn simples backend-owned com limpeza de target ofensivo, ataques queued/auto, loot approach, movement, flag e cooldown; perdas de XP/item e outras penalties seguem futuras
-7. [parcial] assist/attribution por hits aplicados em 30s e sinal `suspicious` para kill repetida do mesmo par em 10min estao concluidos; protecao por level, correlacao account/device, bloqueio e automacao anti-grief seguem futuras
-8. [concluido no hardening concorrente] cada hit/kill trava attacker e victim em ordem deterministica no PostgreSQL e persiste dano/MP/cooldown/death/flag/counters/karma/attribution/anti-feed/audit como unidade; query interna read-only reutiliza token de audit e filtra killer/victim/suspicious/action/result/time
+7. [concluido no slice minimo estendido] assist/attribution por hits aplicados em 30s e sinal `suspicious` para kill repetida do mesmo par em 10min estao concluidos; a correlacao investigativa agora agrega pares repetidos por account no backend e explicita ausencia de fingerprint de device confiavel no projeto atual
+8. [concluido no hardening concorrente] cada hit/kill trava attacker e victim em ordem deterministica no PostgreSQL e persiste dano/MP/cooldown/death/flag/counters/karma/attribution/anti-feed/audit como unidade; a superficie interna read-only reutiliza o token de audit e agora expõe filtros de killer/victim/suspicious/action/result/time, recovery de karma, correlacoes por conta e high-karma persistente
 
 Done:
 
@@ -1694,6 +1694,10 @@ Done:
 - lock process-local e apenas coordenacao de runtime; a garantia multi-instancia vem de transacao PostgreSQL com row lock dos dois combatentes e calculo sobre verdade duravel recarregada
 - hits recentes compoem ledger duravel de attribution: ultimo golpe letal define killer, attackers distintos em 30s viram assists e a morte anterior da vitima corta a janela
 - segunda kill do mesmo killer/victim em 10min marca `suspicious` e `repeated_kill_count` no audit, sem bloquear gameplay nem alterar rewards
+- recovery minimo de karma agora e backend-owned, duravel e deterministico: quando o personagem segue com karma positivo e sem `pvp_flag` ativa, o backend agenda `karma_recovery_due_at` e reduz 20 pontos a cada 5 minutos em `attach`, no tick autoritativo e antes de nova mutacao de combate; reconnect/restart nao perdem a agenda nem duplicam recovery
+- observabilidade operacional de PvP/PK agora inclui sinais `suspicious_kill`, `repeated_pair`, `account_pair_correlation`, `same_account_pair`, `karma_recovered` e `persistent_high_karma`, sempre sem enforcement automatico
+- o backend mantem trilha read-only adicional em `pvp_karma_events`, rastreia `karma_high_since` para investigar karma persistentemente alto e expõe `/internal/pvp/recovery`, `/internal/pvp/correlations` e `/internal/pvp/high-karma`
+- a correlacao desta fatia e explicitamente account-first; como o repositorio ainda nao possui fingerprint duravel/seguro de device ou sessao, a superficie interna devolve `device_correlation=unavailable` em vez de inventar identidade fraca
 - policy de regiao desconhecida falha fechada e santuario logico de spawn bloqueia actor ou target com `pvp.safe_zone`; isso nao altera renderer, mapa, picking, geodata, bounds, spawn ou checkpoint
 - siege, olympiad, clan/alliance war, eventos, ranking, reward e penalidade economica complexa continuam fora
 
@@ -1756,7 +1760,7 @@ Sempre escolher a maior prioridade que:
 Prioridade atual recomendada:
 
 1. aprofundar interest management e broadcast cross-instance estritamente visual/social em cima da supersessao/compactacao segura ja entregue, sem combate remoto, Redis ou fila externa antes de necessidade comprovada
-2. karma recovery, correlacao account/device e alerting sobre attribution/anti-feed ja auditados, sem ampliar para guerras/eventos ou aplicar punicao automatica ainda
+2. manter estavel o recovery minimo de karma, a correlacao investigativa account-first e o alerting operacional de attribution/anti-feed ja entregues, sem ampliar para guerras/eventos, inventar fingerprint fraco ou aplicar punicao automatica
 3. instancias, siege, olympiad e producao somente depois de ownership, presence cross-instance, PvP/PK e clan permanecerem estaveis
 
 Nao pular para siege/olympiad antes de:
@@ -2247,7 +2251,7 @@ Estado atual que voce deve tratar como entregue, salvo evidencia contraria no co
 - O profile Compose `multi-backend` ja valida dois processos reais com ownership separado, projecao/chat bidirecional, burst, stop/restart, retry/dead-letter, receipts, TTL/despawn, tombstone, fence de recipient e recovery; a fila de publicacao e bounded/coalescing e mede pressao e atraso.
 - Reconnect reutilizando gameplay session recebe `next_command_seq` duravel do backend; eventos remotos capturam recipient fence e nao atravessam takeover apenas porque o session id permaneceu igual.
 - Fase L ja possui party canonica minima, social chat `region`/`party`/`whisper`, shared XP minimo, party-owned loot minimo e clan foundation hardened em slices autoritativos.
-- Fase M ja possui o primeiro slice PvP/PK autoritativo hardened para ataque e skill single-target, CP antes de HP, deadline de flag persistido, safe-area minima backend-only, classificacao PvP versus PK, counters/karma duraveis, row locking PostgreSQL multi-instancia, attribution de killer/assists, sinal de kill repetida, audit investigavel, morte/respawn backend-owned e replay duravel.
+- Fase M ja possui o primeiro slice PvP/PK autoritativo hardened para ataque e skill single-target, CP antes de HP, deadline de flag persistido, safe-area minima backend-only, classificacao PvP versus PK, counters/karma duraveis, karma recovery minimo backend-owned, row locking PostgreSQL multi-instancia, attribution de killer/assists, sinal de kill repetida, correlacao investigativa account-first, audit investigavel, alerting operacional, morte/respawn backend-owned e replay duravel.
 - A regiao ativa atual usa `stonecross_plaza` apenas como id compativel, mas o mapa oficial foi resetado para uma area limpa 1024x1024 com `clean_plain_1024_geo_v1`, bounds `x=-512..512` e `z=-512..512`.
 - Renderer, ground raycast/picking plane, server geodata bounds, spawn/checkpoint, exits e testes precisam compartilhar esse mesmo contrato de mapa.
 - Nao reintroduza clamp hardcoded do mapa antigo, visual Stonecross, props/spawns antigos, blockers antigos, nem bounds antigos de `dawn_plaza`.
@@ -2259,7 +2263,7 @@ Prioridade 1: medir e endurecer o efeito do filtro de interest management cross-
 - O santuario PvP minimo atual e policy backend-only. Se uma proxima fatia exigir volumes de content ou tocar mapa, geodata, movement ou picking, atualize renderer/picking/backend/tests juntos; caso contrario, nao mexa no mapa.
 - Nao crie microservicos, brokers ou filas externas sem necessidade medida; o outbox PostgreSQL atual e a foundation permitida.
 
-Prioridade 2: depois disso, aprofunde karma recovery, correlacao/alerting e penalidades simples somente com contrato explicito e testes de reconnect/replay.
+Prioridade 2: depois disso, manter e aprofundar apenas com contrato explicito o recovery de karma, a correlacao/alerting investigativos e eventuais penalidades simples futuras, sempre com testes de reconnect/replay e sem enforcement automatico prematuro.
 - Preserve known-set, command_seq, dedup, observabilidade e persistencia auditavel.
 
 Para cada fatia:

@@ -69,6 +69,8 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS pvp_kills INTEGER NOT NULL DEFAU
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS pk_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS karma INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS pvp_flag_until TIMESTAMPTZ NULL;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS karma_recovery_due_at TIMESTAMPTZ NULL;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS karma_high_since TIMESTAMPTZ NULL;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS hair_style INTEGER NOT NULL DEFAULT 0;
 DO $$
 BEGIN
@@ -92,6 +94,8 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS skin_type INTEGER NOT NULL DEFAU
 
 CREATE INDEX IF NOT EXISTS idx_characters_account_id ON characters(account_id);
 CREATE INDEX IF NOT EXISTS idx_characters_pvp_flag_until ON characters(pvp_flag_until) WHERE pvp_flag_until IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_characters_karma_recovery_due_at ON characters(karma_recovery_due_at) WHERE karma_recovery_due_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_characters_high_karma ON characters(karma DESC, karma_high_since ASC) WHERE karma > 0;
 
 CREATE TABLE IF NOT EXISTS pvp_combat_events (
   event_id TEXT PRIMARY KEY,
@@ -138,6 +142,22 @@ CREATE INDEX IF NOT EXISTS idx_pvp_combat_events_killer ON pvp_combat_events(kil
 CREATE INDEX IF NOT EXISTS idx_pvp_combat_events_repeated_pair ON pvp_combat_events(attacker_character_id, victim_character_id, created_at DESC) WHERE result IN ('pvp_kill', 'pk_kill');
 CREATE INDEX IF NOT EXISTS idx_pvp_combat_events_suspicious ON pvp_combat_events(created_at DESC) WHERE suspicious = TRUE;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pvp_combat_events_command_once ON pvp_combat_events(session_id, command_seq) WHERE session_id IS NOT NULL AND command_seq > 0;
+
+CREATE TABLE IF NOT EXISTS pvp_karma_events (
+  event_id TEXT PRIMARY KEY,
+  character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
+  account_id TEXT NULL REFERENCES accounts(account_id) ON DELETE SET NULL,
+  trigger TEXT NOT NULL,
+  karma_before INTEGER NOT NULL,
+  karma_after INTEGER NOT NULL,
+  karma_delta INTEGER NOT NULL,
+  recovered_amount INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pvp_karma_events_character ON pvp_karma_events(character_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pvp_karma_events_account ON pvp_karma_events(account_id, created_at DESC) WHERE account_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_pvp_karma_events_trigger ON pvp_karma_events(trigger, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS character_skill_cooldowns (
   character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,

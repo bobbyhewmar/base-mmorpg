@@ -174,6 +174,110 @@ func TestPostgresPvPCombatPersistsRepeatedKillSignal(t *testing.T) {
 	}
 }
 
+func TestMemoryKarmaRecoveryAppliesOnceAndPersistsRecoveryAudit(t *testing.T) {
+	store := newMemoryStore()
+	now := time.Now().UTC()
+	character := &Character{
+		ID:                 "char_karma_recovery_memory",
+		AccountID:          "acct_karma_recovery_memory",
+		Name:               "KarmaRecoveryMemory",
+		BaseClass:          "Fighter",
+		LastRegionID:       startingRegionID,
+		Karma:              60,
+		KarmaRecoveryDueAt: now.Add(-time.Second),
+		KarmaHighSince:     now.Add(-20 * time.Minute),
+	}
+	if err := store.Characters.Create(context.Background(), character); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := store.Characters.ApplyKarmaRecovery(context.Background(), character.ID, now, "tick")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commit.Event == nil || commit.State.Karma != 40 || commit.Event.RecoveredAmount != karmaRecoveryAmount {
+		t.Fatalf("unexpected recovery commit: %+v", commit)
+	}
+	replayed, err := store.Characters.ApplyKarmaRecovery(context.Background(), character.ID, now, "tick")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Event != nil || replayed.State.Karma != 40 {
+		t.Fatalf("duplicate recovery should be a no-op: %+v", replayed)
+	}
+	events, err := store.PvPCombatEvents.ListKarmaRecoveryEvents(context.Background(), PvPKarmaRecoveryEventQuery{CharacterID: character.ID})
+	if err != nil || len(events) != 1 || events[0].Trigger != "tick" {
+		t.Fatalf("unexpected recovery audit events: events=%+v err=%v", events, err)
+	}
+}
+
+func TestPostgresKarmaRecoveryPersistsAcrossReload(t *testing.T) {
+	env := newPersistenceTestEnv(t)
+	ctx := context.Background()
+	account := &Account{ID: "acct_pg_karma_recovery", Login: "acct_pg_karma_recovery@test", DisplayName: "PgKarmaRecovery", State: accountStateActive}
+	if err := env.store.Accounts.Create(ctx, account); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	character := &Character{
+		ID:                 "char_pg_karma_recovery",
+		AccountID:          account.ID,
+		Name:               "PgKarmaRecovery",
+		BaseClass:          "Fighter",
+		LastRegionID:       startingRegionID,
+		Karma:              40,
+		KarmaRecoveryDueAt: now.Add(-time.Second),
+		KarmaHighSince:     now.Add(-20 * time.Minute),
+	}
+	if err := env.store.Characters.Create(ctx, character); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := env.store.Characters.ApplyKarmaRecovery(ctx, character.ID, now, "attach")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commit.Event == nil || commit.State.Karma != 20 {
+		t.Fatalf("unexpected postgres recovery commit: %+v", commit)
+	}
+	loaded, err := env.store.Characters.GetByID(ctx, character.ID)
+	if err != nil || loaded.Karma != 20 || loaded.KarmaRecoveryDueAt.IsZero() {
+		t.Fatalf("postgres recovery was not persisted: character=%+v err=%v", loaded, err)
+	}
+	events, err := env.store.PvPCombatEvents.ListKarmaRecoveryEvents(ctx, PvPKarmaRecoveryEventQuery{CharacterID: character.ID})
+	if err != nil || len(events) != 1 || events[0].Trigger != "attach" {
+		t.Fatalf("unexpected postgres recovery audit events: events=%+v err=%v", events, err)
+	}
+}
+
+func TestMemoryPvPCombatAccountCorrelationQuery(t *testing.T) {
+	store := newMemoryStore()
+	now := time.Now().UTC()
+	attacker := &Character{ID: "char_account_corr_attacker", AccountID: "acct_account_corr_attacker", Name: "AccountCorrAttacker", BaseClass: "Fighter", LastRegionID: startingRegionID}
+	victim := &Character{ID: "char_account_corr_victim", AccountID: "acct_account_corr_victim", Name: "AccountCorrVictim", BaseClass: "Mage", LastRegionID: startingRegionID}
+	for _, character := range []*Character{attacker, victim} {
+		if err := store.Characters.Create(context.Background(), character); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index, eventID := range []string{"corr_first", "corr_second"} {
+		if err := store.Characters.UpdateProgression(context.Background(), victim.ID, 1, 0, 0, 1, 58); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Characters.ApplyPvPCombat(context.Background(), pvpStoreMutation(eventID, attacker, victim, 10, now.Add(time.Duration(index)*time.Second))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	correlations, err := store.PvPCombatEvents.ListAccountCorrelations(context.Background(), PvPAccountCorrelationQuery{
+		AccountID:            attacker.AccountID,
+		MinRepeatedKillCount: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(correlations) != 1 || correlations[0].AttackerAccountID != attacker.AccountID || correlations[0].VictimAccountID != victim.AccountID || correlations[0].SuspiciousCount != 1 || correlations[0].MaxRepeatedKillCount != 2 {
+		t.Fatalf("unexpected account correlation records: %+v", correlations)
+	}
+}
+
 func assertConcurrentPvPCombatSerialization(t *testing.T, firstStore *Store, secondStore *Store) {
 	t.Helper()
 	ctx := context.Background()

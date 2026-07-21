@@ -187,6 +187,14 @@ func (s *Server) processPvPCommand(ctx context.Context, session *Session, actor 
 	now = commit.Event.CreatedAt
 	attackerState := commit.Attacker
 	targetState := commit.Victim
+	s.recordPvPCombatAuditEvent(commit.Event)
+	for _, recoveryEvent := range commit.KarmaRecoveryEvents {
+		recoveryState := attackerState
+		if recoveryEvent.CharacterID == target.characterID {
+			recoveryState = targetState
+		}
+		s.recordPvPKarmaRecoveryEvent(recoveryEvent, recoveryState)
+	}
 	actor.currentCP = attackerState.CurrentCP
 	actor.currentHP = attackerState.CurrentHP
 	actor.currentMP = attackerState.CurrentMP
@@ -194,6 +202,7 @@ func (s *Server) processPvPCommand(ctx context.Context, session *Session, actor 
 	actor.pkCount = attackerState.PKCount
 	actor.karma = attackerState.Karma
 	actor.pvpFlagUntil = attackerState.PvPFlagUntil
+	actor.karmaRecoveryDueAt = attackerState.KarmaRecoveryDueAt
 	actor.pvpFlagPersistenceDirty = false
 	actor.targetID = target.characterID
 	if commit.CooldownID != "" {
@@ -212,6 +221,7 @@ func (s *Server) processPvPCommand(ctx context.Context, session *Session, actor 
 	target.pkCount = targetState.PKCount
 	target.karma = targetState.Karma
 	target.pvpFlagUntil = targetState.PvPFlagUntil
+	target.karmaRecoveryDueAt = targetState.KarmaRecoveryDueAt
 	target.pvpFlagPersistenceDirty = false
 	target.pvpStateDirty = true
 	if target.currentHP == 0 {

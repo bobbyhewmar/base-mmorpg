@@ -91,8 +91,8 @@ func (p *postgresStoreBackend) CreateCharacterWithItemSeed(ctx context.Context, 
 	characterState, _ := resourcePoolsForCharacter(character, items)
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO characters (character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, last_region_id, current_position_x, current_position_z, is_enterable)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+		`INSERT INTO characters (character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, karma_recovery_due_at, karma_high_since, last_region_id, current_position_x, current_position_z, is_enterable)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
 		characterState.ID,
 		characterState.AccountID,
 		characterState.Name,
@@ -111,6 +111,8 @@ func (p *postgresStoreBackend) CreateCharacterWithItemSeed(ctx context.Context, 
 		characterState.PKCount,
 		characterState.Karma,
 		nullableTimeValue(characterState.PvPFlagUntil),
+		nullableTimeValue(characterState.KarmaRecoveryDueAt),
+		nullableTimeValue(characterState.KarmaHighSince),
 		characterState.LastRegionID,
 		characterState.PositionX,
 		characterState.PositionZ,
@@ -469,7 +471,7 @@ func (p *postgresStoreBackend) UpdateGameplayCommandRecordOutcome(ctx context.Co
 func (p *postgresStoreBackend) ListByAccountID(ctx context.Context, accountID string) ([]Character, error) {
 	rows, err := p.db.QueryContext(
 		ctx,
-		`SELECT character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, last_region_id, current_position_x, current_position_z, is_enterable
+		`SELECT character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, karma_recovery_due_at, karma_high_since, last_region_id, current_position_x, current_position_z, is_enterable
 		 FROM characters
 		 WHERE account_id = $1
 		 ORDER BY name, character_id`,
@@ -484,6 +486,8 @@ func (p *postgresStoreBackend) ListByAccountID(ctx context.Context, accountID st
 	for rows.Next() {
 		var character Character
 		var pvpFlagUntil sql.NullTime
+		var karmaRecoveryDueAt sql.NullTime
+		var karmaHighSince sql.NullTime
 		if err := rows.Scan(
 			&character.ID,
 			&character.AccountID,
@@ -503,6 +507,8 @@ func (p *postgresStoreBackend) ListByAccountID(ctx context.Context, accountID st
 			&character.PKCount,
 			&character.Karma,
 			&pvpFlagUntil,
+			&karmaRecoveryDueAt,
+			&karmaHighSince,
 			&character.LastRegionID,
 			&character.PositionX,
 			&character.PositionZ,
@@ -512,6 +518,12 @@ func (p *postgresStoreBackend) ListByAccountID(ctx context.Context, accountID st
 		}
 		if pvpFlagUntil.Valid {
 			character.PvPFlagUntil = pvpFlagUntil.Time.UTC()
+		}
+		if karmaRecoveryDueAt.Valid {
+			character.KarmaRecoveryDueAt = karmaRecoveryDueAt.Time.UTC()
+		}
+		if karmaHighSince.Valid {
+			character.KarmaHighSince = karmaHighSince.Time.UTC()
 		}
 		characters = append(characters, character)
 	}
@@ -530,13 +542,15 @@ func (p *postgresStoreBackend) CountByAccountID(ctx context.Context, accountID s
 func (p *postgresStoreBackend) GetByIDCharacter(ctx context.Context, characterID string) (*Character, error) {
 	row := p.db.QueryRowContext(
 		ctx,
-		`SELECT character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, last_region_id, current_position_x, current_position_z, is_enterable
+		`SELECT character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, karma_recovery_due_at, karma_high_since, last_region_id, current_position_x, current_position_z, is_enterable
 		 FROM characters
 		 WHERE character_id = $1`,
 		characterID,
 	)
 	var character Character
 	var pvpFlagUntil sql.NullTime
+	var karmaRecoveryDueAt sql.NullTime
+	var karmaHighSince sql.NullTime
 	if err := row.Scan(
 		&character.ID,
 		&character.AccountID,
@@ -556,6 +570,8 @@ func (p *postgresStoreBackend) GetByIDCharacter(ctx context.Context, characterID
 		&character.PKCount,
 		&character.Karma,
 		&pvpFlagUntil,
+		&karmaRecoveryDueAt,
+		&karmaHighSince,
 		&character.LastRegionID,
 		&character.PositionX,
 		&character.PositionZ,
@@ -568,6 +584,12 @@ func (p *postgresStoreBackend) GetByIDCharacter(ctx context.Context, characterID
 	}
 	if pvpFlagUntil.Valid {
 		character.PvPFlagUntil = pvpFlagUntil.Time.UTC()
+	}
+	if karmaRecoveryDueAt.Valid {
+		character.KarmaRecoveryDueAt = karmaRecoveryDueAt.Time.UTC()
+	}
+	if karmaHighSince.Valid {
+		character.KarmaHighSince = karmaHighSince.Time.UTC()
 	}
 	return &character, nil
 }
@@ -594,8 +616,8 @@ func (p *postgresStoreBackend) CreateCharacter(ctx context.Context, character *C
 	characterState, _ := resourcePoolsForCharacter(character, nil)
 	_, err := p.db.ExecContext(
 		ctx,
-		`INSERT INTO characters (character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, last_region_id, current_position_x, current_position_z, is_enterable)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+		`INSERT INTO characters (character_id, account_id, name, race, base_class, sex, hair_style, hair_color, skin_type, level, xp, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, karma_recovery_due_at, karma_high_since, last_region_id, current_position_x, current_position_z, is_enterable)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
 		characterState.ID,
 		characterState.AccountID,
 		characterState.Name,
@@ -614,6 +636,8 @@ func (p *postgresStoreBackend) CreateCharacter(ctx context.Context, character *C
 		characterState.PKCount,
 		characterState.Karma,
 		nullableTimeValue(characterState.PvPFlagUntil),
+		nullableTimeValue(characterState.KarmaRecoveryDueAt),
+		nullableTimeValue(characterState.KarmaHighSince),
 		characterState.LastRegionID,
 		characterState.PositionX,
 		characterState.PositionZ,
@@ -703,6 +727,136 @@ func (p *postgresStoreBackend) UpdateCharacterPvPFlagUntil(ctx context.Context, 
 	return nil
 }
 
+func (p *postgresStoreBackend) ApplyCharacterKarmaRecovery(ctx context.Context, characterID string, now time.Time, trigger string) (*CharacterKarmaRecoveryCommit, error) {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var character Character
+	var flagUntil sql.NullTime
+	var karmaRecoveryDueAt sql.NullTime
+	var karmaHighSince sql.NullTime
+	err = tx.QueryRowContext(
+		ctx,
+		`SELECT character_id, account_id, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, karma_recovery_due_at, karma_high_since
+		 FROM characters
+		 WHERE character_id = $1
+		 FOR UPDATE`,
+		characterID,
+	).Scan(
+		&character.ID,
+		&character.AccountID,
+		&character.CurrentCP,
+		&character.CurrentHP,
+		&character.CurrentMP,
+		&character.PvPKills,
+		&character.PKCount,
+		&character.Karma,
+		&flagUntil,
+		&karmaRecoveryDueAt,
+		&karmaHighSince,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errRecordNotFound
+		}
+		return nil, err
+	}
+	if flagUntil.Valid {
+		character.PvPFlagUntil = flagUntil.Time.UTC()
+	}
+	if karmaRecoveryDueAt.Valid {
+		character.KarmaRecoveryDueAt = karmaRecoveryDueAt.Time.UTC()
+	}
+	if karmaHighSince.Valid {
+		character.KarmaHighSince = karmaHighSince.Time.UTC()
+	}
+	if now.IsZero() {
+		if err := tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+			return nil, err
+		}
+	}
+	now = now.UTC()
+	recoveredCharacter, recoveryEvent := applyKarmaRecovery(character, now, trigger)
+	state := characterPvPCombatStateFromCharacter(recoveredCharacter)
+	if _, err := tx.ExecContext(
+		ctx,
+		`UPDATE characters
+		 SET karma = $2,
+		     karma_recovery_due_at = $3,
+		     karma_high_since = $4,
+		     updated_at = NOW()
+		 WHERE character_id = $1`,
+		characterID,
+		max(0, state.Karma),
+		nullableTimeValue(state.KarmaRecoveryDueAt),
+		nullableTimeValue(state.KarmaHighSince),
+	); err != nil {
+		return nil, err
+	}
+	if recoveryEvent != nil {
+		if err := insertPvPKarmaRecoveryEvent(ctx, tx, *recoveryEvent); err != nil {
+			return nil, mapPostgresError(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &CharacterKarmaRecoveryCommit{State: state, Event: recoveryEvent}, nil
+}
+
+func (p *postgresStoreBackend) ListHighKarmaCharacters(ctx context.Context, query PvPHighKarmaQuery) ([]PvPHighKarmaRecord, error) {
+	observedAt := query.ObservedAt.UTC()
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	minimumKarma := max(1, query.MinimumKarma)
+	limit, offset := normalizeAuditPagination(query.Limit, query.Offset)
+	rows, err := p.db.QueryContext(
+		ctx,
+		`SELECT character_id, account_id, karma, pk_count, pvp_kills, karma_recovery_due_at, karma_high_since
+		 FROM characters
+		 WHERE karma >= $1
+		   AND ($2 = '' OR character_id = $2)
+		   AND ($3 = '' OR account_id = $3)
+		   AND ($4 = FALSE OR (karma >= $5 AND karma_high_since IS NOT NULL AND karma_high_since <= $6))
+		 ORDER BY karma DESC, COALESCE(karma_high_since, 'infinity'::timestamptz) ASC, character_id ASC
+		 LIMIT $7 OFFSET $8`,
+		minimumKarma,
+		query.CharacterID,
+		query.AccountID,
+		query.PersistentOnly,
+		highKarmaThreshold,
+		observedAt.Add(-highKarmaWindow),
+		limit,
+		offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]PvPHighKarmaRecord, 0)
+	for rows.Next() {
+		var record PvPHighKarmaRecord
+		var dueAt sql.NullTime
+		var highSince sql.NullTime
+		if err := rows.Scan(&record.CharacterID, &record.AccountID, &record.Karma, &record.PKCount, &record.PvPKills, &dueAt, &highSince); err != nil {
+			return nil, err
+		}
+		if dueAt.Valid {
+			record.KarmaRecoveryDueAt = dueAt.Time.UTC()
+		}
+		if highSince.Valid {
+			record.KarmaHighSince = highSince.Time.UTC()
+		}
+		record.PersistentHighKarma = record.Karma >= highKarmaThreshold && !record.KarmaHighSince.IsZero() && !record.KarmaHighSince.After(observedAt.Add(-highKarmaWindow))
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
 func (p *postgresStoreBackend) ApplyCharacterPvPCombat(ctx context.Context, mutation PvPCombatMutation) (*PvPCombatCommit, error) {
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -712,7 +866,7 @@ func (p *postgresStoreBackend) ApplyCharacterPvPCombat(ctx context.Context, muta
 
 	rows, err := tx.QueryContext(
 		ctx,
-		`SELECT character_id, account_id, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until
+		`SELECT character_id, account_id, current_cp, current_hp, current_mp, pvp_kills, pk_count, karma, pvp_flag_until, karma_recovery_due_at, karma_high_since
 		 FROM characters
 		 WHERE character_id IN ($1, $2)
 		 ORDER BY character_id
@@ -727,6 +881,8 @@ func (p *postgresStoreBackend) ApplyCharacterPvPCombat(ctx context.Context, muta
 	for rows.Next() {
 		var character Character
 		var flagUntil sql.NullTime
+		var karmaRecoveryDueAt sql.NullTime
+		var karmaHighSince sql.NullTime
 		if err := rows.Scan(
 			&character.ID,
 			&character.AccountID,
@@ -737,12 +893,20 @@ func (p *postgresStoreBackend) ApplyCharacterPvPCombat(ctx context.Context, muta
 			&character.PKCount,
 			&character.Karma,
 			&flagUntil,
+			&karmaRecoveryDueAt,
+			&karmaHighSince,
 		); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		if flagUntil.Valid {
 			character.PvPFlagUntil = flagUntil.Time.UTC()
+		}
+		if karmaRecoveryDueAt.Valid {
+			character.KarmaRecoveryDueAt = karmaRecoveryDueAt.Time.UTC()
+		}
+		if karmaHighSince.Valid {
+			character.KarmaHighSince = karmaHighSince.Time.UTC()
 		}
 		lockedCharacters[character.ID] = character
 	}
@@ -819,6 +983,8 @@ func (p *postgresStoreBackend) ApplyCharacterPvPCombat(ctx context.Context, muta
 			     pk_count = $6,
 			     karma = $7,
 			     pvp_flag_until = $8,
+			     karma_recovery_due_at = $9,
+			     karma_high_since = $10,
 			     updated_at = NOW()
 			 WHERE character_id = $1`,
 			state.CharacterID,
@@ -829,6 +995,8 @@ func (p *postgresStoreBackend) ApplyCharacterPvPCombat(ctx context.Context, muta
 			max(0, state.PKCount),
 			max(0, state.Karma),
 			nullableTimeValue(state.PvPFlagUntil),
+			nullableTimeValue(state.KarmaRecoveryDueAt),
+			nullableTimeValue(state.KarmaHighSince),
 		)
 		if err != nil {
 			return err
@@ -870,6 +1038,11 @@ func (p *postgresStoreBackend) ApplyCharacterPvPCombat(ctx context.Context, muta
 	}
 	if err := insertPvPCombatEvent(ctx, tx, commit.Event); err != nil {
 		return nil, mapPostgresError(err)
+	}
+	for _, recoveryEvent := range commit.KarmaRecoveryEvents {
+		if err := insertPvPKarmaRecoveryEvent(ctx, tx, recoveryEvent); err != nil {
+			return nil, mapPostgresError(err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -1145,6 +1318,29 @@ func (p *postgresStoreBackend) UpsertCharacterQuestByCharacterID(ctx context.Con
 		normalized.QuestID,
 		string(normalized.Status),
 		normalized.Progress,
+	)
+	return mapPostgresError(err)
+}
+
+func insertPvPKarmaRecoveryEvent(ctx context.Context, executor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, event PvPKarmaRecoveryEvent) error {
+	_, err := executor.ExecContext(
+		ctx,
+		`INSERT INTO pvp_karma_events (
+		   event_id, character_id, account_id, trigger, karma_before, karma_after, karma_delta, recovered_amount, created_at
+		 ) VALUES (
+		   $1, $2, NULLIF($3, ''), $4, $5, $6, $7, $8, $9
+		 )`,
+		event.ID,
+		event.CharacterID,
+		event.AccountID,
+		event.Trigger,
+		event.KarmaBefore,
+		event.KarmaAfter,
+		event.KarmaDelta,
+		event.RecoveredAmount,
+		event.CreatedAt.UTC(),
 	)
 	return mapPostgresError(err)
 }
@@ -4102,6 +4298,14 @@ func (repo postgresCharacterRepo) UpdatePvPFlagUntil(ctx context.Context, charac
 	return repo.backend.UpdateCharacterPvPFlagUntil(ctx, characterID, flagUntil)
 }
 
+func (repo postgresCharacterRepo) ApplyKarmaRecovery(ctx context.Context, characterID string, now time.Time, trigger string) (*CharacterKarmaRecoveryCommit, error) {
+	return repo.backend.ApplyCharacterKarmaRecovery(ctx, characterID, now, trigger)
+}
+
+func (repo postgresCharacterRepo) ListHighKarma(ctx context.Context, query PvPHighKarmaQuery) ([]PvPHighKarmaRecord, error) {
+	return repo.backend.ListHighKarmaCharacters(ctx, query)
+}
+
 func (repo postgresCharacterRepo) ApplyPvPCombat(ctx context.Context, mutation PvPCombatMutation) (*PvPCombatCommit, error) {
 	return repo.backend.ApplyCharacterPvPCombat(ctx, mutation)
 }
@@ -4259,7 +4463,9 @@ func (repo postgresPvPCombatEventRepo) ListByFilter(ctx context.Context, query P
 		conditions = append(conditions, fmt.Sprintf("%s = $%d", column, len(args)))
 	}
 	addCondition("attacker_character_id", query.AttackerCharacterID)
+	addCondition("attacker_account_id", query.AttackerAccountID)
 	addCondition("victim_character_id", query.VictimCharacterID)
+	addCondition("victim_account_id", query.VictimAccountID)
 	addCondition("killer_character_id", query.KillerCharacterID)
 	if query.InvolvedCharacterID != "" {
 		args = append(args, query.InvolvedCharacterID)
@@ -4335,6 +4541,109 @@ func (repo postgresPvPCombatEventRepo) ListByFilter(ctx context.Context, query P
 		}
 		if record.AssistCharacterIDs == nil {
 			record.AssistCharacterIDs = []string{}
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (repo postgresPvPCombatEventRepo) ListAccountCorrelations(ctx context.Context, query PvPAccountCorrelationQuery) ([]PvPAccountCorrelationRecord, error) {
+	baseQuery := strings.Builder{}
+	baseQuery.WriteString(
+		`SELECT COALESCE(attacker_account_id, ''), COALESCE(victim_account_id, ''), COUNT(*) AS kill_count,
+		        SUM(CASE WHEN suspicious THEN 1 ELSE 0 END) AS suspicious_count,
+		        MAX(repeated_kill_count) AS max_repeated_kill_count,
+		        MAX(created_at) AS last_occurred_at
+		 FROM pvp_combat_events`,
+	)
+	conditions := make([]string, 0, 6)
+	args := make([]any, 0, 8)
+	if query.AccountID != "" {
+		args = append(args, query.AccountID)
+		conditions = append(conditions, fmt.Sprintf("(attacker_account_id = $%d OR victim_account_id = $%d)", len(args), len(args)))
+	}
+	if query.SuspiciousOnly != nil && *query.SuspiciousOnly {
+		conditions = append(conditions, "suspicious = TRUE")
+	}
+	if query.MinRepeatedKillCount > 0 {
+		args = append(args, query.MinRepeatedKillCount)
+		conditions = append(conditions, fmt.Sprintf("repeated_kill_count >= $%d", len(args)))
+	}
+	if query.OccurredAfter != nil {
+		args = append(args, *query.OccurredAfter)
+		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", len(args)))
+	}
+	if query.OccurredBefore != nil {
+		args = append(args, *query.OccurredBefore)
+		conditions = append(conditions, fmt.Sprintf("created_at <= $%d", len(args)))
+	}
+	if len(conditions) > 0 {
+		baseQuery.WriteString(" WHERE ")
+		baseQuery.WriteString(strings.Join(conditions, " AND "))
+	}
+	query.Limit, query.Offset = normalizeAuditPagination(query.Limit, query.Offset)
+	args = append(args, query.Limit, query.Offset)
+	baseQuery.WriteString(fmt.Sprintf(" GROUP BY attacker_account_id, victim_account_id ORDER BY suspicious_count DESC, kill_count DESC, last_occurred_at DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args)))
+	rows, err := repo.backend.db.QueryContext(ctx, baseQuery.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]PvPAccountCorrelationRecord, 0)
+	for rows.Next() {
+		var record PvPAccountCorrelationRecord
+		if err := rows.Scan(&record.AttackerAccountID, &record.VictimAccountID, &record.KillCount, &record.SuspiciousCount, &record.MaxRepeatedKillCount, &record.LastOccurredAt); err != nil {
+			return nil, err
+		}
+		record.SameAccount = record.AttackerAccountID != "" && record.AttackerAccountID == record.VictimAccountID
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (repo postgresPvPCombatEventRepo) ListKarmaRecoveryEvents(ctx context.Context, query PvPKarmaRecoveryEventQuery) ([]PvPKarmaRecoveryEvent, error) {
+	baseQuery := strings.Builder{}
+	baseQuery.WriteString(
+		`SELECT event_id, character_id, COALESCE(account_id, ''), trigger, karma_before, karma_after, karma_delta, recovered_amount, created_at
+		 FROM pvp_karma_events`,
+	)
+	conditions := make([]string, 0, 5)
+	args := make([]any, 0, 7)
+	addCondition := func(column string, value string) {
+		if value == "" {
+			return
+		}
+		args = append(args, value)
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	addCondition("character_id", query.CharacterID)
+	addCondition("account_id", query.AccountID)
+	addCondition("trigger", query.Trigger)
+	if query.OccurredAfter != nil {
+		args = append(args, *query.OccurredAfter)
+		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", len(args)))
+	}
+	if query.OccurredBefore != nil {
+		args = append(args, *query.OccurredBefore)
+		conditions = append(conditions, fmt.Sprintf("created_at <= $%d", len(args)))
+	}
+	if len(conditions) > 0 {
+		baseQuery.WriteString(" WHERE ")
+		baseQuery.WriteString(strings.Join(conditions, " AND "))
+	}
+	query.Limit, query.Offset = normalizeAuditPagination(query.Limit, query.Offset)
+	args = append(args, query.Limit, query.Offset)
+	baseQuery.WriteString(fmt.Sprintf(" ORDER BY created_at DESC, event_id DESC LIMIT $%d OFFSET $%d", len(args)-1, len(args)))
+	rows, err := repo.backend.db.QueryContext(ctx, baseQuery.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]PvPKarmaRecoveryEvent, 0)
+	for rows.Next() {
+		var record PvPKarmaRecoveryEvent
+		if err := rows.Scan(&record.ID, &record.CharacterID, &record.AccountID, &record.Trigger, &record.KarmaBefore, &record.KarmaAfter, &record.KarmaDelta, &record.RecoveredAmount, &record.CreatedAt); err != nil {
+			return nil, err
 		}
 		records = append(records, record)
 	}

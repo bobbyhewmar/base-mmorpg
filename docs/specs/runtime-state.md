@@ -74,6 +74,8 @@ The following data is durable and authoritative in PostgreSQL:
 - durable PK count
 - durable non-negative karma
 - durable PvP exposure deadline as an absolute timestamp
+- durable `karma_recovery_due_at`
+- durable `karma_high_since`
 - durable position checkpoints
 - durable region checkpoints
 - versioned region geodata or static terrain content when persisted by the content pipeline
@@ -85,6 +87,7 @@ The following data is durable and authoritative in PostgreSQL:
 - minimum durable chat history and chat-command audit metadata
 - durable player-combat audit events with command correlation
 - durable player-combat killer/assist attribution and repeated-pair investigation signals
+- durable PvP karma-recovery audit events
 - inventory state
 - equipment slot occupancy
 - durable session records
@@ -99,9 +102,9 @@ The multi-instance session foundation persists one `gameplay_session_ownerships`
 
 The minimum fanout foundation persists one exact-instance delivery intent per row in `gameplay_event_outbox`. Command-correlated production commits with the command outcome when applicable, and command-driven party/clan mutations share that transaction. `gameplay_event_receipts` persists recipient-scoped delivery/consume truth so a completed event remains idempotent across consumer restart. Regional player snapshots/deltas also use exact-recipient rows and receipts, while source fence/version and TTL stay runtime ordering/presentation state. Their publisher is independent from the delivery dispatcher and uses bounded latest-per-source coalescing under queue pressure. Claim, retry, delivery, dead-letter, receipt, and retention state are durable; the worker loop, projection queue, coalescing buffer, volatile projection entities, and bounded live-event dedup set are runtime projections. This is an outbox, not event sourcing or frame-level presence persistence.
 
-The hardened PvP/PK slice persists `pvp_kills`, `pk_count`, `karma`, and `pvp_flag_until` on `characters`. The flag deadline is absolute: attach/world-enter restore it only when it is still in the future, while server-time expiry clears the durable value before publishing the expiry transition. A player-combat hit locks both durable character rows in deterministic order and computes the resource transition from that locked truth. The same transaction commits attacker/victim combat resources, both flag deadlines, classification counters, attacker cooldown, lethal victim cooldown cleanup, attribution/anti-feed fields, and one `pvp_combat_events` row before success is published.
+The hardened PvP/PK slice persists `pvp_kills`, `pk_count`, `karma`, `pvp_flag_until`, `karma_recovery_due_at`, and `karma_high_since` on `characters`. The flag deadline is absolute: attach/world-enter restore it only when it is still in the future, while server-time expiry clears the durable value before publishing the expiry transition. Positive karma also carries a durable recovery schedule owned by the backend: while the character is not PvP-flagged, the next due instant allows one 20-point recovery step every 5 minutes and advances or clears the schedule deterministically. A player-combat hit locks both durable character rows in deterministic order and computes the resource transition from that locked truth. The same transaction commits attacker/victim combat resources, both flag deadlines, classification counters, attacker cooldown, lethal victim cooldown cleanup, attribution/anti-feed fields, any due karma-recovery steps, and one `pvp_combat_events` row before success is published.
 
-The audit ledger is also the minimum durable recent-attacker source. Kill attribution uses applied hits from the previous 30 seconds but stops at the victim's prior death event. Repeated attacker/victim kills in 10 minutes are marked for investigation without changing gameplay. These investigation fields are not runtime authority and are never authored by the browser.
+The audit ledger is also the minimum durable recent-attacker source. Kill attribution uses applied hits from the previous 30 seconds but stops at the victim's prior death event. Repeated attacker/victim kills in 10 minutes are marked for investigation without changing gameplay. Recovery steps additionally persist in `pvp_karma_events`, and operational correlation remains account-first until a safe durable device/session fingerprint exists. These investigation fields are not runtime authority and are never authored by the browser.
 
 The current implementation persists the first pet or mount slice in `character_pets` keyed by `pet_instance_id`, with `character_id`, `pet_template_id`, summon state, mount state, and timestamps.
 
@@ -135,13 +138,15 @@ The current implementation persists the first chat slice in `chat_messages`, key
 - recoverable character progression
 - recoverable PvP kill count, PK count, and karma
 - recoverable PvP exposure deadline
+- recoverable karma-recovery schedule and high-karma investigation marker
 - recoverable inventory and equipment state
 - recoverable pet ownership plus summon or mount state
 - recoverable party roster plus pending invites
 - recoverable clan roster plus pending invites
 - recoverable minimum chat history for audit and investigation flows
 - recoverable PvP/PK combat audit history for investigation flows
-- recoverable kill attribution and suspicious repeated-pair signals derived inside the combat transaction
+- recoverable PvP karma-recovery audit history for investigation flows
+- recoverable kill attribution and suspicious repeated-pair plus account-correlation signals derived inside the combat transaction
 
 For the minimum PvP/PK slice, the browser receives `pvp_flagged`, `pvp_flag_until_ms`, `pvp_kills`, `pk_count`, and `karma` only through authoritative snapshot or delta projection. Local target selection and local timers may format that state for presentation, but they never infer hostility, legality, or future flag transitions.
 - recoverable cooldown end timestamps

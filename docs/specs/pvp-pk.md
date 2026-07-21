@@ -75,7 +75,12 @@ Attacking an otherwise eligible unflagged player is allowed. The risk is classif
 - `pvp_kills`, `pk_count`, and `karma` are durable non-negative character fields
 - killing a victim whose PvP flag is active or whose karma is positive increments `pvp_kills`
 - killing an unflagged victim with zero karma increments `pk_count` and adds 100 karma
-- this slice has no karma decay, karma-reduction quest, item drop penalty, XP loss, jail, bounty, ranking, or economy penalty
+- positive karma schedules deterministic backend-owned recovery through `karma_recovery_due_at`
+- recovery is paused while the character is PvP-flagged and resumes only after the next due instant outside the flag window
+- each applied recovery step reduces karma by 20 every 5 minutes until karma reaches zero, clearing the schedule at zero
+- recovery may be applied on attach, on the authoritative tick, or before a new combat mutation; identical replay of the same command must not duplicate a recovery step
+- `karma_high_since` tracks when the character entered the high-karma investigation threshold so operations can distinguish transient PK state from persistent offenders
+- this slice has no karma-reduction quest, item drop penalty, XP loss, jail, bounty, ranking, or economy penalty
 
 The current minimum slice deliberately keeps one server-owned PvP exposure deadline only. It does not implement dual timers, blinking phases, or client-authored exposure transitions.
 
@@ -93,7 +98,7 @@ The handler projects the committed state back into the two locked runtime actors
 
 Durable command reservation still precedes domain application. The audit table additionally enforces at most one event for a non-empty `session_id + command_seq`, so an identical replay cannot duplicate damage or audit even across process boundaries; a conflicting replay remains `sequence.conflicting_replay`.
 
-Each audit row records attacker and victim character/account identity, action and optional skill, applied CP and HP damage, hit/PvP-kill/PK-kill result, exposure state before and after, PvP-kill/PK-count before and after, karma before/after/delta, timestamp, command metadata, primary killer, assist character ids, suspicious state, and repeated-kill count. `GET /internal/pvp/events` is read-only, paginated, disabled by default, and protected by the same `X-Internal-Audit-Token` contract used by the existing internal audit surface. It supports attacker, victim, involved character, killer, suspicious, action/action-type, result, time-window, limit, and offset filters.
+Each combat audit row records attacker and victim character/account identity, action and optional skill, applied CP and HP damage, hit/PvP-kill/PK-kill result, exposure state before and after, PvP-kill/PK-count before and after, karma before/after/delta, timestamp, command metadata, primary killer, assist character ids, suspicious state, and repeated-kill count. Recovery steps persist separately in `pvp_karma_events` with character/account identity, trigger, karma before/after, delta, recovered amount, and timestamp so the operational audit trail stays distinct from gameplay truth. `GET /internal/pvp/events`, `GET /internal/pvp/recovery`, `GET /internal/pvp/correlations`, and `GET /internal/pvp/high-karma` are read-only, paginated, disabled by default, and protected by the same `X-Internal-Audit-Token` contract used by the existing internal audit surface.
 
 The actor receives a correlated delta with their authoritative resources, cooldown, target, flag, counters, and a target entity patch. The victim receives their self delta through the authoritative runtime tick, and other sessions receive the updated player presence. The browser only projects these snapshots and deltas.
 
@@ -108,6 +113,9 @@ The HUD may present a compact self-state indicator derived from `pvp_flagged`, `
 - on every kill, the backend counts prior kills by the same killer/victim pair during the preceding 10 minutes
 - `repeated_kill_count` includes the current kill; the first is `1`, and the second or later is marked `suspicious=true`
 - suspicious events do not reject commands, change damage, change classification, or grant/remove rewards in this slice
+- account-first correlation aggregates suspicious or repeated killer/victim pairs by attacker and victim account ids through the read-only investigation surface
+- if attacker and victim share the same account id, the signal is raised as a stronger operational warning, but gameplay still follows the same authoritative combat outcome
+- device/session correlation is intentionally unavailable in this slice because the current repository has no safe durable fingerprint; the investigation surface must report that limitation explicitly instead of inventing a weak identifier
 - no client field can nominate killer, assists, repeated count, or suspicious state
 
 These windows are project-owned investigation constants, not balance or reward promises.
@@ -142,5 +150,5 @@ These windows are project-owned investigation constants, not balance or reward p
 - automatic player chase and repeated auto-attack
 - pets, summons, contribution weighting, party-based attribution, and non-player damage-source attribution
 - clan war, alliance war, duel, siege, olympiad, events, and competitive matchmaking
-- karma decay and complex economic or death penalties
-- PvP rewards, leaderboards, anti-feed blocking/scoring, account/device correlation, alert automation, and complete anti-grief enforcement
+- richer karma-reduction policies, quests, or economy/death penalties beyond the fixed 20-per-5-minute recovery schedule
+- PvP rewards, leaderboards, anti-feed blocking/scoring, safe device correlation, alert automation beyond the current operational counters/logs, and complete anti-grief enforcement

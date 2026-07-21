@@ -141,7 +141,9 @@ func (s *Server) handleInternalPvPEvents(w http.ResponseWriter, r *http.Request)
 	}
 	events, err := s.store.PvPCombatEvents.ListByFilter(r.Context(), PvPCombatEventQuery{
 		AttackerCharacterID: strings.TrimSpace(r.URL.Query().Get("attacker_character_id")),
+		AttackerAccountID:   strings.TrimSpace(r.URL.Query().Get("attacker_account_id")),
 		VictimCharacterID:   strings.TrimSpace(r.URL.Query().Get("victim_character_id")),
+		VictimAccountID:     strings.TrimSpace(r.URL.Query().Get("victim_account_id")),
 		KillerCharacterID:   strings.TrimSpace(r.URL.Query().Get("killer_character_id")),
 		InvolvedCharacterID: strings.TrimSpace(r.URL.Query().Get("character_id")),
 		ActionType:          actionType,
@@ -159,7 +161,9 @@ func (s *Server) handleInternalPvPEvents(w http.ResponseWriter, r *http.Request)
 	}
 	filters := map[string]any{
 		"attacker_character_id": strings.TrimSpace(r.URL.Query().Get("attacker_character_id")),
+		"attacker_account_id":   strings.TrimSpace(r.URL.Query().Get("attacker_account_id")),
 		"victim_character_id":   strings.TrimSpace(r.URL.Query().Get("victim_character_id")),
+		"victim_account_id":     strings.TrimSpace(r.URL.Query().Get("victim_account_id")),
 		"killer_character_id":   strings.TrimSpace(r.URL.Query().Get("killer_character_id")),
 		"character_id":          strings.TrimSpace(r.URL.Query().Get("character_id")),
 		"action":                actionType,
@@ -179,6 +183,155 @@ func (s *Server) handleInternalPvPEvents(w http.ResponseWriter, r *http.Request)
 		"limit":   limit,
 		"offset":  offset,
 		"filters": filters,
+	})
+}
+
+func (s *Server) handleInternalPvPKarmaRecoveryEvents(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuditAccess(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "protocol.method_not_allowed", "Method not allowed.")
+		return
+	}
+	if s.store == nil || s.store.PvPCombatEvents == nil {
+		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "PvP recovery repository is unavailable.")
+		return
+	}
+	limit, offset, from, to, ok := parseInternalAuditQuery(w, r)
+	if !ok {
+		return
+	}
+	events, err := s.store.PvPCombatEvents.ListKarmaRecoveryEvents(r.Context(), PvPKarmaRecoveryEventQuery{
+		CharacterID:    strings.TrimSpace(r.URL.Query().Get("character_id")),
+		AccountID:      strings.TrimSpace(r.URL.Query().Get("account_id")),
+		Trigger:        strings.TrimSpace(r.URL.Query().Get("trigger")),
+		OccurredAfter:  from,
+		OccurredBefore: to,
+		Limit:          limit,
+		Offset:         offset,
+	})
+	if err != nil {
+		s.recordStoreError("pvp_recovery.list", err)
+		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "Unable to query PvP karma recovery events.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"events": events,
+		"limit":  limit,
+		"offset": offset,
+		"filters": map[string]any{
+			"character_id": strings.TrimSpace(r.URL.Query().Get("character_id")),
+			"account_id":   strings.TrimSpace(r.URL.Query().Get("account_id")),
+			"trigger":      strings.TrimSpace(r.URL.Query().Get("trigger")),
+			"from":         optionalAuditFilterTime(from),
+			"to":           optionalAuditFilterTime(to),
+		},
+	})
+}
+
+func (s *Server) handleInternalPvPCorrelations(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuditAccess(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "protocol.method_not_allowed", "Method not allowed.")
+		return
+	}
+	if s.store == nil || s.store.PvPCombatEvents == nil {
+		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "PvP correlation repository is unavailable.")
+		return
+	}
+	limit, offset, from, to, ok := parseInternalAuditQuery(w, r)
+	if !ok {
+		return
+	}
+	suspiciousOnly, ok := parseOptionalBoolQuery(w, r, "suspicious")
+	if !ok {
+		return
+	}
+	minRepeatedKillCount, ok := parseOptionalIntQuery(w, r, "min_repeated_kill_count")
+	if !ok {
+		return
+	}
+	records, err := s.store.PvPCombatEvents.ListAccountCorrelations(r.Context(), PvPAccountCorrelationQuery{
+		AccountID:            strings.TrimSpace(r.URL.Query().Get("account_id")),
+		SuspiciousOnly:       suspiciousOnly,
+		MinRepeatedKillCount: max(0, minRepeatedKillCount),
+		OccurredAfter:        from,
+		OccurredBefore:       to,
+		Limit:                limit,
+		Offset:               offset,
+	})
+	if err != nil {
+		s.recordStoreError("pvp_correlation.list", err)
+		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "Unable to query PvP account correlations.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"correlations": records,
+		"limit":        limit,
+		"offset":       offset,
+		"filters": map[string]any{
+			"account_id":              strings.TrimSpace(r.URL.Query().Get("account_id")),
+			"min_repeated_kill_count": max(0, minRepeatedKillCount),
+			"suspicious":              optionalAuditFilterBool(suspiciousOnly),
+			"from":                    optionalAuditFilterTime(from),
+			"to":                      optionalAuditFilterTime(to),
+			"device_correlation":      "unavailable",
+		},
+	})
+}
+
+func (s *Server) handleInternalPvPHighKarma(w http.ResponseWriter, r *http.Request) {
+	if !s.requireInternalAuditAccess(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "protocol.method_not_allowed", "Method not allowed.")
+		return
+	}
+	if s.store == nil || s.store.Characters == nil {
+		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "PvP high-karma repository is unavailable.")
+		return
+	}
+	limit, offset, _, _, ok := parseInternalAuditQuery(w, r)
+	if !ok {
+		return
+	}
+	persistentOnly, ok := parseOptionalBoolQuery(w, r, "persistent")
+	if !ok {
+		return
+	}
+	minimumKarma, ok := parseOptionalIntQuery(w, r, "minimum_karma")
+	if !ok {
+		return
+	}
+	persistent := persistentOnly != nil && *persistentOnly
+	records, err := s.store.Characters.ListHighKarma(r.Context(), PvPHighKarmaQuery{
+		CharacterID:    strings.TrimSpace(r.URL.Query().Get("character_id")),
+		AccountID:      strings.TrimSpace(r.URL.Query().Get("account_id")),
+		MinimumKarma:   max(1, minimumKarma),
+		PersistentOnly: persistent,
+		ObservedAt:     time.Now().UTC(),
+		Limit:          limit,
+		Offset:         offset,
+	})
+	if err != nil {
+		s.recordStoreError("pvp_high_karma.list", err)
+		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "Unable to query PvP high-karma characters.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"characters": records,
+		"limit":      limit,
+		"offset":     offset,
+		"filters": map[string]any{
+			"character_id":  strings.TrimSpace(r.URL.Query().Get("character_id")),
+			"account_id":    strings.TrimSpace(r.URL.Query().Get("account_id")),
+			"minimum_karma": max(1, minimumKarma),
+			"persistent":    persistent,
+		},
 	})
 }
 
@@ -282,4 +435,18 @@ func internalAuditFilters(r *http.Request, from *time.Time, to *time.Time) map[s
 		filters["to"] = to.Format(time.RFC3339)
 	}
 	return filters
+}
+
+func optionalAuditFilterTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.Format(time.RFC3339)
+}
+
+func optionalAuditFilterBool(value *bool) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }

@@ -114,39 +114,43 @@ type GameplayEventReceiptReservation struct {
 }
 
 type Character struct {
-	ID           string    `json:"character_id"`
-	Name         string    `json:"name"`
-	Race         string    `json:"race"`
-	BaseClass    string    `json:"base_class"`
-	Sex          string    `json:"sex"`
-	HairStyle    int       `json:"hair_style"`
-	HairColor    string    `json:"hair_color"`
-	SkinType     int       `json:"skin_type"`
-	Level        int       `json:"level"`
-	XP           int       `json:"-"`
-	CurrentCP    int       `json:"-"`
-	CurrentHP    int       `json:"-"`
-	CurrentMP    int       `json:"-"`
-	PvPKills     int       `json:"-"`
-	PKCount      int       `json:"-"`
-	Karma        int       `json:"-"`
-	PvPFlagUntil time.Time `json:"-"`
-	LastRegionID string    `json:"last_region_id"`
-	PositionX    float64   `json:"-"`
-	PositionZ    float64   `json:"-"`
-	IsEnterable  bool      `json:"is_enterable"`
-	AccountID    string    `json:"-"`
+	ID                 string    `json:"character_id"`
+	Name               string    `json:"name"`
+	Race               string    `json:"race"`
+	BaseClass          string    `json:"base_class"`
+	Sex                string    `json:"sex"`
+	HairStyle          int       `json:"hair_style"`
+	HairColor          string    `json:"hair_color"`
+	SkinType           int       `json:"skin_type"`
+	Level              int       `json:"level"`
+	XP                 int       `json:"-"`
+	CurrentCP          int       `json:"-"`
+	CurrentHP          int       `json:"-"`
+	CurrentMP          int       `json:"-"`
+	PvPKills           int       `json:"-"`
+	PKCount            int       `json:"-"`
+	Karma              int       `json:"-"`
+	PvPFlagUntil       time.Time `json:"-"`
+	KarmaRecoveryDueAt time.Time `json:"-"`
+	KarmaHighSince     time.Time `json:"-"`
+	LastRegionID       string    `json:"last_region_id"`
+	PositionX          float64   `json:"-"`
+	PositionZ          float64   `json:"-"`
+	IsEnterable        bool      `json:"is_enterable"`
+	AccountID          string    `json:"-"`
 }
 
 type CharacterPvPCombatState struct {
-	CharacterID  string
-	CurrentCP    int
-	CurrentHP    int
-	CurrentMP    int
-	PvPKills     int
-	PKCount      int
-	Karma        int
-	PvPFlagUntil time.Time
+	CharacterID        string
+	CurrentCP          int
+	CurrentHP          int
+	CurrentMP          int
+	PvPKills           int
+	PKCount            int
+	Karma              int
+	PvPFlagUntil       time.Time
+	KarmaRecoveryDueAt time.Time
+	KarmaHighSince     time.Time
 }
 
 type PvPCombatMutation struct {
@@ -166,11 +170,12 @@ type PvPCombatMutation struct {
 }
 
 type PvPCombatCommit struct {
-	Attacker       CharacterPvPCombatState
-	Victim         CharacterPvPCombatState
-	Event          PvPCombatEvent
-	CooldownID     string
-	CooldownEndsAt time.Time
+	Attacker            CharacterPvPCombatState
+	Victim              CharacterPvPCombatState
+	Event               PvPCombatEvent
+	KarmaRecoveryEvents []PvPKarmaRecoveryEvent
+	CooldownID          string
+	CooldownEndsAt      time.Time
 }
 
 type CharacterSkillCooldown struct {

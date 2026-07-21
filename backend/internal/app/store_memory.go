@@ -45,6 +45,7 @@ type memoryStoreBackend struct {
 	storageTransfers    map[string][]StorageTransferRecord
 	actionLogs          map[string][]ActionLogRecord
 	pvpCombatEvents     []PvPCombatEvent
+	pvpKarmaEvents      []PvPKarmaRecoveryEvent
 	claimedLoot         map[string]struct{}
 	nameIndex           map[string]string
 	sessions            map[string]*Session
@@ -109,6 +110,7 @@ func newMemoryStoreBackend() *memoryStoreBackend {
 		characterItems:     map[string][]CharacterItem{},
 		storageTransfers:   map[string][]StorageTransferRecord{},
 		actionLogs:         map[string][]ActionLogRecord{},
+		pvpKarmaEvents:     []PvPKarmaRecoveryEvent{},
 		claimedLoot:        map[string]struct{}{},
 		nameIndex:          map[string]string{},
 		sessions:           map[string]*Session{},
@@ -458,6 +460,94 @@ func (repo memoryCharacterRepo) UpdatePvPFlagUntil(_ context.Context, characterI
 	return nil
 }
 
+func (repo memoryCharacterRepo) ApplyKarmaRecovery(_ context.Context, characterID string, now time.Time, trigger string) (*CharacterKarmaRecoveryCommit, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	character, exists := repo.backend.characters[characterID]
+	if !exists {
+		return nil, errRecordNotFound
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	recoveredCharacter, recoveryEvent := applyKarmaRecovery(*character, now, trigger)
+	character.Karma = recoveredCharacter.Karma
+	character.KarmaRecoveryDueAt = recoveredCharacter.KarmaRecoveryDueAt
+	character.KarmaHighSince = recoveredCharacter.KarmaHighSince
+	commit := &CharacterKarmaRecoveryCommit{
+		State: characterPvPCombatStateFromCharacter(*character),
+	}
+	if recoveryEvent != nil {
+		repo.backend.pvpKarmaEvents = append(repo.backend.pvpKarmaEvents, *recoveryEvent)
+		commit.Event = recoveryEvent
+	}
+	return commit, nil
+}
+
+func (repo memoryCharacterRepo) ListHighKarma(_ context.Context, query PvPHighKarmaQuery) ([]PvPHighKarmaRecord, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	observedAt := query.ObservedAt.UTC()
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	minimumKarma := max(1, query.MinimumKarma)
+	records := make([]PvPHighKarmaRecord, 0)
+	for _, character := range repo.backend.characters {
+		if character == nil {
+			continue
+		}
+		if query.CharacterID != "" && character.ID != query.CharacterID {
+			continue
+		}
+		if query.AccountID != "" && character.AccountID != query.AccountID {
+			continue
+		}
+		if character.Karma < minimumKarma {
+			continue
+		}
+		record := PvPHighKarmaRecord{
+			CharacterID:         character.ID,
+			AccountID:           character.AccountID,
+			Karma:               character.Karma,
+			PKCount:             character.PKCount,
+			PvPKills:            character.PvPKills,
+			KarmaRecoveryDueAt:  character.KarmaRecoveryDueAt,
+			KarmaHighSince:      character.KarmaHighSince,
+			PersistentHighKarma: character.Karma >= highKarmaThreshold && !character.KarmaHighSince.IsZero() && !character.KarmaHighSince.After(observedAt.Add(-highKarmaWindow)),
+		}
+		if query.PersistentOnly && !record.PersistentHighKarma {
+			continue
+		}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Karma == records[j].Karma {
+			if records[i].KarmaHighSince.Equal(records[j].KarmaHighSince) {
+				return records[i].CharacterID < records[j].CharacterID
+			}
+			if records[i].KarmaHighSince.IsZero() {
+				return false
+			}
+			if records[j].KarmaHighSince.IsZero() {
+				return true
+			}
+			return records[i].KarmaHighSince.Before(records[j].KarmaHighSince)
+		}
+		return records[i].Karma > records[j].Karma
+	})
+	limit, offset := normalizeAuditPagination(query.Limit, query.Offset)
+	if offset >= len(records) {
+		return []PvPHighKarmaRecord{}, nil
+	}
+	end := min(len(records), offset+limit)
+	return append([]PvPHighKarmaRecord(nil), records[offset:end]...), nil
+}
+
 func (repo memoryCharacterRepo) ApplyPvPCombat(_ context.Context, mutation PvPCombatMutation) (*PvPCombatCommit, error) {
 	repo.backend.mu.Lock()
 	defer repo.backend.mu.Unlock()
@@ -519,6 +609,9 @@ func (repo memoryCharacterRepo) ApplyPvPCombat(_ context.Context, mutation PvPCo
 		delete(repo.backend.characterCooldowns, mutation.VictimCharacterID)
 	}
 	repo.backend.pvpCombatEvents = append(repo.backend.pvpCombatEvents, commit.Event)
+	for _, recoveryEvent := range commit.KarmaRecoveryEvents {
+		repo.backend.pvpKarmaEvents = append(repo.backend.pvpKarmaEvents, recoveryEvent)
+	}
 	return commit, nil
 }
 
@@ -530,6 +623,8 @@ func applyCharacterPvPCombatState(character *Character, state CharacterPvPCombat
 	character.PKCount = max(0, state.PKCount)
 	character.Karma = max(0, state.Karma)
 	character.PvPFlagUntil = state.PvPFlagUntil.UTC()
+	character.KarmaRecoveryDueAt = state.KarmaRecoveryDueAt.UTC()
+	character.KarmaHighSince = state.KarmaHighSince.UTC()
 }
 
 func (repo memoryCharacterCooldownRepo) ListByCharacterID(_ context.Context, characterID string) ([]CharacterSkillCooldown, error) {
@@ -1807,7 +1902,13 @@ func (repo memoryPvPCombatEventRepo) ListByFilter(_ context.Context, query PvPCo
 		if query.AttackerCharacterID != "" && record.AttackerCharacterID != query.AttackerCharacterID {
 			continue
 		}
+		if query.AttackerAccountID != "" && record.AttackerAccountID != query.AttackerAccountID {
+			continue
+		}
 		if query.VictimCharacterID != "" && record.VictimCharacterID != query.VictimCharacterID {
+			continue
+		}
+		if query.VictimAccountID != "" && record.VictimAccountID != query.VictimAccountID {
 			continue
 		}
 		if query.KillerCharacterID != "" && record.KillerCharacterID != query.KillerCharacterID {
@@ -1845,6 +1946,113 @@ func (repo memoryPvPCombatEventRepo) ListByFilter(_ context.Context, query PvPCo
 	}
 	end := min(len(records), offset+limit)
 	return append([]PvPCombatEvent(nil), records[offset:end]...), nil
+}
+
+func (repo memoryPvPCombatEventRepo) ListAccountCorrelations(_ context.Context, query PvPAccountCorrelationQuery) ([]PvPAccountCorrelationRecord, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	type aggregate struct {
+		record PvPAccountCorrelationRecord
+	}
+	aggregates := map[string]*aggregate{}
+	for _, event := range repo.backend.pvpCombatEvents {
+		if event.Result != "pvp_kill" && event.Result != "pk_kill" {
+			continue
+		}
+		if query.AccountID != "" && event.AttackerAccountID != query.AccountID && event.VictimAccountID != query.AccountID {
+			continue
+		}
+		if query.SuspiciousOnly != nil && event.Suspicious != *query.SuspiciousOnly {
+			continue
+		}
+		if query.MinRepeatedKillCount > 0 && event.RepeatedKillCount < query.MinRepeatedKillCount {
+			continue
+		}
+		if query.OccurredAfter != nil && event.CreatedAt.Before(*query.OccurredAfter) {
+			continue
+		}
+		if query.OccurredBefore != nil && event.CreatedAt.After(*query.OccurredBefore) {
+			continue
+		}
+		key := event.AttackerAccountID + "/" + event.VictimAccountID
+		current := aggregates[key]
+		if current == nil {
+			current = &aggregate{record: PvPAccountCorrelationRecord{
+				AttackerAccountID: event.AttackerAccountID,
+				VictimAccountID:   event.VictimAccountID,
+				SameAccount:       event.AttackerAccountID != "" && event.AttackerAccountID == event.VictimAccountID,
+			}}
+			aggregates[key] = current
+		}
+		current.record.KillCount++
+		if event.Suspicious {
+			current.record.SuspiciousCount++
+		}
+		current.record.MaxRepeatedKillCount = max(current.record.MaxRepeatedKillCount, event.RepeatedKillCount)
+		if event.CreatedAt.After(current.record.LastOccurredAt) {
+			current.record.LastOccurredAt = event.CreatedAt
+		}
+	}
+	records := make([]PvPAccountCorrelationRecord, 0, len(aggregates))
+	for _, aggregate := range aggregates {
+		records = append(records, aggregate.record)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].SuspiciousCount == records[j].SuspiciousCount {
+			if records[i].KillCount == records[j].KillCount {
+				if records[i].LastOccurredAt.Equal(records[j].LastOccurredAt) {
+					return records[i].AttackerAccountID+records[i].VictimAccountID < records[j].AttackerAccountID+records[j].VictimAccountID
+				}
+				return records[i].LastOccurredAt.After(records[j].LastOccurredAt)
+			}
+			return records[i].KillCount > records[j].KillCount
+		}
+		return records[i].SuspiciousCount > records[j].SuspiciousCount
+	})
+	limit, offset := normalizeAuditPagination(query.Limit, query.Offset)
+	if offset >= len(records) {
+		return []PvPAccountCorrelationRecord{}, nil
+	}
+	end := min(len(records), offset+limit)
+	return append([]PvPAccountCorrelationRecord(nil), records[offset:end]...), nil
+}
+
+func (repo memoryPvPCombatEventRepo) ListKarmaRecoveryEvents(_ context.Context, query PvPKarmaRecoveryEventQuery) ([]PvPKarmaRecoveryEvent, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	records := make([]PvPKarmaRecoveryEvent, 0)
+	for _, record := range repo.backend.pvpKarmaEvents {
+		if query.CharacterID != "" && record.CharacterID != query.CharacterID {
+			continue
+		}
+		if query.AccountID != "" && record.AccountID != query.AccountID {
+			continue
+		}
+		if query.Trigger != "" && record.Trigger != query.Trigger {
+			continue
+		}
+		if query.OccurredAfter != nil && record.CreatedAt.Before(*query.OccurredAfter) {
+			continue
+		}
+		if query.OccurredBefore != nil && record.CreatedAt.After(*query.OccurredBefore) {
+			continue
+		}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].CreatedAt.Equal(records[j].CreatedAt) {
+			return records[i].ID > records[j].ID
+		}
+		return records[i].CreatedAt.After(records[j].CreatedAt)
+	})
+	limit, offset := normalizeAuditPagination(query.Limit, query.Offset)
+	if offset >= len(records) {
+		return []PvPKarmaRecoveryEvent{}, nil
+	}
+	end := min(len(records), offset+limit)
+	return append([]PvPKarmaRecoveryEvent(nil), records[offset:end]...), nil
 }
 
 func (repo memoryGameplaySessionRepo) Create(_ context.Context, session *Session) error {

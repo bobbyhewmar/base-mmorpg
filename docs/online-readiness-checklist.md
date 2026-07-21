@@ -225,11 +225,16 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Identical replay does not reapply damage, death, PK, karma, MP, or cooldown; conflicting replay rejects explicitly.
 - [x] A 30-second recent-hit ledger produces a primary killer plus distinct assists without crossing the victim's previous death boundary.
 - [x] A second same-killer/same-victim kill inside 10 minutes is persisted as `suspicious` with `repeated_kill_count`, without blocking gameplay or changing rewards.
+- [x] Positive-karma characters now recover 20 karma every 5 minutes from a durable backend-owned schedule, paused while PvP-flagged and applied deterministically on attach, authoritative tick, or the next combat mutation boundary.
+- [x] Reconnect and logical restart preserve `karma_recovery_due_at`, `karma_high_since`, and the resulting recovery cadence; identical replays do not duplicate recovery steps or `pvp_karma_events`.
+- [x] PvP auditability now includes read-only `pvp_karma_events`, account-first repeated-pair correlation, and persistent-high-karma investigation without mutating damage, classification, or other gameplay outcomes.
+- [x] `GET /internal/pvp/recovery`, `GET /internal/pvp/correlations`, and `GET /internal/pvp/high-karma` remain token-gated, paginated, and read-only, separate from gameplay auth.
+- [x] Correlation stays account-first until a safe durable device/session fingerprint exists; the current internal surface explicitly reports device scope as unavailable instead of inferring weak identity.
 - [x] Backend and read-model tests cover player selection without damage, basic attack, skill, invalid/unknown/self target, target out of region, same party, same clan, same alliance, restricted region, safe zone, out of range, dead target, disconnect, death cleanup, respawn, durable flag hydration/expiry, PK/PvP classification, audit, and replay.
 - [x] Docker Compose browser smoke covers two attached users outside the spawn sanctuary through authoritative player selection, basic attack, active-flag reconnect hydration, single-target skill, flag projection, and victim resource projection.
 - [x] `GET /internal/pvp/events` reuses the disabled-by-default internal audit token, supports pagination/time plus attacker/victim/involved/killer/suspicious/action/result filters, and exposes no mutation surface.
 - [x] The HUD projects only backend-provided PvP flag, PvP kills, PK count, karma, CP, HP, and dead state, and the compact self-state indicator is derived from authoritative `pvp_flagged` plus `pvp_flag_until_ms` only.
-- [x] AoE/chain PvP, player auto-approach/repeat, pets/summons, contribution weighting, anti-feed enforcement, clan/alliance wars, siege, olympiad, events, rankings, rewards, richer named-zone/content volumes, karma decay, and complex penalties remain explicitly deferred.
+- [x] AoE/chain PvP, player auto-approach/repeat, pets/summons, contribution weighting, anti-feed enforcement, clan/alliance wars, siege, olympiad, events, rankings, rewards, richer named-zone/content volumes, safe device fingerprint correlation, and complex penalties remain explicitly deferred.
 
 ## Notes
 

@@ -1470,7 +1470,7 @@ func TestAttachedRuntimeQueuesLootPickupApproachWhenOutOfReach(t *testing.T) {
 		t.Fatalf("expected queued loot pickup for loot_1, got %+v", runtime.queuedLootPickup)
 	}
 
-	messages, _, _ := runtime.collectTickMessagesWithStore(time.Now().Add(2*time.Second), store)
+	messages, _, _, _ := runtime.collectTickMessagesWithStore(time.Now().Add(2*time.Second), store)
 	if len(messages) < 2 || messages[len(messages)-2]["kind"] != "delta" || messages[len(messages)-1]["kind"] != "entity_disappear" {
 		t.Fatalf("expected queued loot pickup to resolve with inventory delta and disappear, got %+v", messages)
 	}
@@ -1545,7 +1545,7 @@ func TestAttachedRuntimeLootPickupApproachUsesPickupRangeDestination(t *testing.
 		t.Fatalf("expected accepted loot approach destination within pickup range, got %+v", runtime.activeMovement.AcceptedDestination)
 	}
 
-	messages, _, _ := runtime.collectTickMessagesWithStore(time.Now().Add(2*time.Second), store)
+	messages, _, _, _ := runtime.collectTickMessagesWithStore(time.Now().Add(2*time.Second), store)
 	if len(messages) < 2 || messages[len(messages)-2]["kind"] != "delta" || messages[len(messages)-1]["kind"] != "entity_disappear" {
 		t.Fatalf("expected queued loot pickup to resolve after approach, got %+v", messages)
 	}

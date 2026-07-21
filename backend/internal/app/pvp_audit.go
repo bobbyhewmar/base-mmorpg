@@ -8,6 +8,10 @@ import (
 const (
 	pvpAttributionWindow  = 30 * time.Second
 	pvpRepeatedKillWindow = 10 * time.Minute
+	karmaRecoveryInterval = 5 * time.Minute
+	karmaRecoveryAmount   = 20
+	highKarmaThreshold    = 200
+	highKarmaWindow       = 15 * time.Minute
 )
 
 type PvPCombatEvent struct {
@@ -45,7 +49,9 @@ type PvPCombatEvent struct {
 
 type PvPCombatEventQuery struct {
 	AttackerCharacterID string
+	AttackerAccountID   string
 	VictimCharacterID   string
+	VictimAccountID     string
 	KillerCharacterID   string
 	InvolvedCharacterID string
 	ActionType          string
@@ -55,6 +61,74 @@ type PvPCombatEventQuery struct {
 	OccurredBefore      *time.Time
 	Limit               int
 	Offset              int
+}
+
+type PvPKarmaRecoveryEvent struct {
+	ID              string    `json:"event_id"`
+	CharacterID     string    `json:"character_id"`
+	AccountID       string    `json:"account_id"`
+	Trigger         string    `json:"trigger"`
+	KarmaBefore     int       `json:"karma_before"`
+	KarmaAfter      int       `json:"karma_after"`
+	KarmaDelta      int       `json:"karma_delta"`
+	RecoveredAmount int       `json:"recovered_amount"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+type PvPKarmaRecoveryEventQuery struct {
+	CharacterID    string
+	AccountID      string
+	Trigger        string
+	OccurredAfter  *time.Time
+	OccurredBefore *time.Time
+	Limit          int
+	Offset         int
+}
+
+type PvPAccountCorrelationQuery struct {
+	AccountID            string
+	SuspiciousOnly       *bool
+	MinRepeatedKillCount int
+	OccurredAfter        *time.Time
+	OccurredBefore       *time.Time
+	Limit                int
+	Offset               int
+}
+
+type PvPAccountCorrelationRecord struct {
+	AttackerAccountID    string    `json:"attacker_account_id"`
+	VictimAccountID      string    `json:"victim_account_id"`
+	KillCount            int       `json:"kill_count"`
+	SuspiciousCount      int       `json:"suspicious_count"`
+	MaxRepeatedKillCount int       `json:"max_repeated_kill_count"`
+	LastOccurredAt       time.Time `json:"last_occurred_at"`
+	SameAccount          bool      `json:"same_account"`
+}
+
+type PvPHighKarmaQuery struct {
+	CharacterID    string
+	AccountID      string
+	MinimumKarma   int
+	PersistentOnly bool
+	ObservedAt     time.Time
+	Limit          int
+	Offset         int
+}
+
+type PvPHighKarmaRecord struct {
+	CharacterID         string    `json:"character_id"`
+	AccountID           string    `json:"account_id"`
+	Karma               int       `json:"karma"`
+	PKCount             int       `json:"pk_count"`
+	PvPKills            int       `json:"pvp_kills"`
+	KarmaRecoveryDueAt  time.Time `json:"karma_recovery_due_at"`
+	KarmaHighSince      time.Time `json:"karma_high_since"`
+	PersistentHighKarma bool      `json:"persistent_high_karma"`
+}
+
+type CharacterKarmaRecoveryCommit struct {
+	State CharacterPvPCombatState
+	Event *PvPKarmaRecoveryEvent
 }
 
 func resolvePvPCombatMutation(attacker Character, victim Character, mutation PvPCombatMutation, priorVictimEvents []PvPCombatEvent, priorRepeatedKills int) (*PvPCombatCommit, error) {
@@ -77,6 +151,19 @@ func resolvePvPCombatMutation(attacker Character, victim Character, mutation PvP
 	now := mutation.OccurredAt.UTC()
 	if now.IsZero() {
 		now = time.Now().UTC()
+	}
+	recoveryEvents := make([]PvPKarmaRecoveryEvent, 0, 2)
+	if recoveredAttacker, recoveryEvent := applyKarmaRecovery(attacker, now, "combat"); recoveryEvent != nil {
+		attacker = recoveredAttacker
+		recoveryEvents = append(recoveryEvents, *recoveryEvent)
+	} else {
+		attacker = recoveredAttacker
+	}
+	if recoveredVictim, recoveryEvent := applyKarmaRecovery(victim, now, "combat"); recoveryEvent != nil {
+		victim = recoveredVictim
+		recoveryEvents = append(recoveryEvents, *recoveryEvent)
+	} else {
+		victim = recoveredVictim
 	}
 	attackerFlaggedBefore := attacker.PvPFlagUntil.After(now)
 	victimFlaggedBefore := victim.PvPFlagUntil.After(now)
@@ -116,6 +203,10 @@ func resolvePvPCombatMutation(attacker Character, victim Character, mutation PvP
 			attackerState.Karma += pkKarmaGain
 		}
 	}
+	normalizeKarmaSchedule(&attackerState, now)
+	normalizeKarmaSchedule(&victimState, now)
+	normalizeHighKarmaState(&attackerState, now)
+	normalizeHighKarmaState(&victimState, now)
 
 	eventID := mutation.EventID
 	if eventID == "" {
@@ -154,25 +245,114 @@ func resolvePvPCombatMutation(attacker Character, victim Character, mutation PvP
 		CreatedAt:             now,
 	}
 	return &PvPCombatCommit{
-		Attacker:       attackerState,
-		Victim:         victimState,
-		Event:          event,
-		CooldownID:     mutation.CooldownID,
-		CooldownEndsAt: now.Add(max(0, mutation.CooldownDuration)).UTC(),
+		Attacker:            attackerState,
+		Victim:              victimState,
+		Event:               event,
+		KarmaRecoveryEvents: recoveryEvents,
+		CooldownID:          mutation.CooldownID,
+		CooldownEndsAt:      now.Add(max(0, mutation.CooldownDuration)).UTC(),
 	}, nil
 }
 
 func characterPvPCombatStateFromCharacter(character Character) CharacterPvPCombatState {
 	return CharacterPvPCombatState{
-		CharacterID:  character.ID,
-		CurrentCP:    max(0, character.CurrentCP),
-		CurrentHP:    max(0, character.CurrentHP),
-		CurrentMP:    max(0, character.CurrentMP),
-		PvPKills:     max(0, character.PvPKills),
-		PKCount:      max(0, character.PKCount),
-		Karma:        max(0, character.Karma),
-		PvPFlagUntil: character.PvPFlagUntil.UTC(),
+		CharacterID:        character.ID,
+		CurrentCP:          max(0, character.CurrentCP),
+		CurrentHP:          max(0, character.CurrentHP),
+		CurrentMP:          max(0, character.CurrentMP),
+		PvPKills:           max(0, character.PvPKills),
+		PKCount:            max(0, character.PKCount),
+		Karma:              max(0, character.Karma),
+		PvPFlagUntil:       character.PvPFlagUntil.UTC(),
+		KarmaRecoveryDueAt: character.KarmaRecoveryDueAt.UTC(),
+		KarmaHighSince:     character.KarmaHighSince.UTC(),
 	}
+}
+
+func applyKarmaRecovery(character Character, now time.Time, trigger string) (Character, *PvPKarmaRecoveryEvent) {
+	now = now.UTC()
+	state := characterPvPCombatStateFromCharacter(character)
+	normalizeKarmaSchedule(&state, now)
+	normalizeHighKarmaState(&state, now)
+	if state.Karma <= 0 || state.KarmaRecoveryDueAt.IsZero() || state.PvPFlagUntil.After(now) || state.KarmaRecoveryDueAt.After(now) {
+		character.Karma = state.Karma
+		character.KarmaRecoveryDueAt = state.KarmaRecoveryDueAt
+		character.KarmaHighSince = state.KarmaHighSince
+		return character, nil
+	}
+	steps := 1 + int(now.Sub(state.KarmaRecoveryDueAt)/karmaRecoveryInterval)
+	recoveredAmount := min(state.Karma, steps*karmaRecoveryAmount)
+	if recoveredAmount <= 0 {
+		character.KarmaRecoveryDueAt = state.KarmaRecoveryDueAt
+		character.KarmaHighSince = state.KarmaHighSince
+		return character, nil
+	}
+	karmaBefore := state.Karma
+	state.Karma = max(0, state.Karma-recoveredAmount)
+	if state.Karma > 0 {
+		state.KarmaRecoveryDueAt = state.KarmaRecoveryDueAt.Add(time.Duration(steps) * karmaRecoveryInterval).UTC()
+		if !state.KarmaRecoveryDueAt.After(now) {
+			state.KarmaRecoveryDueAt = now.Add(karmaRecoveryInterval).UTC()
+		}
+	} else {
+		state.KarmaRecoveryDueAt = time.Time{}
+	}
+	normalizeHighKarmaState(&state, now)
+	character.Karma = state.Karma
+	character.KarmaRecoveryDueAt = state.KarmaRecoveryDueAt
+	character.KarmaHighSince = state.KarmaHighSince
+	event := &PvPKarmaRecoveryEvent{
+		ID:              randomID("pvp_karma"),
+		CharacterID:     character.ID,
+		AccountID:       character.AccountID,
+		Trigger:         trigger,
+		KarmaBefore:     karmaBefore,
+		KarmaAfter:      state.Karma,
+		KarmaDelta:      state.Karma - karmaBefore,
+		RecoveredAmount: recoveredAmount,
+		CreatedAt:       now,
+	}
+	return character, event
+}
+
+func normalizeKarmaSchedule(state *CharacterPvPCombatState, now time.Time) {
+	if state == nil {
+		return
+	}
+	now = now.UTC()
+	state.Karma = max(0, state.Karma)
+	if state.Karma == 0 {
+		state.KarmaRecoveryDueAt = time.Time{}
+		return
+	}
+	minDueAt := now.Add(karmaRecoveryInterval).UTC()
+	if state.PvPFlagUntil.After(now) {
+		minDueAt = state.PvPFlagUntil.Add(karmaRecoveryInterval).UTC()
+	}
+	if state.KarmaRecoveryDueAt.IsZero() || state.KarmaRecoveryDueAt.Before(minDueAt) && state.PvPFlagUntil.After(now) {
+		state.KarmaRecoveryDueAt = minDueAt
+	}
+	if state.KarmaRecoveryDueAt.IsZero() {
+		state.KarmaRecoveryDueAt = minDueAt
+	}
+}
+
+func normalizeHighKarmaState(state *CharacterPvPCombatState, now time.Time) {
+	if state == nil {
+		return
+	}
+	now = now.UTC()
+	if state.Karma >= highKarmaThreshold {
+		if state.KarmaHighSince.IsZero() {
+			state.KarmaHighSince = now
+		}
+		return
+	}
+	state.KarmaHighSince = time.Time{}
+}
+
+func persistentHighKarmaAt(state CharacterPvPCombatState, now time.Time) bool {
+	return state.Karma >= highKarmaThreshold && !state.KarmaHighSince.IsZero() && !state.KarmaHighSince.After(now.UTC().Add(-highKarmaWindow))
 }
 
 func relevantPvPAssistCharacterIDs(events []PvPCombatEvent, killerCharacterID string) []string {

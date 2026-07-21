@@ -134,6 +134,7 @@ type attachedRuntime struct {
 	pkCount                 int
 	karma                   int
 	pvpFlagUntil            time.Time
+	karmaRecoveryDueAt      time.Time
 	pvpStateDirty           bool
 	pvpFlagPersistenceDirty bool
 	expectedCommandSeq      int
@@ -538,6 +539,7 @@ func newAttachedRuntimeWithInitialEntities(sessionID string, character *Characte
 		pkCount:                 state.PKCount,
 		karma:                   state.Karma,
 		pvpFlagUntil:            activePvPDeadline,
+		karmaRecoveryDueAt:      state.KarmaRecoveryDueAt,
 		pvpFlagPersistenceDirty: !state.PvPFlagUntil.IsZero() && activePvPDeadline.IsZero(),
 		expectedCommandSeq:      1,
 		revision:                0,
@@ -1484,14 +1486,15 @@ func (runtime *attachedRuntime) characterPvPCombatState() CharacterPvPCombatStat
 
 func (runtime *attachedRuntime) characterPvPCombatStateLocked() CharacterPvPCombatState {
 	return CharacterPvPCombatState{
-		CharacterID:  runtime.characterID,
-		CurrentCP:    runtime.currentCP,
-		CurrentHP:    runtime.currentHP,
-		CurrentMP:    runtime.currentMP,
-		PvPKills:     runtime.pvpKills,
-		PKCount:      runtime.pkCount,
-		Karma:        runtime.karma,
-		PvPFlagUntil: runtime.pvpFlagUntil,
+		CharacterID:        runtime.characterID,
+		CurrentCP:          runtime.currentCP,
+		CurrentHP:          runtime.currentHP,
+		CurrentMP:          runtime.currentMP,
+		PvPKills:           runtime.pvpKills,
+		PKCount:            runtime.pkCount,
+		Karma:              runtime.karma,
+		PvPFlagUntil:       runtime.pvpFlagUntil,
+		KarmaRecoveryDueAt: runtime.karmaRecoveryDueAt,
 	}
 }
 

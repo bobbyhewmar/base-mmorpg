@@ -282,6 +282,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/internal/economy/warehouse-transfers", s.handleInternalWarehouseTransfers)
 	s.mux.HandleFunc("/internal/economy/trades", s.handleInternalTradeEvents)
 	s.mux.HandleFunc("/internal/pvp/events", s.handleInternalPvPEvents)
+	s.mux.HandleFunc("/internal/pvp/recovery", s.handleInternalPvPKarmaRecoveryEvents)
+	s.mux.HandleFunc("/internal/pvp/correlations", s.handleInternalPvPCorrelations)
+	s.mux.HandleFunc("/internal/pvp/high-karma", s.handleInternalPvPHighKarma)
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -1117,11 +1120,15 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 				var movementChanged bool
 				var respawned bool
 				var tickMessages []map[string]any
+				var karmaRecoveryEvent *PvPKarmaRecoveryEvent
 				if attached == nil || !attached.dispatchAll(func(runtime *attachedRuntime) []map[string]any {
-					tickMessages, movementChanged, respawned = runtime.collectTickMessagesWithStore(now, s.store)
+					tickMessages, movementChanged, respawned, karmaRecoveryEvent = runtime.collectTickMessagesWithStore(now, s.store)
 					return tickMessages
 				}) {
 					return
+				}
+				if karmaRecoveryEvent != nil {
+					s.recordPvPKarmaRecoveryEvent(*karmaRecoveryEvent, runtime.characterPvPCombatState())
 				}
 				s.fanOutWorldEntityVisibility(session.ID, runtime, tickMessages)
 				if movementChanged {
@@ -1592,6 +1599,19 @@ func (s *Server) attachSession(sessionID, attachToken string) (*Session, *Charac
 		s.recordStoreError("characters.get_by_id", err)
 		_, _ = s.store.GameplaySessions.ReleaseOwnership(ctx, session.CharacterID, session.ID, s.config.ServerInstanceID, session.FencingToken)
 		return nil, nil, errors.New("session.not_attachable")
+	}
+	if s.store != nil && s.store.Characters != nil {
+		recoveryCommit, recoveryErr := s.store.Characters.ApplyKarmaRecovery(ctx, character.ID, time.Now().UTC(), "attach")
+		if recoveryErr != nil {
+			s.recordStoreError("characters.apply_karma_recovery", recoveryErr, errRecordNotFound)
+		} else if recoveryCommit != nil {
+			character.Karma = recoveryCommit.State.Karma
+			character.KarmaRecoveryDueAt = recoveryCommit.State.KarmaRecoveryDueAt
+			character.KarmaHighSince = recoveryCommit.State.KarmaHighSince
+			if recoveryCommit.Event != nil {
+				s.recordPvPKarmaRecoveryEvent(*recoveryCommit.Event, recoveryCommit.State)
+			}
+		}
 	}
 	return session, character, nil
 }

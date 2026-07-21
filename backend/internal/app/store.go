@@ -99,6 +99,8 @@ type CharacterRepository interface {
 	UpdateProgression(ctx context.Context, characterID string, level int, xp int, currentCP int, currentHP int, currentMP int) error
 	UpdatePvPFlagUntil(ctx context.Context, characterID string, flagUntil time.Time) error
 	ApplyPvPCombat(ctx context.Context, mutation PvPCombatMutation) (*PvPCombatCommit, error)
+	ApplyKarmaRecovery(ctx context.Context, characterID string, now time.Time, trigger string) (*CharacterKarmaRecoveryCommit, error)
+	ListHighKarma(ctx context.Context, query PvPHighKarmaQuery) ([]PvPHighKarmaRecord, error)
 }
 
 type CharacterCooldownRepository interface {
@@ -223,6 +225,8 @@ type ActionLogRepository interface {
 
 type PvPCombatEventRepository interface {
 	ListByFilter(ctx context.Context, query PvPCombatEventQuery) ([]PvPCombatEvent, error)
+	ListAccountCorrelations(ctx context.Context, query PvPAccountCorrelationQuery) ([]PvPAccountCorrelationRecord, error)
+	ListKarmaRecoveryEvents(ctx context.Context, query PvPKarmaRecoveryEventQuery) ([]PvPKarmaRecoveryEvent, error)
 }
 
 type GameplaySessionRepository interface {

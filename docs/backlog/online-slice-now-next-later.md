@@ -97,8 +97,8 @@ Remaining work:
 
 The current execution priority should follow the master prompt and the real repository state:
 
-1. iterate on measured interest-anchor accuracy from the shipped corridor-plus-hysteresis projection filter and broader cross-instance social fanout on top of safe supersession/compaction for obsolete undelivered regional projection snapshots and remote party chat, without remote combat or new infrastructure
-2. keep the shipped PvP/PK transaction and attribution audit under multi-actor load, then deepen karma recovery, account/device correlation, and alerting without automatic punishment
+1. keep measuring the shipped corridor-plus-hysteresis projection filter and broader cross-instance social fanout on top of safe supersession/compaction for obsolete undelivered regional projection snapshots and remote party chat, without remote combat or new infrastructure
+2. keep the shipped PvP/PK transaction, deterministic karma recovery, account-first correlation, and alerting stable under multi-actor load, without automatic punishment or invented device identity
 3. instances, siege, olympiad, and broader competitive systems only after ownership, cross-instance presence delivery, PvP/PK, and clan base remain stable
 
 ### Fase A - Consolidacao Imediata
@@ -345,6 +345,11 @@ Status:
 - a repeated killer/victim kill inside 10 minutes stores `suspicious=true` and an inclusive `repeated_kill_count`; it is investigation-only and does not block damage or alter rewards
 - player death clears offensive target, queued/automatic combat, queued loot approach, active movement, flag, and cooldown state; respawn restores a clean authoritative state
 - token-gated `GET /internal/pvp/events` provides read-only attacker/victim/involved/killer/suspicious/action/result/time investigation filters
+- token-gated `GET /internal/pvp/recovery`, `GET /internal/pvp/correlations`, and `GET /internal/pvp/high-karma` now expose read-only karma-recovery, account-correlation, and persistent-high-karma investigation views without mutating gameplay
+- karma recovery is now backend-owned, durable, and deterministic: a positive-karma character schedules `karma_recovery_due_at`, pauses recovery while PvP-flagged, and recovers 20 karma every 5 minutes through attach, authoritative tick, or the next combat mutation boundary
+- `characters` now persist `karma_recovery_due_at` and `karma_high_since`, while `pvp_karma_events` records one read-only audit row per applied recovery step for restart-safe investigation
+- operational PvP signals now distinguish `suspicious_kill`, `repeated_pair`, `account_pair_correlation`, `same_account_pair`, `karma_recovered`, and `persistent_high_karma` without logging sensitive payloads
+- account/device correlation is now intentionally account-first: the current repository has no safe durable device fingerprint, so internal correlation explicitly reports device scope as unavailable instead of inferring a weak identity
 - frontend read-model and classic HUD project only authoritative flag, counters, karma, resources, and death; the compact self-state indicator is derived from authoritative `pvp_flagged` plus `pvp_flag_until_ms`, and a two-session Docker smoke covers basic attack, reconnect with active flag, and single-target skill outside the sanctuary
 - PostgreSQL cross-instance fanout now delivers command-correlated remote-target notice, remote whisper, region chat, and party/clan lifecycle notices; claim is destination-safe, replay/client delivery is deduplicated, social state is rehydrated before notices, drift retries/dead-letters, and no remote damage or local target success is created
 - durable recipient receipts now survive logical consumer restart, serialize competing consumers, and keep stale-owner/dead-letter paths free of visual success; party/clan command mutations now share the command/outbox transaction
@@ -354,7 +359,7 @@ Status:
 - the real two-backend Compose profile and Playwright scenario validate bidirectional projection/region chat, separate ownership, stop/restart, retry/dead-letter, receipts, TTL/despawn, stale tombstone rejection, reconnect fencing, and recovery under a movement burst
 - remote social/projection delivery captures the recipient fence as well as session/instance/character, so the same durable session id under a newer fence cannot receive an event from the previous ownership epoch
 - reconnect now hydrates backend-derived `next_command_seq`, preserving durable command dedup across the reused session instead of creating a false conflicting replay
-- AoE/chain PvP, auto-approach/repeat against players, pet/summon or weighted attribution, anti-feed enforcement/correlation/alerting, richer named-zone/content volumes, karma recovery, economic penalties, wars, siege, olympiad, events, ranking, and rewards remain later slices
+- AoE/chain PvP, auto-approach/repeat against players, pet/summon or weighted attribution, hard anti-feed enforcement, richer named-zone/content volumes, device-fingerprint correlation, economic penalties, wars, siege, olympiad, events, ranking, and rewards remain later slices
 
 ## Later
 
@@ -363,8 +368,8 @@ After the online foundation becomes secure, replay-safe, and observable, the roa
 - finer interest-anchor accuracy, broader social broadcast, and only then infrastructure expansion if measured load requires it
 - protocol-level client consume acknowledgements only if the residual socket-accept/receipt-commit ambiguity becomes operationally unacceptable; reroute remains a separate explicit policy decision
 - broader vendor and warehouse variants
-- PvP/PK expansion beyond the hardened single-target slice: karma recovery, economic/death penalties, alerting, richer named-zone/content policy, and weighted/non-player attribution
-- deeper anti-abuse enforcement, account/device correlation, and alerting on top of the current suspicious-event audit query
+- PvP/PK expansion beyond the hardened single-target slice: richer karma-reduction policy, economic/death penalties, richer named-zone/content policy, and weighted/non-player attribution
+- deeper anti-abuse enforcement, any future safe device/session correlation, and stronger alerting on top of the shipped suspicious-event audit plus account-first investigation surface
 - instances and competitive endgame systems
 
 ## Current Online Slice Checklist
