@@ -17,6 +17,9 @@ const (
 	regionProjectionActionDespawn   = "despawn"
 	regionProjectionDisappear       = "remote_projection_despawn"
 	regionProjectionExpired         = "remote_projection_expired"
+	regionProjectionSuperseded      = "projection_row_superseded"
+	regionProjectionStaleSkipped    = "stale_delivery_skipped"
+	regionProjectionCompacted       = "compacted_obsolete"
 )
 
 type regionPlayerProjectionPayload struct {
@@ -333,12 +336,17 @@ func (s *Server) publishRegionProjectionRequest(ctx context.Context, request reg
 				recipient.CharacterID,
 				recipient.FencingToken,
 			),
-			Type:                   regionPlayerProjectionEventType,
-			Payload:                encoded,
-			TargetServerInstanceID: recipient.ServerInstanceID,
-			TargetRegionID:         payload.RegionID,
-			TargetSessionID:        recipient.SessionID,
-			TargetCharacterID:      recipient.CharacterID,
+			Type:                            regionPlayerProjectionEventType,
+			Payload:                         encoded,
+			TargetServerInstanceID:          recipient.ServerInstanceID,
+			TargetRegionID:                  payload.RegionID,
+			TargetSessionID:                 recipient.SessionID,
+			TargetCharacterID:               recipient.CharacterID,
+			ProjectionSourceCharacterID:     payload.CharacterID,
+			ProjectionSourceFencingToken:    payload.FencingToken,
+			ProjectionVersion:               payload.Version,
+			ProjectionRecipientFencingToken: recipient.FencingToken,
+			ProjectionAction:                payload.Action,
 		}
 		created, createErr := s.store.GameplayEvents.Create(ctx, event)
 		if createErr != nil {
@@ -350,6 +358,24 @@ func (s *Server) publishRegionProjectionRequest(ctx context.Context, request reg
 		if created {
 			result = "projection_produced"
 			produced++
+			supersededCount, supersedeErr := s.store.GameplayEvents.SupersedeRegionProjection(ctx, RegionProjectionSupersession{
+				TargetServerInstanceID:          recipient.ServerInstanceID,
+				TargetCharacterID:               recipient.CharacterID,
+				ProjectionSourceCharacterID:     payload.CharacterID,
+				ProjectionSourceFencingToken:    payload.FencingToken,
+				ProjectionVersion:               payload.Version,
+				ProjectionRecipientFencingToken: recipient.FencingToken,
+				SupersedingEventID:              event.ID,
+				SupersededAt:                    event.CreatedAt,
+			})
+			if supersedeErr != nil {
+				s.recordStoreError("region_projection.supersede", supersedeErr)
+				s.recordRegionProjectionEvent("failed", event, &payload, "supersession_failed")
+			} else {
+				for supersededIndex := 0; supersededIndex < supersededCount; supersededIndex++ {
+					s.recordRegionProjectionEvent(regionProjectionSuperseded, event, &payload, "")
+				}
+			}
 		}
 		s.recordGameplayEvent(map[bool]string{true: "produced", false: "duplicate"}[created], event, "")
 		s.recordRegionProjectionEvent(result, event, &payload, "")

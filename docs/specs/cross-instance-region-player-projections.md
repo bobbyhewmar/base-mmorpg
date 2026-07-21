@@ -52,13 +52,15 @@ The owner captures a projection snapshot when the player:
 
 Publication is placed on a bounded in-process queue and persisted by a dedicated publisher, so PostgreSQL writes do not block command or movement application or the delivery dispatcher. When the primary queue is full, a bounded latest-per-source buffer coalesces superseded not-yet-persisted snapshots. When both bounds are exhausted, the new request is dropped with explicit pressure telemetry. A later heartbeat repairs a missed upsert and TTL repairs a missed despawn. Default heartbeat is two seconds and default projection TTL is six seconds.
 
+Once persisted, a newer projection row for the same `source_character_id + recipient_character_id + recipient_fence` route durably supersedes any older undelivered row with a lower `(source_fence, version)` pair. Superseded rows become ineligible for claim, clear any transient claim lease, and are compacted separately from normal delivered-event retention. A despawn therefore supersedes older upserts for that route, and a newer source fence supersedes every older fence for the same recipient epoch.
+
 For a region transition, the producer advances the same source version sequence, emits a despawn for the previous region, then an upsert for the new authoritative region. The current world has no player-facing region-transfer command yet, but ownership renewal and the projection producer share this transition contract.
 
 ## Consumption and Ordering
 
-The destination instance claims only its own outbox rows and reserves the existing durable receipt before delivery. Consumption revalidates the exact recipient instance, session, character, captured fencing token, and runtime region. A reused durable session id under a newer fence is still ownership drift, not the original recipient. Drift remains `social.recipient_stale_owner`, with the existing retry/dead-letter policy and no automatic reroute.
+The destination instance claims only its own outbox rows that are not already superseded and reserves the existing durable receipt before delivery. Consumption revalidates the exact recipient instance, session, character, captured fencing token, and runtime region. A reused durable session id under a newer fence is still ownership drift, not the original recipient. Drift remains `social.recipient_stale_owner`, with the existing retry/dead-letter policy and no automatic reroute.
 
-An upsert also revalidates the source ownership tuple and region. If that owner expired or changed before delivery, the event is consumed as stale projection data and cannot make the player reappear. A despawn may arrive after source release; the destination accepts it subject to fence/version ordering.
+An upsert also revalidates the source ownership tuple and region. If that owner expired or changed before delivery, the event is consumed as stale projection data and cannot make the player reappear. A despawn may arrive after source release; the destination accepts it subject to fence/version ordering. If a previously claimed row becomes durably superseded before socket delivery, the dispatcher skips delivery, records stale-delivery observability, and leaves later cleanup to compact that obsolete row without retry or dead-letter noise.
 
 Each recipient runtime compares `(fencing_token, version)` lexicographically:
 
@@ -93,8 +95,11 @@ The browser consumes only server `entity_appear`, delta, and `entity_disappear`.
 - `projection_produced`
 - `projection_consumed`
 - `stale_ignored`
+- `projection_row_superseded`
+- `stale_delivery_skipped`
 - `expired`
 - `despawned`
+- `compacted_obsolete`
 - `duplicate`
 - `failed`
 - `dead_letter`

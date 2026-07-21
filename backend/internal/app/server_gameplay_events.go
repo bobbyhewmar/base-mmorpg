@@ -14,6 +14,8 @@ const (
 	maxRememberedGameplayEvents = 4096
 )
 
+var errGameplayEventSuperseded = errors.New("gameplay event superseded")
+
 type remoteTargetNoticePayload struct {
 	ActorCharacterID       string `json:"actor_character_id"`
 	TargetCharacterID      string `json:"target_character_id"`
@@ -90,6 +92,9 @@ func (s *Server) dispatchGameplayEventsOnce(ctx context.Context, workerID string
 		event := &events[index]
 		s.recordGameplayEvent("claimed", event, "")
 		if deliveryErr := s.deliverGameplayEvent(ctx, event, workerID); deliveryErr != nil {
+			if errors.Is(deliveryErr, errGameplayEventSuperseded) {
+				continue
+			}
 			s.failGameplayEvent(ctx, workerID, event, deliveryErr)
 			continue
 		}
@@ -132,6 +137,21 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent,
 			s.recordRegionProjectionEvent("duplicate", event, nil, "")
 		}
 		return nil
+	}
+	if isRegionPlayerProjectionEvent(event) {
+		storedEvent, err := s.store.GameplayEvents.GetByID(ctx, event.ID)
+		if errors.Is(err, errRecordNotFound) {
+			s.recordRegionProjectionEvent(regionProjectionStaleSkipped, event, nil, "compacted_obsolete")
+			return errGameplayEventSuperseded
+		}
+		if err != nil {
+			return err
+		}
+		if !storedEvent.SupersededAt.IsZero() {
+			s.recordRegionProjectionEvent(regionProjectionStaleSkipped, storedEvent, nil, "projection_row_superseded")
+			return errGameplayEventSuperseded
+		}
+		event = storedEvent
 	}
 	if s.store == nil || s.store.GameplayReceipts == nil {
 		return errors.New("social.receipt_store_unavailable")
@@ -324,6 +344,14 @@ func (s *Server) cleanupDeliveredGameplayEvents(ctx context.Context, now time.Ti
 			"server_instance_id": s.config.ServerInstanceID,
 			"event_count":        deleted,
 		})
+	}
+	compacted, compactErr := s.store.GameplayEvents.DeleteSupersededBefore(ctx, now.UTC(), s.config.GameplayEventBatchSize*8)
+	if compactErr != nil {
+		s.recordStoreError("gameplay_events.compact_superseded", compactErr)
+		return deleted
+	}
+	for compactedIndex := 0; compactedIndex < compacted; compactedIndex++ {
+		s.recordRegionProjectionEvent(regionProjectionCompacted, nil, nil, "")
 	}
 	return deleted
 }

@@ -25,6 +25,8 @@ This project translates those concepts into its own PostgreSQL outbox, durable s
 - `created_at` and `available_at`
 - `claimed_at`, claim owner, and claim deadline
 - `delivered_at`
+- optional projection-stream metadata for `presence.region_player_projection.v1` (`projection_source_character_id`, source fence/version, recipient fence, action)
+- optional `superseded_at` and `superseded_by_event_id` when a newer projection row obsoletes an older undelivered row
 - retry count and summarized last error
 - optional dead-letter timestamp
 
@@ -75,7 +77,7 @@ PostgreSQL time owns claim, delivery, retry, and dead-letter deadlines so clock 
 
 Transport is at-least-once. `gameplay_event_receipts` persists `event_id`, recipient session/character, destination instance, claim lease, `delivered_at`, and `consumed_at`. A consumed receipt survives consumer restart: redelivery of the same event skips the socket and lets the outbox finish without a second visual message. Concurrent consumers serialize on the receipt row, so only one owns delivery. Failed ownership/socket validation releases an unconsumed reservation; retry and dead-letter never become local success.
 
-Regional player projections also use one exact-recipient receipt per outbox row. Their source fence plus version provides a second ordering barrier: an older delivered event cannot overwrite or resurrect a newer projection even when transport order differs from production order. See `cross-instance-region-player-projections.md`.
+Regional player projections also use one exact-recipient receipt per outbox row. Their source fence plus version provides a second ordering barrier: an older delivered event cannot overwrite or resurrect a newer projection even when transport order differs from production order. The outbox now also performs durable supersession per source/recipient route, so an older undelivered projection row becomes ineligible for claim as soon as a newer `(source_fence, version)` or despawn row for that route is persisted. See `cross-instance-region-player-projections.md`.
 
 Every delivery also carries the stable monotonic `event_id`, and the browser read-model keeps a bounded set of remote social event ids. Party and clan state still changes only from the freshly rehydrated authoritative delta sent before the notice; a notice alone is never mutation authority.
 
@@ -121,6 +123,8 @@ Delivery failures store a bounded machine-oriented error summary, increment `ret
 
 Retention deletes only rows whose `delivered_at` is older than the configured retention window. Pending, claimed, retrying, and dead-letter rows are never removed by delivered-event retention.
 
+Superseded projection rows are compacted by a separate obsolete-row cleanup path instead of waiting for delivered retention. This keeps backlog pressure bounded without deleting the latest valid row for a stream and without treating stale projection backlog as delivery success.
+
 Receipt rows follow their delivered outbox row through `ON DELETE CASCADE`; retention therefore removes only receipts whose successfully delivered parent is already old enough.
 
 Defaults:
@@ -143,6 +147,7 @@ Defaults:
 - `failed`
 - `retried`
 - `dead_lettered`
+- `projection_row_superseded` and `compacted_obsolete` on the projection-specific metric family
 - `expired` for retention deletion
 
 Logs include event id, event type, destination instance, retry count, and a bounded failure code when applicable. They exclude payloads, attach tokens, access tokens, and account credentials.

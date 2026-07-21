@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -314,6 +315,131 @@ func TestRegionPlayerProjectionIgnoresOldEventsAndExpiresOrDespawns(t *testing.T
 	if lastMessages[len(lastMessages)-1]["kind"] != "entity_disappear" || lastMessages[len(lastMessages)-1]["reason"] != regionProjectionDisappear {
 		t.Fatalf("despawn messages=%+v", lastMessages)
 	}
+}
+
+func TestRegionPlayerProjectionBacklogSupersedesOlderUndeliveredVersion(t *testing.T) {
+	fixture := newCrossInstanceSocialFixture(t, "region_projection_backlog_supersede")
+	actorAttached := fixture.serverA.attachedSessionBySessionID(fixture.actor.session.ID)
+	if actorAttached == nil {
+		t.Fatal("actor attachment missing")
+	}
+
+	if produced := fixture.serverA.publishAttachedRegionProjectionNow(context.Background(), actorAttached, regionProjectionActionUpsert, time.Now()); produced != 1 {
+		t.Fatalf("initial projection produced=%d", produced)
+	}
+	fixture.actor.runtime.mu.Lock()
+	fixture.actor.runtime.position = runtimePoint{X: 44, Z: -11}
+	fixture.actor.runtime.facing = 2.5
+	fixture.actor.runtime.mu.Unlock()
+	if produced := fixture.serverA.publishAttachedRegionProjectionNow(context.Background(), actorAttached, regionProjectionActionUpsert, time.Now()); produced != 1 {
+		t.Fatalf("newer backlog projection produced=%d", produced)
+	}
+
+	firstKey := "region-player-projection/" + fixture.actorCharacter.ID + "/" + formatInt64(fixture.actor.session.FencingToken) + "/1/" + fixture.targetCharacter.ID + "/" + formatInt64(fixture.target.session.FencingToken)
+	secondKey := "region-player-projection/" + fixture.actorCharacter.ID + "/" + formatInt64(fixture.actor.session.FencingToken) + "/2/" + fixture.targetCharacter.ID + "/" + formatInt64(fixture.target.session.FencingToken)
+	firstEvent, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), firstKey)
+	if err != nil {
+		t.Fatalf("first backlog event error=%v", err)
+	}
+	secondEvent, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), secondKey)
+	if err != nil {
+		t.Fatalf("second backlog event error=%v", err)
+	}
+	if firstEvent.SupersededAt.IsZero() || firstEvent.SupersededByEventID != secondEvent.ID {
+		t.Fatalf("older backlog event was not superseded: first=%+v newer=%+v", firstEvent, secondEvent)
+	}
+
+	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/projection-backlog-supersede"); claimed != 1 {
+		t.Fatalf("backlog dispatch claimed=%d", claimed)
+	}
+	fixture.target.runtime.mu.Lock()
+	projected := fixture.target.runtime.knownEntities[fixture.actorCharacter.ID]
+	fixture.target.runtime.mu.Unlock()
+	if projected.Position != (runtimePoint{X: 44, Z: -11}) || projected.State["projection_version"] != int64(2) {
+		t.Fatalf("backlog supersession projected=%+v", projected)
+	}
+
+	fixture.serverB.cleanupDeliveredGameplayEvents(context.Background(), time.Now().Add(time.Second))
+	if _, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), firstKey); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("superseded backlog event survived compaction: %v", err)
+	}
+	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_events_total{result="projection_row_superseded"} 1`)
+	assertMetricLine(t, fixture.serverB.observer.renderPrometheus(), `l2bg_region_projection_events_total{result="compacted_obsolete"} 1`)
+}
+
+func TestRegionPlayerProjectionBacklogDespawnSupersedesOlderUpsert(t *testing.T) {
+	fixture := newCrossInstanceSocialFixture(t, "region_projection_backlog_despawn")
+	actorAttached := fixture.serverA.attachedSessionBySessionID(fixture.actor.session.ID)
+	if actorAttached == nil {
+		t.Fatal("actor attachment missing")
+	}
+
+	if produced := fixture.serverA.publishAttachedRegionProjectionNow(context.Background(), actorAttached, regionProjectionActionUpsert, time.Now()); produced != 1 {
+		t.Fatalf("initial upsert produced=%d", produced)
+	}
+	if produced := fixture.serverA.publishAttachedRegionProjectionNow(context.Background(), actorAttached, regionProjectionActionDespawn, time.Now()); produced != 1 {
+		t.Fatalf("backlog despawn produced=%d", produced)
+	}
+
+	upsertKey := "region-player-projection/" + fixture.actorCharacter.ID + "/" + formatInt64(fixture.actor.session.FencingToken) + "/1/" + fixture.targetCharacter.ID + "/" + formatInt64(fixture.target.session.FencingToken)
+	despawnKey := "region-player-projection/" + fixture.actorCharacter.ID + "/" + formatInt64(fixture.actor.session.FencingToken) + "/2/" + fixture.targetCharacter.ID + "/" + formatInt64(fixture.target.session.FencingToken)
+	upsertEvent, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), upsertKey)
+	if err != nil {
+		t.Fatalf("upsert backlog event error=%v", err)
+	}
+	despawnEvent, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), despawnKey)
+	if err != nil {
+		t.Fatalf("despawn backlog event error=%v", err)
+	}
+	if upsertEvent.SupersededAt.IsZero() || upsertEvent.SupersededByEventID != despawnEvent.ID {
+		t.Fatalf("backlog despawn did not supersede prior upsert: upsert=%+v despawn=%+v", upsertEvent, despawnEvent)
+	}
+
+	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/projection-backlog-despawn"); claimed != 1 {
+		t.Fatalf("backlog despawn dispatch claimed=%d", claimed)
+	}
+	fixture.target.runtime.mu.Lock()
+	_, projected := fixture.target.runtime.knownEntities[fixture.actorCharacter.ID]
+	meta := fixture.target.runtime.remotePlayerProjections[fixture.actorCharacter.ID]
+	fixture.target.runtime.mu.Unlock()
+	if projected || meta.Visible || meta.Version != despawnEvent.ProjectionVersion {
+		t.Fatalf("backlog despawn resurrected or missed tombstone: projected=%v meta=%+v", projected, meta)
+	}
+	if projectionMessagesOfKind(fixture.targetMessageSnapshot(), "entity_appear") != 0 {
+		t.Fatalf("backlog despawn created visual success messages=%+v", fixture.targetMessageSnapshot())
+	}
+}
+
+func TestRegionPlayerProjectionClaimedRowSkipsDeliveryAfterSupersession(t *testing.T) {
+	fixture := newCrossInstanceSocialFixture(t, "region_projection_claimed_skip")
+	actorAttached := fixture.serverA.attachedSessionBySessionID(fixture.actor.session.ID)
+	if actorAttached == nil {
+		t.Fatal("actor attachment missing")
+	}
+
+	if produced := fixture.serverA.publishAttachedRegionProjectionNow(context.Background(), actorAttached, regionProjectionActionUpsert, time.Now()); produced != 1 {
+		t.Fatalf("initial projection produced=%d", produced)
+	}
+	claimed, err := fixture.storeB.GameplayEvents.Claim(context.Background(), "instance-b", "instance-b/claimed-skip", time.Now(), time.Minute, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("Claim() events=%+v error=%v", claimed, err)
+	}
+	staleEvent := claimed[0]
+
+	fixture.actor.runtime.mu.Lock()
+	fixture.actor.runtime.position = runtimePoint{X: 77, Z: 15}
+	fixture.actor.runtime.mu.Unlock()
+	if produced := fixture.serverA.publishAttachedRegionProjectionNow(context.Background(), actorAttached, regionProjectionActionUpsert, time.Now()); produced != 1 {
+		t.Fatalf("newer projection produced=%d", produced)
+	}
+
+	if err := fixture.serverB.deliverGameplayEvent(context.Background(), &staleEvent, "instance-b/claimed-skip"); !errors.Is(err, errGameplayEventSuperseded) {
+		t.Fatalf("deliver stale claimed event error=%v", err)
+	}
+	if _, err := fixture.storeB.GameplayReceipts.GetByEventID(context.Background(), staleEvent.ID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("stale claimed row reserved a receipt unexpectedly: %v", err)
+	}
+	assertMetricLine(t, fixture.serverB.observer.renderPrometheus(), `l2bg_region_projection_events_total{result="stale_delivery_skipped"} 1`)
 }
 
 func requestsPayloadForProjectionTest(t *testing.T, fixture *crossInstanceSocialFixture, action string, version int64, position runtimePoint) regionPlayerProjectionPayload {

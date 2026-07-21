@@ -66,10 +66,13 @@ type GameplayCommandRecordRepository interface {
 
 type GameplayEventRepository interface {
 	Create(ctx context.Context, event *GameplayEvent) (bool, error)
+	GetByID(ctx context.Context, eventID int64) (*GameplayEvent, error)
 	GetByIdempotencyKey(ctx context.Context, idempotencyKey string) (*GameplayEvent, error)
 	Claim(ctx context.Context, serverInstanceID string, claimOwnerID string, now time.Time, claimLease time.Duration, limit int) ([]GameplayEvent, error)
 	MarkDelivered(ctx context.Context, eventID int64, claimOwnerID string, deliveredAt time.Time) (bool, error)
 	MarkFailed(ctx context.Context, eventID int64, claimOwnerID string, failedAt time.Time, retryDelay time.Duration, maxRetries int, lastError string) (GameplayEventFailure, error)
+	SupersedeRegionProjection(ctx context.Context, supersession RegionProjectionSupersession) (int, error)
+	DeleteSupersededBefore(ctx context.Context, cutoff time.Time, limit int) (int, error)
 	DeleteDeliveredBefore(ctx context.Context, cutoff time.Time, limit int) (int, error)
 }
 

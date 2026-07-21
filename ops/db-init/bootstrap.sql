@@ -517,6 +517,11 @@ CREATE TABLE IF NOT EXISTS gameplay_event_outbox (
   target_region_id TEXT NULL,
   target_session_id TEXT NULL,
   target_character_id TEXT NULL,
+  projection_source_character_id TEXT NULL,
+  projection_source_fencing_token BIGINT NULL,
+  projection_version BIGINT NULL,
+  projection_recipient_fencing_token BIGINT NULL,
+  projection_action TEXT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   claimed_at TIMESTAMPTZ NULL,
@@ -524,6 +529,8 @@ CREATE TABLE IF NOT EXISTS gameplay_event_outbox (
   claim_deadline_at TIMESTAMPTZ NULL,
   delivered_at TIMESTAMPTZ NULL,
   dead_lettered_at TIMESTAMPTZ NULL,
+  superseded_at TIMESTAMPTZ NULL,
+  superseded_by_event_id BIGINT NULL,
   retry_count INTEGER NOT NULL DEFAULT 0,
   last_error TEXT NULL,
   CONSTRAINT chk_gameplay_event_outbox_retry_count CHECK (retry_count >= 0),
@@ -586,17 +593,46 @@ BEGIN
   END IF;
 END $$;
 
+ALTER TABLE gameplay_event_outbox
+  ADD COLUMN IF NOT EXISTS projection_source_character_id TEXT NULL;
+ALTER TABLE gameplay_event_outbox
+  ADD COLUMN IF NOT EXISTS projection_source_fencing_token BIGINT NULL;
+ALTER TABLE gameplay_event_outbox
+  ADD COLUMN IF NOT EXISTS projection_version BIGINT NULL;
+ALTER TABLE gameplay_event_outbox
+  ADD COLUMN IF NOT EXISTS projection_recipient_fencing_token BIGINT NULL;
+ALTER TABLE gameplay_event_outbox
+  ADD COLUMN IF NOT EXISTS projection_action TEXT NULL;
+ALTER TABLE gameplay_event_outbox
+  ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ NULL;
+ALTER TABLE gameplay_event_outbox
+  ADD COLUMN IF NOT EXISTS superseded_by_event_id BIGINT NULL;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_gameplay_event_outbox_idempotency_key
   ON gameplay_event_outbox(idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_gameplay_event_outbox_claim
   ON gameplay_event_outbox(target_server_instance_id, available_at, event_id)
-  WHERE delivered_at IS NULL AND dead_lettered_at IS NULL;
+  WHERE delivered_at IS NULL AND dead_lettered_at IS NULL AND superseded_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_gameplay_event_outbox_delivered_at
   ON gameplay_event_outbox(delivered_at)
   WHERE delivered_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_gameplay_event_outbox_superseded_at
+  ON gameplay_event_outbox(superseded_at, event_id)
+  WHERE superseded_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_gameplay_event_outbox_target_character
   ON gameplay_event_outbox(target_character_id, event_id)
   WHERE target_character_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_gameplay_event_outbox_projection_stream
+  ON gameplay_event_outbox(
+    target_server_instance_id,
+    target_character_id,
+    projection_recipient_fencing_token,
+    projection_source_character_id,
+    projection_source_fencing_token,
+    projection_version,
+    event_id
+  )
+  WHERE event_type = 'presence.region_player_projection.v1';
 
 CREATE TABLE IF NOT EXISTS gameplay_event_receipts (
   event_id BIGINT PRIMARY KEY REFERENCES gameplay_event_outbox(event_id) ON DELETE CASCADE,

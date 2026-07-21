@@ -20,6 +20,35 @@ func gameplayEventForTest(key string, targetInstance string) *GameplayEvent {
 	}
 }
 
+func regionProjectionEventForOutboxTest(t *testing.T, key string, targetInstance string, targetCharacterID string, recipientFence int64, sourceFence int64, version int64, action string) *GameplayEvent {
+	t.Helper()
+	payload, err := json.Marshal(regionPlayerProjectionPayload{
+		Action:                 action,
+		CharacterID:            "projection-source",
+		DisplayName:            "Projection Source",
+		RegionID:               "dawn_plaza",
+		Position:               runtimePoint{X: float64(version), Z: -float64(version)},
+		Facing:                 1.5,
+		SourceSessionID:        "projection-source-session",
+		SourceServerInstanceID: "instance-a",
+		FencingToken:           sourceFence,
+		Version:                version,
+		RecipientFencingToken:  recipientFence,
+	})
+	if err != nil {
+		t.Fatalf("marshal projection payload error=%v", err)
+	}
+	return &GameplayEvent{
+		IdempotencyKey:         key,
+		Type:                   regionPlayerProjectionEventType,
+		Payload:                payload,
+		TargetServerInstanceID: targetInstance,
+		TargetRegionID:         "dawn_plaza",
+		TargetSessionID:        "projection-target-session",
+		TargetCharacterID:      targetCharacterID,
+	}
+}
+
 func TestMemoryGameplayEventConcurrentClaimDoesNotDuplicateDelivery(t *testing.T) {
 	backend := newMemoryStoreBackend()
 	firstStore := newMemoryStoreWithBackend(backend)
@@ -220,6 +249,50 @@ func TestMemoryGameplayEventFailureAndRetentionAreSafe(t *testing.T) {
 	}
 	if _, err := store.GameplayEvents.GetByIdempotencyKey(context.Background(), failingEvent.IdempotencyKey); err != nil {
 		t.Fatalf("retention removed failed event: %v", err)
+	}
+}
+
+func TestMemoryRegionProjectionSupersessionCompactsOnlyObsoleteRows(t *testing.T) {
+	store := newMemoryStore()
+	ctx := context.Background()
+	older := regionProjectionEventForOutboxTest(t, "projection-supersede-v1", "instance-b", "projection-target", 7, 3, 1, regionProjectionActionUpsert)
+	if created, err := store.GameplayEvents.Create(ctx, older); err != nil || !created {
+		t.Fatalf("create older projection created=%v error=%v", created, err)
+	}
+	newer := regionProjectionEventForOutboxTest(t, "projection-supersede-v2", "instance-b", "projection-target", 7, 3, 2, regionProjectionActionUpsert)
+	if created, err := store.GameplayEvents.Create(ctx, newer); err != nil || !created {
+		t.Fatalf("create newer projection created=%v error=%v", created, err)
+	}
+	superseded, err := store.GameplayEvents.SupersedeRegionProjection(ctx, RegionProjectionSupersession{
+		TargetServerInstanceID:          newer.TargetServerInstanceID,
+		TargetCharacterID:               newer.TargetCharacterID,
+		ProjectionSourceCharacterID:     newer.ProjectionSourceCharacterID,
+		ProjectionSourceFencingToken:    newer.ProjectionSourceFencingToken,
+		ProjectionVersion:               newer.ProjectionVersion,
+		ProjectionRecipientFencingToken: newer.ProjectionRecipientFencingToken,
+		SupersedingEventID:              newer.ID,
+		SupersededAt:                    time.Now().UTC(),
+	})
+	if err != nil || superseded != 1 {
+		t.Fatalf("SupersedeRegionProjection() superseded=%d error=%v", superseded, err)
+	}
+	persistedOlder, err := store.GameplayEvents.GetByID(ctx, older.ID)
+	if err != nil || persistedOlder.SupersededAt.IsZero() || persistedOlder.SupersededByEventID != newer.ID {
+		t.Fatalf("older projection not superseded safely: event=%+v error=%v", persistedOlder, err)
+	}
+	claimed, err := store.GameplayEvents.Claim(ctx, "instance-b", "projection-worker", time.Now(), time.Minute, 10)
+	if err != nil || len(claimed) != 1 || claimed[0].ID != newer.ID {
+		t.Fatalf("Claim() did not keep only current projection: claimed=%+v error=%v", claimed, err)
+	}
+	deleted, err := store.GameplayEvents.DeleteSupersededBefore(ctx, time.Now().Add(time.Second), 10)
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteSupersededBefore() deleted=%d error=%v", deleted, err)
+	}
+	if _, err := store.GameplayEvents.GetByID(ctx, older.ID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("obsolete projection survived compaction: %v", err)
+	}
+	if persistedNewer, err := store.GameplayEvents.GetByID(ctx, newer.ID); err != nil || !persistedNewer.SupersededAt.IsZero() {
+		t.Fatalf("current projection was compacted incorrectly: event=%+v error=%v", persistedNewer, err)
 	}
 }
 
@@ -544,6 +617,50 @@ func TestPostgresGameplayEventRetentionDeletesOnlyOldDeliveredRows(t *testing.T)
 	}
 	if _, err := env.store.GameplayEvents.GetByIdempotencyKey(context.Background(), pendingEvent.IdempotencyKey); err != nil {
 		t.Fatalf("pending PostgreSQL event was removed by retention: %v", err)
+	}
+}
+
+func TestPostgresRegionProjectionSupersessionCompactsOnlyObsoleteRows(t *testing.T) {
+	env := newPersistenceTestEnv(t)
+	ctx := context.Background()
+	older := regionProjectionEventForOutboxTest(t, "pg-projection-supersede-v1", "pg-instance-b", "projection-target", 11, 5, 1, regionProjectionActionUpsert)
+	if created, err := env.store.GameplayEvents.Create(ctx, older); err != nil || !created {
+		t.Fatalf("create older PostgreSQL projection created=%v error=%v", created, err)
+	}
+	newer := regionProjectionEventForOutboxTest(t, "pg-projection-supersede-v2", "pg-instance-b", "projection-target", 11, 5, 2, regionProjectionActionDespawn)
+	if created, err := env.store.GameplayEvents.Create(ctx, newer); err != nil || !created {
+		t.Fatalf("create newer PostgreSQL projection created=%v error=%v", created, err)
+	}
+	superseded, err := env.store.GameplayEvents.SupersedeRegionProjection(ctx, RegionProjectionSupersession{
+		TargetServerInstanceID:          newer.TargetServerInstanceID,
+		TargetCharacterID:               newer.TargetCharacterID,
+		ProjectionSourceCharacterID:     newer.ProjectionSourceCharacterID,
+		ProjectionSourceFencingToken:    newer.ProjectionSourceFencingToken,
+		ProjectionVersion:               newer.ProjectionVersion,
+		ProjectionRecipientFencingToken: newer.ProjectionRecipientFencingToken,
+		SupersedingEventID:              newer.ID,
+		SupersededAt:                    time.Now().UTC(),
+	})
+	if err != nil || superseded != 1 {
+		t.Fatalf("SupersedeRegionProjection() superseded=%d error=%v", superseded, err)
+	}
+	persistedOlder, err := env.store.GameplayEvents.GetByID(ctx, older.ID)
+	if err != nil || persistedOlder.SupersededAt.IsZero() || persistedOlder.SupersededByEventID != newer.ID {
+		t.Fatalf("older PostgreSQL projection not superseded safely: event=%+v error=%v", persistedOlder, err)
+	}
+	claimed, err := env.store.GameplayEvents.Claim(ctx, "pg-instance-b", "pg-projection-worker", time.Now(), time.Minute, 10)
+	if err != nil || len(claimed) != 1 || claimed[0].ID != newer.ID {
+		t.Fatalf("PostgreSQL Claim() did not keep only current projection: claimed=%+v error=%v", claimed, err)
+	}
+	deleted, err := env.store.GameplayEvents.DeleteSupersededBefore(ctx, time.Now().Add(time.Second), 10)
+	if err != nil || deleted != 1 {
+		t.Fatalf("PostgreSQL DeleteSupersededBefore() deleted=%d error=%v", deleted, err)
+	}
+	if _, err := env.store.GameplayEvents.GetByID(ctx, older.ID); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("obsolete PostgreSQL projection survived compaction: %v", err)
+	}
+	if persistedNewer, err := env.store.GameplayEvents.GetByID(ctx, newer.ID); err != nil || !persistedNewer.SupersededAt.IsZero() {
+		t.Fatalf("current PostgreSQL projection was compacted incorrectly: event=%+v error=%v", persistedNewer, err)
 	}
 }
 

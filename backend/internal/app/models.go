@@ -51,28 +51,46 @@ type GameplayCommandRecord struct {
 }
 
 type GameplayEvent struct {
-	ID                     int64
-	IdempotencyKey         string
-	Type                   string
-	Payload                json.RawMessage
-	TargetServerInstanceID string
-	TargetRegionID         string
-	TargetSessionID        string
-	TargetCharacterID      string
-	CreatedAt              time.Time
-	AvailableAt            time.Time
-	ClaimedAt              time.Time
-	ClaimOwnerID           string
-	ClaimDeadlineAt        time.Time
-	DeliveredAt            time.Time
-	DeadLetteredAt         time.Time
-	RetryCount             int
-	LastError              string
+	ID                              int64
+	IdempotencyKey                  string
+	Type                            string
+	Payload                         json.RawMessage
+	TargetServerInstanceID          string
+	TargetRegionID                  string
+	TargetSessionID                 string
+	TargetCharacterID               string
+	ProjectionSourceCharacterID     string
+	ProjectionSourceFencingToken    int64
+	ProjectionVersion               int64
+	ProjectionRecipientFencingToken int64
+	ProjectionAction                string
+	CreatedAt                       time.Time
+	AvailableAt                     time.Time
+	ClaimedAt                       time.Time
+	ClaimOwnerID                    string
+	ClaimDeadlineAt                 time.Time
+	DeliveredAt                     time.Time
+	DeadLetteredAt                  time.Time
+	SupersededAt                    time.Time
+	SupersededByEventID             int64
+	RetryCount                      int
+	LastError                       string
 }
 
 type GameplayEventFailure struct {
 	RetryCount   int
 	DeadLettered bool
+}
+
+type RegionProjectionSupersession struct {
+	TargetServerInstanceID          string
+	TargetCharacterID               string
+	ProjectionSourceCharacterID     string
+	ProjectionSourceFencingToken    int64
+	ProjectionVersion               int64
+	ProjectionRecipientFencingToken int64
+	SupersedingEventID              int64
+	SupersededAt                    time.Time
 }
 
 type GameplayEventReceipt struct {
