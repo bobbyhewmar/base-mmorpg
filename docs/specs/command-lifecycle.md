@@ -399,6 +399,7 @@ The initial namespaces are:
 | `pvp.flag_expired` | Server-owned exposure deadline expired and was cleared; emitted as delta annotation, not command rejection |
 | `pvp.same_party` | Actor and target share the same authoritative party |
 | `pvp.same_clan` | Actor and target share the same authoritative clan |
+| `pvp.same_alliance` | Actor and target share the same authoritative alliance during the minimum PvP phase |
 | `pvp.skill_not_supported` | Skill is outside the current single-target PvP slice |
 | `inventory.item_not_found` | Item instance cannot be resolved for the actor |
 | `inventory.item_not_equippable` | Item cannot occupy the requested slot |

@@ -43,6 +43,24 @@ export const formatRejectMessage = (
       return 'Skill failed: target is already dead.';
     case 'combat.actor_dead':
       return 'Action failed: actor is currently dead.';
+    case 'pvp.self_target':
+      return 'PvP failed: a character cannot attack itself.';
+    case 'pvp.target_unavailable':
+      return 'PvP failed: target player is no longer available.';
+    case 'pvp.target_out_of_region':
+      return 'PvP failed: target player is no longer in the current authoritative region.';
+    case 'pvp.region_restricted':
+      return 'PvP failed: this region does not currently allow open PvP.';
+    case 'pvp.safe_zone':
+      return 'PvP failed: safe-zone policy is blocking hostile damage here.';
+    case 'pvp.same_party':
+      return 'PvP failed: party members cannot attack each other.';
+    case 'pvp.same_clan':
+      return 'PvP failed: clan members cannot attack each other.';
+    case 'pvp.same_alliance':
+      return 'PvP failed: alliance members cannot attack each other in this phase.';
+    case 'pvp.skill_not_supported':
+      return 'PvP failed: this skill is outside the current single-target PvP slice.';
     case 'world.entity_not_known':
       return 'Skill failed: target is no longer known in the current region.';
     case 'world.entity_not_interactable':

@@ -1485,6 +1485,49 @@ button {
   white-space: nowrap;
 }
 
+.classic-player-combat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+
+.classic-player-combat-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 54px;
+  padding: 2px 7px;
+  border: 1px solid rgba(224, 196, 128, 0.32);
+  background: linear-gradient(180deg, rgba(33, 27, 19, 0.96), rgba(17, 13, 9, 0.96));
+  color: #cbb78d;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.classic-player-combat-state.neutral {
+  color: #cbb78d;
+}
+
+.classic-player-combat-state.pvp {
+  color: #c9914b;
+  border-color: rgba(201, 145, 75, 0.42);
+}
+
+.classic-player-combat-state.pk {
+  color: #d46868;
+  border-color: rgba(212, 104, 104, 0.45);
+}
+
+.classic-player-combat-detail {
+  color: #d5c7a1;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .frame-title span:first-child {
   font-weight: 800;
   font-size: 0.98rem;

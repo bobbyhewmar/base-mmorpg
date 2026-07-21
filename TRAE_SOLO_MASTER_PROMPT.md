@@ -1673,7 +1673,7 @@ Objetivo:
 Tarefas:
 
 1. [concluido no hardening] policy fail-closed por regiao mais santuario logico minimo de spawn em `stonecross_plaza`/`dawn_plaza`, avaliado apenas pelo backend sem alterar mapa/geodata/picking/bounds/spawn/assets; volumes ricos de content continuam futuros
-2. [concluido no slice minimo] target player legality separada de `select_target`, com known-set, attach, regiao, vida, party, clan, range, skill, MP e cooldown backend-owned
+2. [concluido no slice minimo] target player legality separada de `select_target`, com known-set, attach, regiao, vida, party, clan, alliance, range, skill, MP e cooldown backend-owned
 3. [concluido no hardening] PvP flag de 30s persistida como deadline absoluto, refresh por hit hostil, reconnect/restart logico enquanto valida e expiracao server-owned com limpeza duravel
 4. [concluido no slice minimo] classificacao de kill PvP versus PK no instante da morte
 5. [parcial] `pvp_kills`, `pk_count` e karma fixo persistentes; decay, recovery e penalidades economicas seguem futuras
@@ -1685,9 +1685,11 @@ Done:
 
 - PvP nao quebra PvE
 - `select_target` de player nao causa dano nem habilita sucesso local
+- a relation matrix minima de PvP agora fica congelada em `same_party`, `same_clan` e `same_alliance` bloqueando ataque hostil nesta fase
 - `basic_attack` e skill single-target contra player passam por lifecycle/dedup duravel e nao reaplicam side effects no replay
 - dano consome CP antes de HP; morte, classificacao, cooldown clear e respawn sao backend-owned
 - PK tem consequencia minima duravel por `pk_count + karma`; kill de alvo exposto ou karma-positive conta como PvP
+- HUD e read model continuam apenas projetando verdade autoritativa; o estado proprio `Neutral` / `PvP` / `PK` pode ser exibido de forma compacta apenas a partir de `pvp_flagged`, `pvp_flag_until_ms`, `pvp_kills`, `pk_count` e `karma`
 - lock process-local e apenas coordenacao de runtime; a garantia multi-instancia vem de transacao PostgreSQL com row lock dos dois combatentes e calculo sobre verdade duravel recarregada
 - hits recentes compoem ledger duravel de attribution: ultimo golpe letal define killer, attackers distintos em 30s viram assists e a morte anterior da vitima corta a janela
 - segunda kill do mesmo killer/victim em 10min marca `suspicious` e `repeated_kill_count` no audit, sem bloquear gameplay nem alterar rewards

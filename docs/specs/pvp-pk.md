@@ -48,6 +48,7 @@ A player attack is legal only when all of these are true at application time:
 - the region enables open PvP and neither actor nor target is inside a configured safe area
 - actor and target are not in the same authoritative party
 - actor and target are not in the same authoritative clan
+- actor and target are not in the same authoritative alliance for this minimum PvP phase
 - target is within the command's authoritative range
 - the skill is learned, active, supported for PvP, off cooldown, and affordable when `use_skill` is used
 
@@ -76,6 +77,8 @@ Attacking an otherwise eligible unflagged player is allowed. The risk is classif
 - killing an unflagged victim with zero karma increments `pk_count` and adds 100 karma
 - this slice has no karma decay, karma-reduction quest, item drop penalty, XP loss, jail, bounty, ranking, or economy penalty
 
+The current minimum slice deliberately keeps one server-owned PvP exposure deadline only. It does not implement dual timers, blinking phases, or client-authored exposure transitions.
+
 The fixed duration and fixed karma increment are project-owned minimum constants. They are not compatibility promises for a future balance pass.
 
 ## Persistence and Fanout
@@ -93,6 +96,8 @@ Durable command reservation still precedes domain application. The audit table a
 Each audit row records attacker and victim character/account identity, action and optional skill, applied CP and HP damage, hit/PvP-kill/PK-kill result, exposure state before and after, PvP-kill/PK-count before and after, karma before/after/delta, timestamp, command metadata, primary killer, assist character ids, suspicious state, and repeated-kill count. `GET /internal/pvp/events` is read-only, paginated, disabled by default, and protected by the same `X-Internal-Audit-Token` contract used by the existing internal audit surface. It supports attacker, victim, involved character, killer, suspicious, action/action-type, result, time-window, limit, and offset filters.
 
 The actor receives a correlated delta with their authoritative resources, cooldown, target, flag, counters, and a target entity patch. The victim receives their self delta through the authoritative runtime tick, and other sessions receive the updated player presence. The browser only projects these snapshots and deltas.
+
+The HUD may present a compact self-state indicator derived from `pvp_flagged`, `pvp_flag_until_ms`, `pvp_kills`, `pk_count`, and `karma`, but it must not infer hostility, legal attack status, or future state transitions from local target selection or local timers alone.
 
 ## Attribution and Anti-Feed Signal
 
@@ -120,6 +125,7 @@ These windows are project-owned investigation constants, not balance or reward p
 | `pvp.flag_expired` | Server-owned exposure deadline expired and was cleared; this annotates a state delta rather than rejecting an attack |
 | `pvp.same_party` | Actor and target share the same authoritative party |
 | `pvp.same_clan` | Actor and target share the same authoritative clan |
+| `pvp.same_alliance` | Actor and target share the same authoritative alliance in this minimum PvP phase |
 | `pvp.skill_not_supported` | Skill category is outside the current single-target PvP slice |
 | `world.entity_not_known` | Target is absent from the current authoritative known-set |
 | `combat.actor_dead` | Actor is dead |

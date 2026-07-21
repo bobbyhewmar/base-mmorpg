@@ -136,6 +136,14 @@ func (s *Server) processPvPCommand(ctx context.Context, session *Session, actor 
 	if sameClan {
 		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "pvp.same_clan", "Clan members cannot attack each other."))
 	}
+	sameAlliance, err := s.charactersShareAlliance(ctx, actor.characterID, target.characterID)
+	if err != nil {
+		s.recordStoreError("alliances.inspect_pvp_relation", err)
+		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to inspect player combat alliance relation."))
+	}
+	if sameAlliance {
+		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "pvp.same_alliance", "Alliance members cannot attack each other in the current PvP slice."))
+	}
 	if target.isPlayerDead() {
 		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "combat.target_dead", "Referenced target is already dead."))
 	}
@@ -292,6 +300,27 @@ func (s *Server) charactersShareClan(ctx context.Context, actorCharacterID strin
 		return false, err
 	}
 	return targetClan != nil && targetClan.ID == actorClan.ID, nil
+}
+
+func (s *Server) charactersShareAlliance(ctx context.Context, actorCharacterID string, targetCharacterID string) (bool, error) {
+	if s.store.Alliances == nil {
+		return false, errors.New("alliance repository unavailable")
+	}
+	actorAlliance, err := s.store.Alliances.GetByCharacterID(ctx, actorCharacterID)
+	if err != nil && !errors.Is(err, errRecordNotFound) {
+		return false, err
+	}
+	if actorAlliance == nil || actorAlliance.ID == "" {
+		return false, nil
+	}
+	targetAlliance, err := s.store.Alliances.GetByCharacterID(ctx, targetCharacterID)
+	if err != nil {
+		if errors.Is(err, errRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return targetAlliance != nil && targetAlliance.ID == actorAlliance.ID, nil
 }
 
 func (runtime *attachedRuntime) resolvePvPAttackLocked(command commandEnvelope, parsed *parsedCommand, target *attachedRuntime, now time.Time) (int, string, time.Duration, int, map[string]any) {

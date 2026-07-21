@@ -4,6 +4,7 @@ import { createInitialState, createMob, gameTemplates } from '../game/data/templ
 import type { GameState } from '../game/domain/types';
 import {
   chatFilterMatches,
+  getPlayerCombatHudView,
   getPlayerFeedbackState,
   getSkillButtonState,
   Hud,
@@ -171,6 +172,80 @@ describe('hud skill gating', () => {
     expect((hud as any).activeChatFilter).toBe('alliance');
     expect((hud as any).lastSnapshot).toBe('');
     expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it('projects the player PvP status only from authoritative self state', () => {
+    const state = createInitialState();
+
+    expect(getPlayerCombatHudView(state, 1_000)).toEqual({
+      label: 'Neutral',
+      detail: 'No current flag',
+      variant: 'neutral',
+    });
+
+    state.player.pvpFlagged = true;
+    state.player.pvpFlagUntilMs = 5_000;
+    expect(getPlayerCombatHudView(state, 1_000)).toEqual({
+      label: 'PvP',
+      detail: 'Flag 4s',
+      variant: 'pvp',
+    });
+
+    state.player.karma = 120;
+    expect(getPlayerCombatHudView(state, 1_000)).toEqual({
+      label: 'PK',
+      detail: 'Karma 120',
+      variant: 'pk',
+    });
+  });
+
+  it('does not infer player hostility from a local target selection alone', () => {
+    const state = createInitialState();
+    state.targetId = 'char_remote';
+    state.otherPlayers.char_remote = {
+      id: 'char_remote',
+      name: 'Enemy',
+      race: 'Human',
+      position: { x: 0, z: 0 },
+      facing: 0,
+      hp: 100,
+      cp: 100,
+      level: 10,
+      dead: false,
+      pvpFlagged: true,
+      pvpFlagUntilMs: 12_000,
+      pvpKills: 4,
+      pkCount: 0,
+      karma: 0,
+      baseClass: 'Fighter',
+      sex: 'Male',
+      hairStyle: 0,
+      hairColor: '#6b4e37',
+      skinType: 0,
+      archetypeId: 'human_fighter_male',
+      mountedPetId: null,
+    };
+
+    expect(getPlayerCombatHudView(state, 4_000)).toEqual({
+      label: 'Neutral',
+      detail: 'No current flag',
+      variant: 'neutral',
+    });
+  });
+
+  it('changes the hud snapshot when the authoritative PvP state changes', () => {
+    const state = createInitialState();
+    const neutralSnapshot = (Hud.prototype as unknown as HudSnapshotAccessor).createSnapshot(state);
+
+    state.player.pvpFlagged = true;
+    state.player.pvpFlagUntilMs = Date.now() + 10_000;
+    state.player.pvpKills = 2;
+    state.player.pkCount = 1;
+    state.player.karma = 150;
+
+    const flaggedSnapshot = (Hud.prototype as unknown as HudSnapshotAccessor).createSnapshot(state);
+
+    expect(flaggedSnapshot).not.toBe(neutralSnapshot);
   });
 
   it('keeps the party window closed by default and toggles it on demand', () => {

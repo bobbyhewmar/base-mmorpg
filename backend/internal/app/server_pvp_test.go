@@ -262,6 +262,32 @@ func TestPvPEligibilityRejectsInvalidTargetsWithoutDamage(t *testing.T) {
 			wantReason: "pvp.same_clan",
 		},
 		{
+			name: "same alliance",
+			prepare: func(h *pvpTestHarness) {
+				now := time.Now()
+				actorClan := &Clan{ID: "clan_actor", Name: "ActorClan", LeaderCharacterID: h.actor.characterID, CreatedAt: now, UpdatedAt: now}
+				if err := h.store.Clans.Create(context.Background(), actorClan, ClanMember{ClanID: actorClan.ID, CharacterID: h.actor.characterID, JoinedAt: now, CreatedAt: now, UpdatedAt: now}); err != nil {
+					t.Fatal(err)
+				}
+				targetClan := &Clan{ID: "clan_target", Name: "TargetClan", LeaderCharacterID: h.target.characterID, CreatedAt: now, UpdatedAt: now}
+				if err := h.store.Clans.Create(context.Background(), targetClan, ClanMember{ClanID: targetClan.ID, CharacterID: h.target.characterID, JoinedAt: now, CreatedAt: now, UpdatedAt: now}); err != nil {
+					t.Fatal(err)
+				}
+				alliance := &Alliance{ID: "alliance_same", Name: "SameAlliance", LeaderClanID: actorClan.ID, CreatedAt: now, UpdatedAt: now}
+				founder := AllianceMember{AllianceID: alliance.ID, ClanID: actorClan.ID, JoinedAt: now, CreatedAt: now, UpdatedAt: now}
+				if err := h.store.Alliances.Create(context.Background(), alliance, founder); err != nil {
+					t.Fatal(err)
+				}
+				if err := h.store.Alliances.AddMember(context.Background(), &AllianceMember{AllianceID: alliance.ID, ClanID: targetClan.ID, JoinedAt: now, CreatedAt: now, UpdatedAt: now}); err != nil {
+					t.Fatal(err)
+				}
+			},
+			command: func(h *pvpTestHarness) commandEnvelope {
+				return pvpCommand("cmd_same_alliance", 1, "basic_attack", map[string]any{"target_id": h.target.characterID})
+			},
+			wantReason: "pvp.same_alliance",
+		},
+		{
 			name:    "dead target",
 			prepare: func(h *pvpTestHarness) { h.target.currentHP = 0 },
 			command: func(h *pvpTestHarness) commandEnvelope {

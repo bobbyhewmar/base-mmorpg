@@ -409,6 +409,42 @@ type TargetHudView = {
   tone: 'mob' | 'player' | 'npc';
 };
 
+export type CombatStatusHudView = {
+  label: 'Neutral' | 'PvP' | 'PK';
+  detail: string;
+  variant: 'neutral' | 'pvp' | 'pk';
+};
+
+export const getPlayerCombatHudView = (state: GameState, nowMs: number): CombatStatusHudView => {
+  if (state.player.karma > 0) {
+    return {
+      label: 'PK',
+      detail: `Karma ${state.player.karma}`,
+      variant: 'pk',
+    };
+  }
+  if (state.player.pvpFlagged) {
+    if (typeof state.player.pvpFlagUntilMs === 'number') {
+      const remainingSeconds = Math.max(0, Math.ceil((state.player.pvpFlagUntilMs - nowMs) / 1000));
+      return {
+        label: 'PvP',
+        detail: `Flag ${remainingSeconds}s`,
+        variant: 'pvp',
+      };
+    }
+    return {
+      label: 'PvP',
+      detail: 'Flag active',
+      variant: 'pvp',
+    };
+  }
+  return {
+    label: 'Neutral',
+    detail: 'No current flag',
+    variant: 'neutral',
+  };
+};
+
 const getTargetHudView = (state: GameState): TargetHudView | null => {
   if (!state.targetId) {
     return null;
@@ -431,7 +467,14 @@ const getTargetHudView = (state: GameState): TargetHudView | null => {
 
   const otherPlayer = state.otherPlayers[state.targetId];
   if (otherPlayer) {
-    const combatState = otherPlayer.karma > 0 ? `PK · Karma ${otherPlayer.karma}` : otherPlayer.pvpFlagged ? 'PvP flagged' : 'Neutral';
+    const combatState =
+      otherPlayer.karma > 0
+        ? `PK · Karma ${otherPlayer.karma}`
+        : otherPlayer.pvpFlagged
+          ? typeof otherPlayer.pvpFlagUntilMs === 'number'
+            ? `PvP · Flag ${Math.max(0, Math.ceil((otherPlayer.pvpFlagUntilMs - state.timeMs) / 1000))}s`
+            : 'PvP flagged'
+          : 'Neutral';
     return {
       name: otherPlayer.name,
       subtitle: `Player - Lv ${otherPlayer.level} · ${combatState}`,
@@ -1666,6 +1709,7 @@ export class Hud {
     const nearbyWarehouse = getNearbyWarehouse(state);
     const nearbyTradePlayers = getNearbyTradePlayers(state).slice(0, 3);
     const nowMs = Date.now();
+    const playerCombatView = getPlayerCombatHudView(state, nowMs);
     const composeChannel = composeChatChannelForFilter(this.activeChatFilter);
     const composeSendLabel =
       composeChannel === 'party' ? '#' : composeChannel === 'alliance' ? '&' : composeChannel === 'whisper' ? '@' : '~';
@@ -1775,6 +1819,10 @@ export class Hud {
         <div class="classic-player-identity">
           <span>Lv ${state.player.level}</span>
           <strong>${state.player.name}</strong>
+        </div>
+        <div class="classic-player-combat-row">
+          <span class="classic-player-combat-state ${playerCombatView.variant}">${playerCombatView.label}</span>
+          <span class="classic-player-combat-detail">${playerCombatView.detail}</span>
         </div>
         <div class="classic-status-rows">
           <div class="classic-status-row cp">
@@ -2478,7 +2526,10 @@ export class Hud {
     const nowMs = Date.now();
     const hasTrackedInvite =
       state.partyInvites.some((invite) => invite.expiresAtMs > nowMs) ||
-      state.clanInvites.some((invite) => invite.expiresAtMs > nowMs);
+      state.clanInvites.some((invite) => invite.expiresAtMs > nowMs) ||
+      (state.player.pvpFlagged === true &&
+        typeof state.player.pvpFlagUntilMs === 'number' &&
+        state.player.pvpFlagUntilMs > nowMs);
     if (hasTrackedInvite) {
       if (this.inviteCountdownIntervalId === null) {
         this.inviteCountdownIntervalId = setInterval(() => {
@@ -2819,6 +2870,10 @@ export class Hud {
       state.clanInvites.length > 0
         ? state.clanInvites.map((invite) => Math.max(0, Math.ceil((invite.expiresAtMs - Date.now()) / 250))).join(':')
         : 'none';
+    const pvpFlagCountdownBucket =
+      state.player.pvpFlagged && typeof state.player.pvpFlagUntilMs === 'number'
+        ? Math.max(0, Math.ceil((state.player.pvpFlagUntilMs - Date.now()) / 250))
+        : 'none';
     return JSON.stringify({
       hp: state.player.hp,
       mp: state.player.mp,
@@ -2837,6 +2892,12 @@ export class Hud {
       cast: state.player.cast,
       logs: state.logs.map((entry) => entry.id),
       deadUntilMs: state.player.deadUntilMs,
+      pvpFlagged: state.player.pvpFlagged,
+      pvpFlagUntilMs: state.player.pvpFlagUntilMs,
+      pvpKills: state.player.pvpKills,
+      pkCount: state.player.pkCount,
+      karma: state.player.karma,
+      pvpFlagCountdownBucket,
       inventory: Object.values(state.items).map(
         (item) =>
           `${item.id}:${item.container}:${item.quantity}:${item.equipSlot ?? ''}:${JSON.stringify(item.instanceAttributes ?? null)}`,

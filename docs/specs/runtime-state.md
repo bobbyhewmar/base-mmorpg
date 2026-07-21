@@ -141,6 +141,8 @@ The current implementation persists the first chat slice in `chat_messages`, key
 - recoverable minimum chat history for audit and investigation flows
 - recoverable PvP/PK combat audit history for investigation flows
 - recoverable kill attribution and suspicious repeated-pair signals derived inside the combat transaction
+
+For the minimum PvP/PK slice, the browser receives `pvp_flagged`, `pvp_flag_until_ms`, `pvp_kills`, `pk_count`, and `karma` only through authoritative snapshot or delta projection. Local target selection and local timers may format that state for presentation, but they never infer hostility, legality, or future flag transitions.
 - recoverable cooldown end timestamps
 - recoverable session records
 - recoverable session ownership, lease deadline, owning instance, and fencing token
