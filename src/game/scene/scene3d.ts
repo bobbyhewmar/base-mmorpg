@@ -1641,7 +1641,7 @@ export class Scene3D {
       dead: Boolean(state.player.deadUntilMs),
       basicAttackCooldownMs: state.player.cooldowns.basic_attack ?? 0,
       cooldowns: state.player.cooldowns,
-      movementMode: this.movementVisualMode,
+      movementMode: state.player.movementMode ?? this.movementVisualMode,
     });
 
     const gear = getEquippedBySlot(state);
@@ -1717,7 +1717,10 @@ export class Scene3D {
       visual.group.position.copy(toWorld(otherPlayer.position));
       visual.group.rotation.y = -otherPlayer.facing + Math.PI * 0.5;
       applyPlayerVisualAppearance(visual, otherPlayer, { dead: otherPlayer.dead });
-      animatePlayerVisual(visual, state.timeMs, otherPlayer.position, { dead: otherPlayer.dead });
+      animatePlayerVisual(visual, state.timeMs, otherPlayer.position, {
+        dead: otherPlayer.dead,
+        movementMode: otherPlayer.movementMode,
+      });
     }
 
     for (const companionId of Array.from(this.companionVisuals.keys())) {

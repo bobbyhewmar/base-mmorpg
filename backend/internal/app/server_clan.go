@@ -287,71 +287,74 @@ func (s *Server) expireClanInvitesForDisconnectedCharacter(ctx context.Context, 
 	}
 
 	now := time.Now().UTC()
-	s.clanMu.Lock()
-	defer s.clanMu.Unlock()
+	affected := func() []string {
+		s.clanMu.Lock()
+		defer s.clanMu.Unlock()
 
-	inboundInvites, err := s.store.Clans.ListPendingInvitesByInvitee(ctx, characterID, now)
-	if err != nil && !errors.Is(err, errRecordNotFound) {
-		s.recordStoreError("clans.list_pending_invites_by_invitee", err, errRecordNotFound)
-		return
-	}
-	outboundInvites, err := s.store.Clans.ListPendingInvitesByInviter(ctx, characterID, now)
-	if err != nil && !errors.Is(err, errRecordNotFound) {
-		s.recordStoreError("clans.list_pending_invites_by_inviter", err, errRecordNotFound)
-		return
-	}
+		inboundInvites, err := s.store.Clans.ListPendingInvitesByInvitee(ctx, characterID, now)
+		if err != nil && !errors.Is(err, errRecordNotFound) {
+			s.recordStoreError("clans.list_pending_invites_by_invitee", err, errRecordNotFound)
+			return nil
+		}
+		outboundInvites, err := s.store.Clans.ListPendingInvitesByInviter(ctx, characterID, now)
+		if err != nil && !errors.Is(err, errRecordNotFound) {
+			s.recordStoreError("clans.list_pending_invites_by_inviter", err, errRecordNotFound)
+			return nil
+		}
 
-	affected := make([]string, 0, len(inboundInvites)+len(outboundInvites))
-	for _, invite := range inboundInvites {
-		if err := s.store.Clans.DeleteInvite(ctx, invite.ID); err != nil && !errors.Is(err, errRecordNotFound) {
-			s.recordStoreError("clans.delete_invite", err, errRecordNotFound)
-			continue
+		affected := make([]string, 0, len(inboundInvites)+len(outboundInvites))
+		for _, invite := range inboundInvites {
+			if err := s.store.Clans.DeleteInvite(ctx, invite.ID); err != nil && !errors.Is(err, errRecordNotFound) {
+				s.recordStoreError("clans.delete_invite", err, errRecordNotFound)
+				continue
+			}
+			affected = append(affected, invite.InviterCharacterID)
+			if err := s.sendOrProduceLifecycleSocialMessage(
+				ctx,
+				invite.InviterCharacterID,
+				remoteClanNoticeEventType,
+				fmt.Sprintf("clan-invite/%s/disconnect-expired/%s", invite.ID, invite.InviterCharacterID),
+				clanNoticeMessage(
+					clanNoticeStatusInviteExpired,
+					invite.ClanID,
+					invite.ID,
+					characterID,
+					"",
+					"",
+					"",
+					"Clan invite expired because the invited player disconnected.",
+				),
+			); err != nil {
+				s.recordStoreError("clans.publish_disconnect_expiry", err)
+			}
 		}
-		affected = append(affected, invite.InviterCharacterID)
-		if err := s.sendOrProduceLifecycleSocialMessage(
-			ctx,
-			invite.InviterCharacterID,
-			remoteClanNoticeEventType,
-			fmt.Sprintf("clan-invite/%s/disconnect-expired/%s", invite.ID, invite.InviterCharacterID),
-			clanNoticeMessage(
-				clanNoticeStatusInviteExpired,
-				invite.ClanID,
-				invite.ID,
-				characterID,
-				"",
-				"",
-				"",
-				"Clan invite expired because the invited player disconnected.",
-			),
-		); err != nil {
-			s.recordStoreError("clans.publish_disconnect_expiry", err)
+		for _, invite := range outboundInvites {
+			if err := s.store.Clans.DeleteInvite(ctx, invite.ID); err != nil && !errors.Is(err, errRecordNotFound) {
+				s.recordStoreError("clans.delete_invite", err, errRecordNotFound)
+				continue
+			}
+			affected = append(affected, invite.InviteeCharacterID)
+			if err := s.sendOrProduceLifecycleSocialMessage(
+				ctx,
+				invite.InviteeCharacterID,
+				remoteClanNoticeEventType,
+				fmt.Sprintf("clan-invite/%s/disconnect-expired/%s", invite.ID, invite.InviteeCharacterID),
+				clanNoticeMessage(
+					clanNoticeStatusInviteExpired,
+					invite.ClanID,
+					invite.ID,
+					characterID,
+					"",
+					"",
+					"",
+					"Clan invite expired because the inviter disconnected.",
+				),
+			); err != nil {
+				s.recordStoreError("clans.publish_disconnect_expiry", err)
+			}
 		}
-	}
-	for _, invite := range outboundInvites {
-		if err := s.store.Clans.DeleteInvite(ctx, invite.ID); err != nil && !errors.Is(err, errRecordNotFound) {
-			s.recordStoreError("clans.delete_invite", err, errRecordNotFound)
-			continue
-		}
-		affected = append(affected, invite.InviteeCharacterID)
-		if err := s.sendOrProduceLifecycleSocialMessage(
-			ctx,
-			invite.InviteeCharacterID,
-			remoteClanNoticeEventType,
-			fmt.Sprintf("clan-invite/%s/disconnect-expired/%s", invite.ID, invite.InviteeCharacterID),
-			clanNoticeMessage(
-				clanNoticeStatusInviteExpired,
-				invite.ClanID,
-				invite.ID,
-				characterID,
-				"",
-				"",
-				"",
-				"Clan invite expired because the inviter disconnected.",
-			),
-		); err != nil {
-			s.recordStoreError("clans.publish_disconnect_expiry", err)
-		}
-	}
+		return affected
+	}()
 	s.refreshClanStates(ctx, affected)
 }
 
@@ -711,7 +714,7 @@ func (s *Server) processClanCommand(ctx context.Context, session *Session, runti
 			"",
 			actorName+" declined the clan invitation.",
 		))
-		s.sendClanStateRefresh(ctx, invite.InviterCharacterID)
+		s.refreshClanStates(ctx, []string{invite.InviterCharacterID})
 		outbound = append(outbound, clanNoticeMessage(
 			clanNoticeStatusInviteDeclined,
 			invite.ClanID,

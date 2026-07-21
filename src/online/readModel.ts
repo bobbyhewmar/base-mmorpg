@@ -97,6 +97,7 @@ import {
   parseClanSnapshot,
   parseHotbarState,
   parseKnownSkills,
+  parseMovementMode,
   parseNpcInteractionSnapshot,
   parseOwnedPets,
   parsePartyInvites,
@@ -275,6 +276,7 @@ const otherPlayerSnapshot = (
     karma: typeof entity.state.karma === 'number' ? entity.state.karma : 0,
     position: { ...visualPosition },
     facing: visualFacing,
+    movementMode: parseMovementMode(entity.state.movement_mode),
     mountedPetId: typeof entity.state.mounted_pet_id === 'string' ? entity.state.mounted_pet_id : null,
   };
 };
@@ -411,6 +413,7 @@ export class OnlineReadModel {
   private authoritativePvPKills = 0;
   private authoritativePKCount = 0;
   private authoritativeKarma = 0;
+  private authoritativeMovementMode: 'run' | 'walk' = 'run';
   private authoritativeQuest: GameState['quest'] | null;
   private authoritativeParty: GameState['party'] | null;
   private authoritativePartyInvites: PendingPartyInviteState[] = [];
@@ -467,6 +470,7 @@ export class OnlineReadModel {
     this.authoritativePvPKills = typeof selfState?.pvp_kills === 'number' ? selfState.pvp_kills : 0;
     this.authoritativePKCount = typeof selfState?.pk_count === 'number' ? selfState.pk_count : 0;
     this.authoritativeKarma = typeof selfState?.karma === 'number' ? selfState.karma : 0;
+    this.authoritativeMovementMode = parseMovementMode(selfState?.movement_mode);
     this.authoritativeQuest = parseQuestSnapshot(selfState?.quest);
     this.authoritativeParty = parsePartySnapshot(selfState?.party);
     this.authoritativePartyInvites = parsePartyInvites(selfState?.party_invites);
@@ -508,6 +512,7 @@ export class OnlineReadModel {
     state.player.xp = this.authoritativeXP ?? state.player.xp;
     state.player.position = { ...this.projectedPlayerPosition };
     state.player.facing = this.projectedFacing;
+    state.player.movementMode = this.authoritativeMovementMode;
     state.player.moveTarget = this.currentPathDestination();
     state.player.cast = null;
     state.player.learnedSkills = this.authoritativeKnownSkills.map((skill) => ({ ...skill }));
@@ -1037,6 +1042,34 @@ export class OnlineReadModel {
       return null;
     }
     return this.createEmptyPetCommand('dismount_pet');
+  }
+
+  createToggleWalkRun(): GameplayCommandEnvelope | null {
+    if (this.isCommandFlowBlocked()) {
+      this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
+      return null;
+    }
+    if (this.authoritativeDead) {
+      this.pushLog('Actor is currently dead.', 'warning');
+      return null;
+    }
+    const commandSeq = this.nextCommandSeq++;
+    const commandId = makeCommandId(commandSeq);
+    const envelope: GameplayCommandEnvelope = {
+      protocol_version: 1,
+      command_id: commandId,
+      command_seq: commandSeq,
+      client_sent_at_ms: Date.now(),
+      type: 'toggle_walk_run',
+      payload: {},
+    };
+    this.pendingCommands.set(commandId, {
+      commandId,
+      commandSeq,
+      type: envelope.type,
+      status: 'sent',
+    });
+    return envelope;
   }
 
   private createEmptyPetCommand(
@@ -2697,6 +2730,13 @@ export class OnlineReadModel {
     }
     if (typeof self.karma === 'number') {
       this.authoritativeKarma = Math.max(0, self.karma);
+    }
+    if (self.movement_mode !== undefined) {
+      const nextMovementMode = parseMovementMode(self.movement_mode);
+      if (nextMovementMode !== this.authoritativeMovementMode) {
+        this.authoritativeMovementMode = nextMovementMode;
+        this.pushLog(`Movement mode: ${nextMovementMode === 'walk' ? 'Walk' : 'Run'}.`, 'neutral');
+      }
     }
     const maybeStats = parseAuthoritativeStats(self.stats);
     if (maybeStats) {

@@ -199,6 +199,7 @@ export interface PlayerState {
   authoritativeStats?: DerivedStats | null;
   position: Vec2;
   facing: number;
+  movementMode?: 'run' | 'walk';
   moveTarget: Vec2 | null;
   stationarySinceMs: number;
   lastIdleRegenAtMs: number;
@@ -283,6 +284,7 @@ export interface OtherPlayerState {
   karma: number;
   position: Vec2;
   facing: number;
+  movementMode?: 'run' | 'walk';
   mountedPetId: EntityId | null;
 }
 

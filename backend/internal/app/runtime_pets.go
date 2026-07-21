@@ -49,7 +49,7 @@ func (runtime *attachedRuntime) loadPetState(pets []CharacterPet) {
 
 	runtime.pets = normalizeCharacterPets(pets)
 	runtime.syncLocalPetEntityLocked()
-	runtime.derivedStats = applyMountedPetMoveSpeed(runtime.derivedStats, runtime.pets)
+	runtime.setMovementRunSpeedLocked(applyMountedPetMoveSpeed(runtime.derivedStats, runtime.pets).MoveSpeed)
 }
 
 func (runtime *attachedRuntime) recalculateDerivedStatsLocked(items []CharacterItem) {
@@ -58,7 +58,7 @@ func (runtime *attachedRuntime) recalculateDerivedStatsLocked(items []CharacterI
 		BaseClass: runtime.characterBaseClass,
 		Level:     runtime.characterLevel,
 	}, runtime.characterItems)
-	runtime.derivedStats = applyMountedPetMoveSpeed(runtime.derivedStats, runtime.pets)
+	runtime.setMovementRunSpeedLocked(applyMountedPetMoveSpeed(runtime.derivedStats, runtime.pets).MoveSpeed)
 	runtime.reconcileResourcePools()
 }
 

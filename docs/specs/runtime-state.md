@@ -41,6 +41,7 @@ The following data lives in authoritative runtime memory:
 - current target state
 - active cast state
 - active cooldown map
+- current locomotion mode (`run` or `walk`)
 - active projection of the durable PvP exposure deadline
 - current owned pet roster
 - current active companion known-set entity and mounted ownership link
@@ -260,6 +261,23 @@ The minimum cast state is:
 On disconnect during cast, the initial slice cancels the cast rather than persisting in-flight cast recovery.
 
 ### Hotbar State
+
+### Movement Mode
+
+Walk/run mode is runtime-only in the current slice.
+
+The minimum state is:
+
+- `movement_mode`
+
+The current slice defaults attach-time runtime to `run`, projects the current mode into `world/enter.self_state.movement_mode`, includes it in later self/runtime deltas and remote player presence updates, and derives the effective authoritative `stats.move_speed` from that mode.
+
+The canonical ratio is:
+
+- `run` = baseline authoritative move speed
+- `walk` = `run / 3`
+
+The system does not persist walk/run mode as durable character truth in PostgreSQL for this slice.
 
 Hotbar layout is durable by full character snapshot, not by drag microevent.
 

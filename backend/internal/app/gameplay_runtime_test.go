@@ -59,6 +59,20 @@ func deltaSelfStats(t *testing.T, message map[string]any) CharacterDerivedStats 
 	return stats
 }
 
+func deltaSelfMovementMode(t *testing.T, message map[string]any) string {
+	t.Helper()
+
+	self, ok := message["self"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected delta self payload, got %+v", message["self"])
+	}
+	movementMode, ok := self["movement_mode"].(string)
+	if !ok {
+		t.Fatalf("expected delta self movement_mode, got %+v", self["movement_mode"])
+	}
+	return movementMode
+}
+
 func deltaSelfHP(t *testing.T, message map[string]any) int {
 	t.Helper()
 
@@ -465,6 +479,96 @@ func TestAttachedRuntimeMoveIntentPublishesAuthoritativePathAndAdvancesOnTick(t 
 	}
 	if path := deltaSelfAuthoritativePath(t, tickMessages[0]); len(path) != 0 {
 		t.Fatalf("expected authoritative path to clear after arrival, got %+v", path)
+	}
+}
+
+func TestAttachedRuntimeToggleWalkRunPublishesEffectiveSpeedAndPreservesMovementPath(t *testing.T) {
+	runtime := newAttachedRuntime("sess_walk_toggle", &Character{
+		ID:           "char_walk_toggle",
+		LastRegionID: "dawn_plaza",
+		PositionX:    -8,
+		PositionZ:    0,
+	})
+	now := time.Now()
+	runtime.setActiveMovementLocked(movementPlan{
+		GeodataVersion:      "test_geo_v1",
+		AcceptedDestination: runtimePoint{X: 12, Z: 0},
+		Waypoints:           []runtimePoint{{X: 12, Z: 0}},
+	}, now)
+
+	outbound := runtime.processCommand(commandEnvelope{
+		ProtocolVersion: 1,
+		CommandID:       "cmd_walk_toggle",
+		CommandSeq:      1,
+		Type:            "toggle_walk_run",
+		Payload:         []byte(`{}`),
+	})
+
+	if len(outbound) != 2 || outbound[0]["kind"] != "ack" || outbound[1]["kind"] != "delta" {
+		t.Fatalf("expected ack and delta, got %+v", outbound)
+	}
+	if movementMode := deltaSelfMovementMode(t, outbound[1]); movementMode != "walk" {
+		t.Fatalf("expected movement mode walk, got %s", movementMode)
+	}
+	stats := deltaSelfStats(t, outbound[1])
+	if diff := stats.MoveSpeed - (runtime.movementRunSpeed * movementWalkSpeedRatio); diff < -0.0001 || diff > 0.0001 {
+		t.Fatalf("expected walk speed %.3f, got %.3f", runtime.movementRunSpeed*movementWalkSpeedRatio, stats.MoveSpeed)
+	}
+	if path := deltaSelfAuthoritativePath(t, outbound[1]); len(path) != 2 {
+		t.Fatalf("expected active movement path to remain authoritative after toggle, got %+v", path)
+	}
+	if runtime.activeMovement == nil {
+		t.Fatal("expected active movement to remain in place after toggling movement mode")
+	}
+}
+
+func TestAttachedRuntimeWalkMovementAdvancesAtOneThirdRunSpeed(t *testing.T) {
+	newStraightRuntime := func(sessionID string) *attachedRuntime {
+		runtime := newAttachedRuntime(sessionID, &Character{
+			ID:           sessionID,
+			LastRegionID: "dawn_plaza",
+			PositionX:    0,
+			PositionZ:    0,
+		})
+		return runtime
+	}
+
+	runRuntime := newStraightRuntime("sess_run_speed")
+	walkRuntime := newStraightRuntime("sess_walk_speed")
+	walkToggle := walkRuntime.processCommand(commandEnvelope{
+		ProtocolVersion: 1,
+		CommandID:       "cmd_walk_mode",
+		CommandSeq:      1,
+		Type:            "toggle_walk_run",
+		Payload:         []byte(`{}`),
+	})
+	if len(walkToggle) != 2 || walkToggle[1]["kind"] != "delta" {
+		t.Fatalf("expected walk toggle delta, got %+v", walkToggle)
+	}
+
+	now := time.Now()
+	plan := movementPlan{
+		GeodataVersion:      "test_geo_v1",
+		AcceptedDestination: runtimePoint{X: 12, Z: 0},
+		Waypoints:           []runtimePoint{{X: 12, Z: 0}},
+	}
+	runRuntime.setActiveMovementLocked(plan, now)
+	walkRuntime.setActiveMovementLocked(plan, now)
+
+	if !runRuntime.advanceMovementLocked(now.Add(time.Second)) {
+		t.Fatal("expected run movement to advance after one second")
+	}
+	if !walkRuntime.advanceMovementLocked(now.Add(time.Second)) {
+		t.Fatal("expected walk movement to advance after one second")
+	}
+	if diff := walkRuntime.position.X - (runRuntime.position.X * movementWalkSpeedRatio); diff < -0.0001 || diff > 0.0001 {
+		t.Fatalf("expected walk distance %.3f, got %.3f", runRuntime.position.X*movementWalkSpeedRatio, walkRuntime.position.X)
+	}
+	if walkRuntime.position.X >= runRuntime.position.X {
+		t.Fatalf("expected walk movement to remain slower than run, got walk=%.3f run=%.3f", walkRuntime.position.X, runRuntime.position.X)
+	}
+	if walkRuntime.activeMovement == nil || runRuntime.activeMovement == nil {
+		t.Fatalf("expected both runtimes to preserve active movement after partial advancement, walk=%+v run=%+v", walkRuntime.activeMovement, runRuntime.activeMovement)
 	}
 }
 

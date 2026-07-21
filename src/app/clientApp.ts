@@ -850,7 +850,8 @@ export class ClientApp {
         command = this.onlineReadModel.createDismountPet();
         break;
       case 'toggle_walk_run':
-        return;
+        command = this.onlineReadModel.createToggleWalkRun();
+        break;
       default:
         command = null;
         break;

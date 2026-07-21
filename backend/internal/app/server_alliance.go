@@ -421,71 +421,74 @@ func (s *Server) expireAllianceInvitesForDisconnectedCharacter(ctx context.Conte
 	}
 
 	now := time.Now().UTC()
-	s.allianceMu.Lock()
-	defer s.allianceMu.Unlock()
+	affected := func() []string {
+		s.allianceMu.Lock()
+		defer s.allianceMu.Unlock()
 
-	inboundInvites, err := s.store.Alliances.ListPendingInvitesByInvitee(ctx, characterID, now)
-	if err != nil && !errors.Is(err, errRecordNotFound) {
-		s.recordStoreError("alliances.list_pending_invites_by_invitee", err, errRecordNotFound)
-		return
-	}
-	outboundInvites, err := s.store.Alliances.ListPendingInvitesByInviter(ctx, characterID, now)
-	if err != nil && !errors.Is(err, errRecordNotFound) {
-		s.recordStoreError("alliances.list_pending_invites_by_inviter", err, errRecordNotFound)
-		return
-	}
+		inboundInvites, err := s.store.Alliances.ListPendingInvitesByInvitee(ctx, characterID, now)
+		if err != nil && !errors.Is(err, errRecordNotFound) {
+			s.recordStoreError("alliances.list_pending_invites_by_invitee", err, errRecordNotFound)
+			return nil
+		}
+		outboundInvites, err := s.store.Alliances.ListPendingInvitesByInviter(ctx, characterID, now)
+		if err != nil && !errors.Is(err, errRecordNotFound) {
+			s.recordStoreError("alliances.list_pending_invites_by_inviter", err, errRecordNotFound)
+			return nil
+		}
 
-	affected := make([]string, 0, len(inboundInvites)+len(outboundInvites))
-	for _, invite := range inboundInvites {
-		if err := s.store.Alliances.DeleteInvite(ctx, invite.ID); err != nil && !errors.Is(err, errRecordNotFound) {
-			s.recordStoreError("alliances.delete_invite", err, errRecordNotFound)
-			continue
+		affected := make([]string, 0, len(inboundInvites)+len(outboundInvites))
+		for _, invite := range inboundInvites {
+			if err := s.store.Alliances.DeleteInvite(ctx, invite.ID); err != nil && !errors.Is(err, errRecordNotFound) {
+				s.recordStoreError("alliances.delete_invite", err, errRecordNotFound)
+				continue
+			}
+			affected = appendUniqueCharacterIDs(affected, invite.InviterCharacterID)
+			if err := s.sendOrProduceLifecycleSocialMessage(
+				ctx,
+				invite.InviterCharacterID,
+				remoteAllianceNoticeEventType,
+				fmt.Sprintf("alliance-invite/%s/disconnect-expired/%s", invite.ID, invite.InviterCharacterID),
+				allianceNoticeMessage(
+					allianceNoticeStatusInviteExpired,
+					invite.AllianceID,
+					invite.ID,
+					characterID,
+					"",
+					invite.TargetClanID,
+					"",
+					"Alliance invite expired because the invited clan leader disconnected.",
+				),
+			); err != nil {
+				s.recordStoreError("alliances.publish_disconnect_expiry", err)
+			}
 		}
-		affected = appendUniqueCharacterIDs(affected, invite.InviterCharacterID)
-		if err := s.sendOrProduceLifecycleSocialMessage(
-			ctx,
-			invite.InviterCharacterID,
-			remoteAllianceNoticeEventType,
-			fmt.Sprintf("alliance-invite/%s/disconnect-expired/%s", invite.ID, invite.InviterCharacterID),
-			allianceNoticeMessage(
-				allianceNoticeStatusInviteExpired,
-				invite.AllianceID,
-				invite.ID,
-				characterID,
-				"",
-				invite.TargetClanID,
-				"",
-				"Alliance invite expired because the invited clan leader disconnected.",
-			),
-		); err != nil {
-			s.recordStoreError("alliances.publish_disconnect_expiry", err)
+		for _, invite := range outboundInvites {
+			if err := s.store.Alliances.DeleteInvite(ctx, invite.ID); err != nil && !errors.Is(err, errRecordNotFound) {
+				s.recordStoreError("alliances.delete_invite", err, errRecordNotFound)
+				continue
+			}
+			affected = appendUniqueCharacterIDs(affected, invite.InviteeCharacterID)
+			if err := s.sendOrProduceLifecycleSocialMessage(
+				ctx,
+				invite.InviteeCharacterID,
+				remoteAllianceNoticeEventType,
+				fmt.Sprintf("alliance-invite/%s/disconnect-expired/%s", invite.ID, invite.InviteeCharacterID),
+				allianceNoticeMessage(
+					allianceNoticeStatusInviteExpired,
+					invite.AllianceID,
+					invite.ID,
+					characterID,
+					"",
+					invite.TargetClanID,
+					"",
+					"Alliance invite expired because the inviting clan leader disconnected.",
+				),
+			); err != nil {
+				s.recordStoreError("alliances.publish_disconnect_expiry", err)
+			}
 		}
-	}
-	for _, invite := range outboundInvites {
-		if err := s.store.Alliances.DeleteInvite(ctx, invite.ID); err != nil && !errors.Is(err, errRecordNotFound) {
-			s.recordStoreError("alliances.delete_invite", err, errRecordNotFound)
-			continue
-		}
-		affected = appendUniqueCharacterIDs(affected, invite.InviteeCharacterID)
-		if err := s.sendOrProduceLifecycleSocialMessage(
-			ctx,
-			invite.InviteeCharacterID,
-			remoteAllianceNoticeEventType,
-			fmt.Sprintf("alliance-invite/%s/disconnect-expired/%s", invite.ID, invite.InviteeCharacterID),
-			allianceNoticeMessage(
-				allianceNoticeStatusInviteExpired,
-				invite.AllianceID,
-				invite.ID,
-				characterID,
-				"",
-				invite.TargetClanID,
-				"",
-				"Alliance invite expired because the inviting clan leader disconnected.",
-			),
-		); err != nil {
-			s.recordStoreError("alliances.publish_disconnect_expiry", err)
-		}
-	}
+		return affected
+	}()
 	s.refreshAllianceStates(ctx, affected)
 }
 
@@ -883,7 +886,7 @@ func (s *Server) processAllianceCommand(ctx context.Context, session *Session, r
 			actorClan.Name,
 			actorClan.Name+" declined the alliance invitation.",
 		))
-		s.sendAllianceStateRefresh(ctx, invite.InviterCharacterID)
+		s.refreshAllianceStates(ctx, []string{invite.InviterCharacterID})
 		outbound = append(outbound, allianceNoticeMessage(
 			allianceNoticeStatusInviteDeclined,
 			invite.AllianceID,

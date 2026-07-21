@@ -245,7 +245,7 @@ const HOTBAR_ACTIONS: Record<HotbarActionId, HotbarActionTemplate> = {
   toggle_walk_run: {
     id: 'toggle_walk_run',
     name: 'Walk/Run',
-    description: 'Toggle the local movement animation between run and walk.',
+    description: 'Toggle the movement mode between run and walk.',
     iconKey: 'WR',
     iconTint: '#8fb5e8',
   },

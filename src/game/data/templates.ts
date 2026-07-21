@@ -783,6 +783,7 @@ export const createInitialState = (): GameState => {
       karma: 0,
       position: { x: -8, z: 0 },
       facing: 0,
+      movementMode: 'run',
       moveTarget: null,
       stationarySinceMs: 0,
       lastIdleRegenAtMs: 0,

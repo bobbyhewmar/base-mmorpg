@@ -86,6 +86,13 @@ type queuedRuntimeLootPickup struct {
 	LootID     string
 }
 
+type movementMode string
+
+const (
+	movementModeRun  movementMode = "run"
+	movementModeWalk movementMode = "walk"
+)
+
 type pendingPartyRewardEvent struct {
 	XPAmount     int
 	LootEntityID string
@@ -145,6 +152,8 @@ type attachedRuntime struct {
 	nextLootSeq             int
 	pendingLootAppears      []runtimeEntity
 	derivedStats            CharacterDerivedStats
+	movementMode            movementMode
+	movementRunSpeed        float64
 	hotbarState             CharacterHotbarState
 	questState              CharacterQuestState
 	party                   *CharacterPartySnapshot
@@ -197,7 +206,46 @@ const (
 	idleRegenDelay         = 5 * time.Second
 	idleRegenTick          = time.Second
 	idleRegenPercent       = 0.03
+	movementWalkSpeedRatio = 1.0 / 3.0
 )
+
+func normalizedMovementMode(mode string) movementMode {
+	switch movementMode(mode) {
+	case movementModeWalk:
+		return movementModeWalk
+	default:
+		return movementModeRun
+	}
+}
+
+func effectiveMoveSpeedForMode(mode movementMode, runSpeed float64) float64 {
+	switch normalizedMovementMode(string(mode)) {
+	case movementModeWalk:
+		return runSpeed * movementWalkSpeedRatio
+	default:
+		return runSpeed
+	}
+}
+
+func (runtime *attachedRuntime) applyMovementModeLocked() {
+	runtime.movementMode = normalizedMovementMode(string(runtime.movementMode))
+	runtime.derivedStats.MoveSpeed = effectiveMoveSpeedForMode(runtime.movementMode, runtime.movementRunSpeed)
+}
+
+func (runtime *attachedRuntime) setMovementRunSpeedLocked(runSpeed float64) {
+	runtime.movementRunSpeed = runSpeed
+	runtime.applyMovementModeLocked()
+}
+
+func (runtime *attachedRuntime) toggleMovementModeLocked() movementMode {
+	if runtime.movementMode == movementModeWalk {
+		runtime.movementMode = movementModeRun
+	} else {
+		runtime.movementMode = movementModeWalk
+	}
+	runtime.applyMovementModeLocked()
+	return runtime.movementMode
+}
 
 func isRuntimeEntityAlive(entity runtimeEntity) bool {
 	alive, ok := entity.State["alive"].(bool)
@@ -462,6 +510,7 @@ func newAttachedRuntimeWithInitialEntities(sessionID string, character *Characte
 	state := persistedCharacterState(character)
 	now := time.Now()
 	activePvPDeadline := activePvPFlagUntil(state.PvPFlagUntil, now)
+	derivedStats := baseCharacterDerivedStats(&state)
 	knownEntities := map[string]runtimeEntity{}
 	spawnEntities := map[string]runtimeEntity{}
 	if includeFixtureEntities {
@@ -502,7 +551,9 @@ func newAttachedRuntimeWithInitialEntities(sessionID string, character *Characte
 		spawnEntities:           spawnEntities,
 		cooldownEndsAt:          map[string]time.Time{},
 		nextLootSeq:             1,
-		derivedStats:            baseCharacterDerivedStats(&state),
+		derivedStats:            derivedStats,
+		movementMode:            movementModeRun,
+		movementRunSpeed:        derivedStats.MoveSpeed,
 		hotbarState:             defaultCharacterHotbarState(&state),
 		questState:              defaultCharacterQuestState(),
 		movementPlanner:         defaultMovementPlanner,
@@ -805,6 +856,13 @@ func (runtime *attachedRuntime) domainValidateAndApply(command commandEnvelope, 
 		runtime.revision++
 		return []map[string]any{
 			deltaMessage(runtime.revision, command.CommandID, command.CommandSeq, runtime.movementSelfDeltaLocked(now, "target_cleared"), nil, nil),
+		}
+	case "toggle_walk_run":
+		now := time.Now()
+		runtime.toggleMovementModeLocked()
+		runtime.revision++
+		return []map[string]any{
+			deltaMessage(runtime.revision, command.CommandID, command.CommandSeq, runtime.movementSelfDeltaLocked(now, "movement_mode_changed"), nil, nil),
 		}
 	case "use_skill":
 		skill, exists := supportedSkills[parsed.skillID]
@@ -1180,6 +1238,7 @@ func (runtime *attachedRuntime) selfDelta(now time.Time, extra map[string]any) m
 		"pvp_kills":         runtime.pvpKills,
 		"pk_count":          runtime.pkCount,
 		"karma":             runtime.karma,
+		"movement_mode":     string(runtime.movementMode),
 		"stats":             runtime.derivedStats,
 		"known_skills":      runtime.knownSkillsSnapshot(),
 		"hotbar":            runtime.hotbarSnapshot(),
@@ -1536,6 +1595,7 @@ func (runtime *attachedRuntime) playerPresenceStateLocked() map[string]any {
 		"pk_count":          runtime.pkCount,
 		"karma":             runtime.karma,
 		"facing":            runtime.facing,
+		"movement_mode":     string(runtime.movementMode),
 		"mounted_pet_id":    runtime.projectedMountedPetIDLocked(),
 	}
 }
@@ -1561,7 +1621,7 @@ func playerPresencePatchFromEntity(entity runtimeEntity) map[string]any {
 		"entity_id": entity.EntityID,
 		"position":  entity.Position,
 	}
-	for _, key := range []string{"name", "level", "race", "base_class", "sex", "hair_style", "hair_color", "skin_type", "cp", "hp", "dead", "pvp_flagged", "pvp_flag_until_ms", "pvp_kills", "pk_count", "karma", "facing", "mounted_pet_id", "moving", "movement_destination", "visual_target_id", "projection_only", "projection_fence", "projection_version"} {
+	for _, key := range []string{"name", "level", "race", "base_class", "sex", "hair_style", "hair_color", "skin_type", "cp", "hp", "dead", "pvp_flagged", "pvp_flag_until_ms", "pvp_kills", "pk_count", "karma", "facing", "movement_mode", "mounted_pet_id", "moving", "movement_destination", "visual_target_id", "projection_only", "projection_fence", "projection_version"} {
 		if value, exists := entity.State[key]; exists {
 			patch[key] = value
 		}

@@ -252,71 +252,74 @@ func (s *Server) expirePartyInvitesForDisconnectedCharacter(ctx context.Context,
 	}
 
 	now := time.Now().UTC()
-	s.partyMu.Lock()
-	defer s.partyMu.Unlock()
+	affected := func() []string {
+		s.partyMu.Lock()
+		defer s.partyMu.Unlock()
 
-	inboundInvites, err := s.store.Parties.ListPendingInvitesByInvitee(ctx, characterID, now)
-	if err != nil && !errors.Is(err, errRecordNotFound) {
-		s.recordStoreError("parties.list_pending_invites_by_invitee", err, errRecordNotFound)
-		return
-	}
-	outboundInvites, err := s.store.Parties.ListPendingInvitesByInviter(ctx, characterID, now)
-	if err != nil && !errors.Is(err, errRecordNotFound) {
-		s.recordStoreError("parties.list_pending_invites_by_inviter", err, errRecordNotFound)
-		return
-	}
+		inboundInvites, err := s.store.Parties.ListPendingInvitesByInvitee(ctx, characterID, now)
+		if err != nil && !errors.Is(err, errRecordNotFound) {
+			s.recordStoreError("parties.list_pending_invites_by_invitee", err, errRecordNotFound)
+			return nil
+		}
+		outboundInvites, err := s.store.Parties.ListPendingInvitesByInviter(ctx, characterID, now)
+		if err != nil && !errors.Is(err, errRecordNotFound) {
+			s.recordStoreError("parties.list_pending_invites_by_inviter", err, errRecordNotFound)
+			return nil
+		}
 
-	affected := make([]string, 0, len(inboundInvites)+len(outboundInvites))
-	for _, invite := range inboundInvites {
-		if err := s.deleteInviteAndMaybeOrphanParty(ctx, &invite, now); err != nil {
-			s.recordStoreError("parties.delete_invite", err, errRecordNotFound)
-			continue
+		affected := make([]string, 0, len(inboundInvites)+len(outboundInvites))
+		for _, invite := range inboundInvites {
+			if err := s.deleteInviteAndMaybeOrphanParty(ctx, &invite, now); err != nil {
+				s.recordStoreError("parties.delete_invite", err, errRecordNotFound)
+				continue
+			}
+			affected = append(affected, invite.InviterCharacterID)
+			if err := s.sendOrProduceLifecycleSocialMessage(
+				ctx,
+				invite.InviterCharacterID,
+				remotePartyNoticeEventType,
+				fmt.Sprintf("party-invite/%s/disconnect-expired/%s", invite.ID, invite.InviterCharacterID),
+				partyNoticeMessage(
+					partyNoticeStatusInviteExpired,
+					invite.PartyID,
+					invite.ID,
+					characterID,
+					"",
+					"",
+					"",
+					"Party invite expired because the invited player disconnected.",
+				),
+			); err != nil {
+				s.recordStoreError("parties.publish_disconnect_expiry", err)
+			}
 		}
-		affected = append(affected, invite.InviterCharacterID)
-		if err := s.sendOrProduceLifecycleSocialMessage(
-			ctx,
-			invite.InviterCharacterID,
-			remotePartyNoticeEventType,
-			fmt.Sprintf("party-invite/%s/disconnect-expired/%s", invite.ID, invite.InviterCharacterID),
-			partyNoticeMessage(
-				partyNoticeStatusInviteExpired,
-				invite.PartyID,
-				invite.ID,
-				characterID,
-				"",
-				"",
-				"",
-				"Party invite expired because the invited player disconnected.",
-			),
-		); err != nil {
-			s.recordStoreError("parties.publish_disconnect_expiry", err)
+		for _, invite := range outboundInvites {
+			if err := s.deleteInviteAndMaybeOrphanParty(ctx, &invite, now); err != nil {
+				s.recordStoreError("parties.delete_invite", err, errRecordNotFound)
+				continue
+			}
+			affected = append(affected, invite.InviteeCharacterID)
+			if err := s.sendOrProduceLifecycleSocialMessage(
+				ctx,
+				invite.InviteeCharacterID,
+				remotePartyNoticeEventType,
+				fmt.Sprintf("party-invite/%s/disconnect-expired/%s", invite.ID, invite.InviteeCharacterID),
+				partyNoticeMessage(
+					partyNoticeStatusInviteExpired,
+					invite.PartyID,
+					invite.ID,
+					characterID,
+					"",
+					"",
+					"",
+					"Party invite expired because the inviter disconnected.",
+				),
+			); err != nil {
+				s.recordStoreError("parties.publish_disconnect_expiry", err)
+			}
 		}
-	}
-	for _, invite := range outboundInvites {
-		if err := s.deleteInviteAndMaybeOrphanParty(ctx, &invite, now); err != nil {
-			s.recordStoreError("parties.delete_invite", err, errRecordNotFound)
-			continue
-		}
-		affected = append(affected, invite.InviteeCharacterID)
-		if err := s.sendOrProduceLifecycleSocialMessage(
-			ctx,
-			invite.InviteeCharacterID,
-			remotePartyNoticeEventType,
-			fmt.Sprintf("party-invite/%s/disconnect-expired/%s", invite.ID, invite.InviteeCharacterID),
-			partyNoticeMessage(
-				partyNoticeStatusInviteExpired,
-				invite.PartyID,
-				invite.ID,
-				characterID,
-				"",
-				"",
-				"",
-				"Party invite expired because the inviter disconnected.",
-			),
-		); err != nil {
-			s.recordStoreError("parties.publish_disconnect_expiry", err)
-		}
-	}
+		return affected
+	}()
 	s.refreshPartyStates(ctx, affected)
 }
 

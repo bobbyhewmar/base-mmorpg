@@ -351,6 +351,15 @@ export interface DismountPetCommand {
   payload: EmptyCommandPayload;
 }
 
+export interface ToggleWalkRunCommand {
+  protocol_version: 1;
+  command_id: string;
+  command_seq: number;
+  client_sent_at_ms: number;
+  type: 'toggle_walk_run';
+  payload: EmptyCommandPayload;
+}
+
 export interface UnequipItemCommand {
   protocol_version: 1;
   command_id: string;
@@ -656,6 +665,7 @@ export type GameplayCommandEnvelope =
   | DismissPetCommand
   | MountPetCommand
   | DismountPetCommand
+  | ToggleWalkRunCommand
   | UnequipItemCommand
   | SplitItemStackCommand
   | MergeItemStacksCommand
@@ -898,6 +908,7 @@ export interface SelfStateSnapshot {
   pvp_kills?: number;
   pk_count?: number;
   karma?: number;
+  movement_mode?: 'run' | 'walk';
   cooldowns?: Record<string, number>;
   stats: AuthoritativePlayerStatsRecord;
   known_skills?: KnownSkillSnapshot[];

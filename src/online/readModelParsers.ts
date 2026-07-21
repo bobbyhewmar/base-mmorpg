@@ -59,6 +59,9 @@ const isHotbarActionId = (value: unknown): value is HotbarActionId =>
 
 const isBaseClass = isCanonicalBaseClass;
 
+export const parseMovementMode = (value: unknown): 'run' | 'walk' =>
+  value === 'walk' ? 'walk' : 'run';
+
 export const toItemInstanceAttributes = (
   item: CharacterItemRecord,
 ): ItemInstance['instanceAttributes'] => {

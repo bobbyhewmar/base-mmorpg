@@ -1118,6 +1118,88 @@ describe('online read model', () => {
     expect(model.snapshot.player.position.z).toBeLessThan(beforeDelta.z);
   });
 
+  it('keeps run as the baseline projected movement speed', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+
+    const runModel = new OnlineReadModel(regionContext, character, initialItemState, {
+      ...initialSelfState,
+      movement_mode: 'run',
+      stats: {
+        ...initialSelfState.stats,
+        move_speed: 3.225,
+      },
+    });
+    runModel.createMoveIntent({ x: 4, z: 0 });
+
+    advanceProjectionFrames(runModel, 1000);
+    const runDistance = runModel.snapshot.player.position.x + 8;
+
+    const walkModel = new OnlineReadModel(regionContext, character, initialItemState, {
+      ...initialSelfState,
+      movement_mode: 'walk',
+      stats: {
+        ...initialSelfState.stats,
+        move_speed: 1.075,
+      },
+    });
+    walkModel.createMoveIntent({ x: 4, z: 0 });
+
+    advanceProjectionFrames(walkModel, 1000);
+    const walkDistance = walkModel.snapshot.player.position.x + 8;
+
+    expect(runModel.snapshot.player.movementMode).toBe('run');
+    expect(walkModel.snapshot.player.movementMode).toBe('walk');
+    expect(runDistance).toBeGreaterThan(walkDistance);
+    expect(runDistance / Math.max(walkDistance, 0.0001)).toBeGreaterThan(2);
+  });
+
+  it('creates toggle_walk_run commands and applies authoritative movement mode updates', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+
+    const model = new OnlineReadModel(partyRegionContext, character, initialItemState, {
+      ...initialSelfState,
+      movement_mode: 'walk',
+      stats: {
+        ...initialSelfState.stats,
+        move_speed: 1.075,
+      },
+    });
+    const command = model.createToggleWalkRun();
+    expect(command?.type).toBe('toggle_walk_run');
+    model.createMoveIntent({ x: 4, z: 0 });
+
+    advanceProjectionFrames(model, 1000);
+
+    expect(model.snapshot.player.movementMode).toBe('walk');
+
+    model.applyMessage({
+      kind: 'delta',
+      emitted_at_ms: Date.now(),
+      revision: 1,
+      applies_to_command_id: command?.command_id ?? 'cmd_walk_toggle',
+      applies_to_command_seq: command?.command_seq ?? 1,
+      self: {
+        movement_mode: 'run',
+        stats: {
+          ...initialSelfState.stats,
+          move_speed: 3.225,
+        },
+      },
+      entities: [
+        {
+          entity_id: 'char_2',
+          movement_mode: 'walk',
+        },
+      ],
+    });
+
+    expect(model.snapshot.player.movementMode).toBe('run');
+    expect(model.snapshot.player.authoritativeStats?.moveSpeed).toBeCloseTo(3.225, 3);
+    expect(model.snapshot.otherPlayers.char_2?.movementMode).toBe('walk');
+  });
+
   it('reconciles position_correction smoothly instead of teleporting for ordinary corrections', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
@@ -1321,6 +1403,7 @@ describe('online read model', () => {
       karma: 0,
       position: { x: -4, z: 2 },
       facing: 0.5,
+      movementMode: 'run',
       mountedPetId: null,
     });
 

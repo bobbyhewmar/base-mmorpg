@@ -23,6 +23,7 @@ type CharacterSelfState struct {
 	PvPKills        int                               `json:"pvp_kills"`
 	PKCount         int                               `json:"pk_count"`
 	Karma           int                               `json:"karma"`
+	MovementMode    string                            `json:"movement_mode"`
 	Cooldowns       map[string]int                    `json:"cooldowns,omitempty"`
 	Stats           CharacterDerivedStats             `json:"stats"`
 	KnownSkills     []CharacterKnownSkill             `json:"known_skills"`
@@ -295,6 +296,7 @@ func selfStateFromItems(
 		PvPKills:        state.PvPKills,
 		PKCount:         state.PKCount,
 		Karma:           state.Karma,
+		MovementMode:    string(movementModeRun),
 		Cooldowns:       cooldowns,
 		Stats:           stats,
 		KnownSkills:     learnedSkillsForCharacter(state.BaseClass, state.Level),

@@ -316,6 +316,7 @@ export class WorldRuntime {
     container.replaceChildren(this.shell);
 
     this.store = new GameStore(options.initialState);
+    this.movementVisualMode = options.initialState.player.movementMode ?? 'run';
     this.scene = new Scene3D(this.shell, this.store, {
       interactive: true,
       onMoveIntent: options.onMoveIntent,
@@ -548,6 +549,13 @@ export class WorldRuntime {
       }
 
       const state = this.store.getState();
+      if (this.mode !== 'local') {
+        const authoritativeMovementMode = state.player.movementMode ?? 'run';
+        if (authoritativeMovementMode !== this.movementVisualMode) {
+          this.movementVisualMode = authoritativeMovementMode;
+          this.scene.setMovementVisualMode(this.movementVisualMode);
+        }
+      }
       this.scene.update(state);
       this.scene.render();
       this.hud.setCameraYaw(this.scene.getCameraYaw());
@@ -707,7 +715,11 @@ export class WorldRuntime {
 
   private activateHotbarAction(actionId: HotbarActionId): void {
     if (actionId === 'toggle_walk_run') {
-      this.toggleMovementVisualMode();
+      if (this.mode === 'local') {
+        this.toggleMovementVisualMode();
+      } else {
+        this.onUseHotbarAction?.(actionId);
+      }
       return;
     }
     if (this.mode === 'local') {

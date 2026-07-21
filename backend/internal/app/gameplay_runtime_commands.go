@@ -118,6 +118,14 @@ func (runtime *attachedRuntime) preValidate(command commandEnvelope) (*parsedCom
 		return &parsedCommand{
 			commandType: command.Type,
 		}, nil
+	case "toggle_walk_run":
+		var payload struct{}
+		if err := decodeCommandPayloadStrict(command.Payload, &payload); err != nil {
+			return nil, rejectMessage(command.CommandID, command.CommandSeq, "protocol.invalid_envelope", "Movement mode payload is invalid.")
+		}
+		return &parsedCommand{
+			commandType: command.Type,
+		}, nil
 	case "interact_npc":
 		var payload struct {
 			NPCID    string `json:"npc_id"`
