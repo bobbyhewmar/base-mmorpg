@@ -13,6 +13,9 @@ export const formatChatMessage = (
   if (message.channel === 'party') {
     return `[Party] ${message.sender_name}: ${message.text}`;
   }
+  if (message.channel === 'alliance') {
+    return `[Alliance] ${message.sender_name}: ${message.text}`;
+  }
   return `[Region] ${message.sender_name}: ${message.text}`;
 };
 
@@ -210,6 +213,8 @@ export const formatRejectMessage = (
       return 'Chat send failed: sending too fast. Wait a moment and try again.';
     case 'chat.party_required':
       return 'Party chat failed: character is not currently in a party.';
+    case 'chat.alliance_required':
+      return 'Alliance chat failed: character is not currently in an alliance.';
     case 'chat.whisper_target_required':
       return 'Whisper failed: choose an online target character name.';
     case 'chat.whisper_target_not_found':

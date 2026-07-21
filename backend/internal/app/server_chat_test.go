@@ -94,6 +94,87 @@ func countMessageKind(messages []map[string]any, kind string) int {
 	return count
 }
 
+func createChatTestClan(t *testing.T, server *Server, leader *partyTestClient, clanName string, commandSeq int) {
+	t.Helper()
+	leader.resetMessages()
+	outbound := dispatchPartyCommand(t, server, leader, "cmd_chat_create_clan_"+clanName, commandSeq, "create_clan", map[string]any{
+		"name": clanName,
+	})
+	if reason := extractRejectReason(outbound); reason != "" {
+		t.Fatalf("create clan %s reject=%q outbound=%+v", clanName, reason, outbound)
+	}
+}
+
+func inviteChatTestClanMember(t *testing.T, server *Server, leader *partyTestClient, target *partyTestClient, inviteSeq int, acceptSeq int) {
+	t.Helper()
+	leader.resetMessages()
+	target.resetMessages()
+	aimPartyInviteTarget(leader, target)
+	outbound := dispatchPartyCommand(t, server, leader, "cmd_chat_clan_invite_"+target.session.CharacterID, inviteSeq, "invite_clan_member", map[string]any{})
+	if reason := extractRejectReason(outbound); reason != "" {
+		t.Fatalf("invite clan member %s reject=%q outbound=%+v", target.session.CharacterID, reason, outbound)
+	}
+	inviteNotice := findClanNotice(target.messages, clanNoticeStatusInviteReceived)
+	if inviteNotice == nil {
+		t.Fatalf("missing clan invite notice for %s messages=%+v", target.session.CharacterID, target.messages)
+	}
+	inviteID, _ := inviteNotice["invite_id"].(string)
+	if inviteID == "" {
+		t.Fatalf("missing clan invite id in %+v", inviteNotice)
+	}
+	leader.resetMessages()
+	target.resetMessages()
+	acceptOutbound := dispatchPartyCommand(t, server, target, "cmd_chat_clan_accept_"+inviteID, acceptSeq, "accept_clan_invite", map[string]any{
+		"invite_id": inviteID,
+	})
+	if reason := extractRejectReason(acceptOutbound); reason != "" {
+		t.Fatalf("accept clan invite %s reject=%q outbound=%+v", inviteID, reason, acceptOutbound)
+	}
+	leader.resetMessages()
+	target.resetMessages()
+}
+
+func createChatTestAlliance(t *testing.T, server *Server, leader *partyTestClient, allianceName string, commandSeq int) {
+	t.Helper()
+	leader.resetMessages()
+	outbound := dispatchPartyCommand(t, server, leader, "cmd_chat_create_alliance_"+allianceName, commandSeq, "create_alliance", map[string]any{
+		"name": allianceName,
+	})
+	if reason := extractRejectReason(outbound); reason != "" {
+		t.Fatalf("create alliance %s reject=%q outbound=%+v", allianceName, reason, outbound)
+	}
+	leader.resetMessages()
+}
+
+func inviteChatTestAllianceClan(t *testing.T, server *Server, leader *partyTestClient, targetLeader *partyTestClient, inviteSeq int, acceptSeq int) {
+	t.Helper()
+	leader.resetMessages()
+	targetLeader.resetMessages()
+	aimPartyInviteTarget(leader, targetLeader)
+	outbound := dispatchPartyCommand(t, server, leader, "cmd_chat_alliance_invite_"+targetLeader.session.CharacterID, inviteSeq, "invite_alliance_clan", map[string]any{})
+	if reason := extractRejectReason(outbound); reason != "" {
+		t.Fatalf("invite alliance clan %s reject=%q outbound=%+v", targetLeader.session.CharacterID, reason, outbound)
+	}
+	inviteNotice := findAllianceNotice(targetLeader.messages, allianceNoticeStatusInviteReceived)
+	if inviteNotice == nil {
+		t.Fatalf("missing alliance invite notice for %s messages=%+v", targetLeader.session.CharacterID, targetLeader.messages)
+	}
+	inviteID, _ := inviteNotice["invite_id"].(string)
+	if inviteID == "" {
+		t.Fatalf("missing alliance invite id in %+v", inviteNotice)
+	}
+	leader.resetMessages()
+	targetLeader.resetMessages()
+	acceptOutbound := dispatchPartyCommand(t, server, targetLeader, "cmd_chat_alliance_accept_"+inviteID, acceptSeq, "accept_alliance_invite", map[string]any{
+		"invite_id": inviteID,
+	})
+	if reason := extractRejectReason(acceptOutbound); reason != "" {
+		t.Fatalf("accept alliance invite %s reject=%q outbound=%+v", inviteID, reason, acceptOutbound)
+	}
+	leader.resetMessages()
+	targetLeader.resetMessages()
+}
+
 func TestServerChatRegionFanOutAndPersistence(t *testing.T) {
 	store := newMemoryStore()
 	server := NewServer(":0", "", store)
@@ -397,6 +478,175 @@ func TestServerChatPartyAuthorityAndDedup(t *testing.T) {
 	}
 }
 
+func TestServerChatAllianceAuthorityFanOutAndPersistence(t *testing.T) {
+	store := newMemoryStore()
+	server := NewServer(":0", "", store)
+
+	leaderA := stageChatTestClient(t, server, store, "sess_chat_alliance_leader_a", &Character{
+		ID:           "char_chat_alliance_leader_a",
+		AccountID:    "acc_chat_alliance_leader_a",
+		Name:         "Arden",
+		BaseClass:    "Fighter",
+		Sex:          "Female",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+	})
+	memberA := stageChatTestClient(t, server, store, "sess_chat_alliance_member_a", &Character{
+		ID:           "char_chat_alliance_member_a",
+		AccountID:    "acc_chat_alliance_member_a",
+		Name:         "Lyra",
+		BaseClass:    "Mage",
+		Sex:          "Female",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+	})
+	leaderB := stageChatTestClient(t, server, store, "sess_chat_alliance_leader_b", &Character{
+		ID:           "char_chat_alliance_leader_b",
+		AccountID:    "acc_chat_alliance_leader_b",
+		Name:         "Selene",
+		BaseClass:    "Mage",
+		Sex:          "Female",
+		Level:        1,
+		LastRegionID: "gate_road",
+	})
+	outsider := stageChatTestClient(t, server, store, "sess_chat_alliance_outsider", &Character{
+		ID:           "char_chat_alliance_outsider",
+		AccountID:    "acc_chat_alliance_outsider",
+		Name:         "Bastion",
+		BaseClass:    "Fighter",
+		Sex:          "Male",
+		Level:        1,
+		LastRegionID: "gate_road",
+	})
+
+	createChatTestClan(t, server, leaderA, "Nightfall", 1)
+	inviteChatTestClanMember(t, server, leaderA, memberA, 2, 1)
+	createChatTestClan(t, server, leaderB, "Dawnbreak", 1)
+	createChatTestAlliance(t, server, leaderA, "Eclipse", 3)
+	inviteChatTestAllianceClan(t, server, leaderA, leaderB, 4, 2)
+
+	leaderA.resetMessages()
+	memberA.resetMessages()
+	leaderB.resetMessages()
+	outsider.resetMessages()
+
+	outbound := dispatchPartyCommand(t, server, memberA, "cmd_chat_alliance_1", 2, "send_chat_message", map[string]any{
+		"channel": chatChannelAlliance,
+		"text":    "Alliance ready.",
+	})
+	if reason := extractRejectReason(outbound); reason != "" {
+		t.Fatalf("alliance chat reject=%q outbound=%+v", reason, outbound)
+	}
+	senderMessage := findChatMessage(outbound, chatChannelAlliance)
+	if senderMessage == nil {
+		t.Fatalf("expected sender alliance chat payload, got %+v", outbound)
+	}
+	if leaderMessage := findChatMessage(leaderA.messages, chatChannelAlliance); leaderMessage == nil {
+		t.Fatalf("expected alliance delivery to same-clan recipient, got %+v", leaderA.messages)
+	}
+	if alliedMessage := findChatMessage(leaderB.messages, chatChannelAlliance); alliedMessage == nil {
+		t.Fatalf("expected alliance delivery to allied clan recipient, got %+v", leaderB.messages)
+	}
+	if outsiderMessage := findChatMessage(outsider.messages, chatChannelAlliance); outsiderMessage != nil {
+		t.Fatalf("expected no alliance delivery to outsider, got %+v", outsider.messages)
+	}
+
+	records, err := store.ChatMessages.ListByCharacterID(context.Background(), memberA.session.CharacterID)
+	if err != nil {
+		t.Fatalf("ChatMessages.ListByCharacterID() error = %v", err)
+	}
+	if len(records) != 1 || records[0].Channel != chatChannelAlliance || records[0].AllianceID == "" || records[0].Text != "Alliance ready." {
+		t.Fatalf("unexpected alliance chat records %+v", records)
+	}
+}
+
+func TestServerChatAllianceTransitionsCutFutureEligibility(t *testing.T) {
+	store := newMemoryStore()
+	server := NewServer(":0", "", store)
+
+	leaderA := stageChatTestClient(t, server, store, "sess_chat_alliance_transition_a", &Character{
+		ID:           "char_chat_alliance_transition_a",
+		AccountID:    "acc_chat_alliance_transition_a",
+		Name:         "Arden",
+		BaseClass:    "Fighter",
+		Sex:          "Female",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+	})
+	leaderB := stageChatTestClient(t, server, store, "sess_chat_alliance_transition_b", &Character{
+		ID:           "char_chat_alliance_transition_b",
+		AccountID:    "acc_chat_alliance_transition_b",
+		Name:         "Selene",
+		BaseClass:    "Mage",
+		Sex:          "Female",
+		Level:        1,
+		LastRegionID: "gate_road",
+	})
+	leaderC := stageChatTestClient(t, server, store, "sess_chat_alliance_transition_c", &Character{
+		ID:           "char_chat_alliance_transition_c",
+		AccountID:    "acc_chat_alliance_transition_c",
+		Name:         "Astra",
+		BaseClass:    "Fighter",
+		Sex:          "Female",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+	})
+	outsider := stageChatTestClient(t, server, store, "sess_chat_alliance_transition_outsider", &Character{
+		ID:           "char_chat_alliance_transition_outsider",
+		AccountID:    "acc_chat_alliance_transition_outsider",
+		Name:         "Bastion",
+		BaseClass:    "Fighter",
+		Sex:          "Male",
+		Level:        1,
+		LastRegionID: "gate_road",
+	})
+
+	createChatTestClan(t, server, leaderA, "Nightfall", 1)
+	createChatTestClan(t, server, leaderB, "Dawnbreak", 1)
+	createChatTestClan(t, server, leaderC, "Moonrise", 1)
+	createChatTestAlliance(t, server, leaderA, "Eclipse", 2)
+	inviteChatTestAllianceClan(t, server, leaderA, leaderB, 3, 2)
+	inviteChatTestAllianceClan(t, server, leaderA, leaderC, 4, 2)
+
+	rejectWithoutAlliance := dispatchPartyCommand(t, server, outsider, "cmd_chat_alliance_required", 1, "send_chat_message", map[string]any{
+		"channel": chatChannelAlliance,
+		"text":    "Should fail.",
+	})
+	requireRejectReason(t, rejectWithoutAlliance, "chat.alliance_required")
+
+	expelOutbound := dispatchPartyCommand(t, server, leaderA, "cmd_chat_alliance_expel", 5, "expel_alliance_clan", map[string]any{
+		"target_clan_id": leaderC.runtime.clan.ClanID,
+	})
+	if reason := extractRejectReason(expelOutbound); reason != "" {
+		t.Fatalf("alliance expel reject=%q outbound=%+v", reason, expelOutbound)
+	}
+	rejectAfterExpel := dispatchPartyCommand(t, server, leaderC, "cmd_chat_alliance_after_expel", 3, "send_chat_message", map[string]any{
+		"channel": chatChannelAlliance,
+		"text":    "Should fail after expel.",
+	})
+	requireRejectReason(t, rejectAfterExpel, "chat.alliance_required")
+
+	leaveOutbound := dispatchPartyCommand(t, server, leaderB, "cmd_chat_alliance_leave", 3, "leave_alliance", map[string]any{})
+	if reason := extractRejectReason(leaveOutbound); reason != "" {
+		t.Fatalf("alliance leave reject=%q outbound=%+v", reason, leaveOutbound)
+	}
+	rejectAfterLeave := dispatchPartyCommand(t, server, leaderB, "cmd_chat_alliance_after_leave", 4, "send_chat_message", map[string]any{
+		"channel": chatChannelAlliance,
+		"text":    "Should fail after leave.",
+	})
+	requireRejectReason(t, rejectAfterLeave, "chat.alliance_required")
+
+	dissolveOutbound := dispatchPartyCommand(t, server, leaderA, "cmd_chat_alliance_dissolve", 6, "dissolve_alliance", map[string]any{})
+	if reason := extractRejectReason(dissolveOutbound); reason != "" {
+		t.Fatalf("alliance dissolve reject=%q outbound=%+v", reason, dissolveOutbound)
+	}
+	rejectAfterDissolve := dispatchPartyCommand(t, server, leaderA, "cmd_chat_alliance_after_dissolve", 7, "send_chat_message", map[string]any{
+		"channel": chatChannelAlliance,
+		"text":    "Should fail after dissolve.",
+	})
+	requireRejectReason(t, rejectAfterDissolve, "chat.alliance_required")
+}
+
 func TestServerChatRateLimitRejectsBurstSpam(t *testing.T) {
 	store := newMemoryStore()
 	server := NewServer(":0", "", store)
@@ -465,7 +715,8 @@ func TestMemoryChatMessageRepoFilters(t *testing.T) {
 	createRecord(ChatMessageRecord{
 		ID:          "chat_repo_3",
 		CharacterID: characterB.ID,
-		Channel:     chatChannelParty,
+		Channel:     chatChannelAlliance,
+		AllianceID:  "alliance_repo_1",
 		Text:        "third",
 		CreatedAt:   now,
 	})
@@ -490,6 +741,18 @@ func TestMemoryChatMessageRepoFilters(t *testing.T) {
 	}
 	if len(filtered) != 1 || filtered[0].ID != "chat_repo_2" {
 		t.Fatalf("unexpected filtered chat records %+v", filtered)
+	}
+
+	allianceFiltered, err := store.ChatMessages.ListByFilter(context.Background(), ChatMessageQuery{
+		AllianceID: "alliance_repo_1",
+		Channel:    chatChannelAlliance,
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("ChatMessages.ListByFilter(alliance) error = %v", err)
+	}
+	if len(allianceFiltered) != 1 || allianceFiltered[0].ID != "chat_repo_3" || allianceFiltered[0].AllianceID != "alliance_repo_1" {
+		t.Fatalf("unexpected alliance filtered chat records %+v", allianceFiltered)
 	}
 }
 

@@ -106,6 +106,7 @@ Examples:
 - `region` chat has a non-empty authoritative current region and recipients are server-resolved from local runtime plus active durable ownership in that same region
 - actor death state does not block the current social chat slice
 - `party` chat requires current authoritative party membership
+- `alliance` chat requires current authoritative alliance membership derived from the actor's current clan
 - `whisper` requires an online target resolved by authoritative persisted character-name lookup and current ownership
 - shared kill XP eligibility is resolved only from the current authoritative party, attach, region, and alive state at kill time
 - party-owned loot pickup requires the actor to remain inside the loot's eligible party subset
@@ -181,9 +182,9 @@ For canonical-minimum alliance rules, the same authoritative boundary is also re
 - enforcing that the target invite recipient is the current leader of the target clan
 - preventing the leader clan from using `leave_alliance` in this phase
 - allowing `dissolve_alliance` only when only the leader clan remains
-- leaving manual leader transfer, auto-transfer, alliance chat, command channel, siege, clan war expansion, alliance warehouse, rich crest UX, complex privileges, and 24h classical cooldowns out of scope
+- leaving manual leader transfer, auto-transfer, command channel, siege, clan war expansion, alliance warehouse, rich crest UX, complex privileges, and 24h classical cooldowns out of scope
 
-For `send_chat_message`, the same authoritative commit boundary is responsible for persisting minimum chat history in `chat_messages`. Delivery scope remains server truth derived from current region, party membership, canonical character identity, and durable ownership. A remote whisper stores chat history, command outcome, and one `social.chat_message.v1` delivery intent atomically. Region chat stores the same history/outcome plus one exact-owner event per remote recipient and delivers to still-eligible local recipients only after commit. The current slice exposes only `region`, `party`, and `whisper`; party fanout remains local-instance. `local` remains reserved for a later distinct scope. The client never authors the final recipient set.
+For `send_chat_message`, the same authoritative commit boundary is responsible for persisting minimum chat history in `chat_messages`. Delivery scope remains server truth derived from current region, party membership, current alliance membership derived from clan truth, canonical character identity, and durable ownership. A remote whisper stores chat history, command outcome, and one `social.chat_message.v1` delivery intent atomically. Region chat stores the same history/outcome plus one exact-owner event per remote recipient and delivers to still-eligible local recipients only after commit. Alliance chat stores the same history/outcome plus one exact-owner event per remote allied recipient and delivers to still-eligible local allied recipients only after commit. The current slice exposes `region`, `party`, `alliance`, and `whisper`; party fanout remains local-instance while alliance fanout is cross-instance. `local` remains reserved for a later distinct scope. The client never authors the final recipient set.
 
 For player combat, a process-local mutex may coordinate runtime projection but cannot be the correctness boundary. PostgreSQL-backed mode serializes attacker/victim mutations through deterministic row locks and computes damage, death classification, counters, deadlines, cooldown mutation, attribution, repeated-pair signal, and audit from the locked durable state. The memory adapter mirrors this in one critical section. The generic post-command progression/cooldown flush must not run after this transaction, because it could overwrite a newer multi-instance combat state.
 
@@ -431,6 +432,7 @@ The initial namespaces are:
 | `chat.message_too_long` | Chat text exceeds the current maximum size |
 | `chat.rate_limited` | Chat sender exceeded the current burst limit |
 | `chat.party_required` | Party chat requires current authoritative party membership |
+| `chat.alliance_required` | Alliance chat requires current authoritative alliance membership |
 | `chat.whisper_target_required` | Whisper requires a target character name |
 | `chat.whisper_target_not_found` | Whisper target is not currently online or resolvable |
 | `loot.party_ineligible` | Referenced loot is reserved for a different eligible party subset |

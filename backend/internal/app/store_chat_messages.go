@@ -34,6 +34,7 @@ func sortChatMessageRecords(records []ChatMessageRecord) {
 
 func normalizeChatMessageRecord(record ChatMessageRecord) ChatMessageRecord {
 	record.Channel = strings.TrimSpace(strings.ToLower(record.Channel))
+	record.AllianceID = strings.TrimSpace(record.AllianceID)
 	record.TargetCharacterID = strings.TrimSpace(record.TargetCharacterID)
 	record.RegionID = strings.TrimSpace(record.RegionID)
 	record.Text = strings.TrimSpace(record.Text)
@@ -90,6 +91,9 @@ func (repo memoryChatMessageRepo) ListByFilter(_ context.Context, query ChatMess
 			continue
 		}
 		for _, record := range stored {
+			if query.AllianceID != "" && record.AllianceID != query.AllianceID {
+				continue
+			}
 			if query.TargetCharacterID != "" && record.TargetCharacterID != query.TargetCharacterID {
 				continue
 			}
@@ -128,6 +132,7 @@ func insertChatMessage(ctx context.Context, exec postgresExecContext, record Cha
 			character_id,
 			account_id,
 			channel,
+			alliance_id,
 			target_character_id,
 			region_id,
 			text,
@@ -135,11 +140,12 @@ func insertChatMessage(ctx context.Context, exec postgresExecContext, record Cha
 			command_id,
 			command_seq,
 			created_at
-		) VALUES ($1, $2, NULLIF($3, ''), $4, NULLIF($5, ''), NULLIF($6, ''), $7, NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, 0), $11)`,
+		) VALUES ($1, $2, NULLIF($3, ''), $4, NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), $8, NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, 0), $12)`,
 		record.ID,
 		record.CharacterID,
 		record.AccountID,
 		record.Channel,
+		record.AllianceID,
 		record.TargetCharacterID,
 		record.RegionID,
 		record.Text,
@@ -162,6 +168,7 @@ func scanChatMessageRows(rows *sql.Rows) ([]ChatMessageRecord, error) {
 			&record.CharacterID,
 			&record.AccountID,
 			&record.Channel,
+			&record.AllianceID,
 			&record.TargetCharacterID,
 			&record.RegionID,
 			&record.Text,
@@ -183,7 +190,7 @@ func scanChatMessageRows(rows *sql.Rows) ([]ChatMessageRecord, error) {
 func (p *postgresStoreBackend) ListChatMessagesByCharacterID(ctx context.Context, characterID string) ([]ChatMessageRecord, error) {
 	rows, err := p.db.QueryContext(
 		ctx,
-		`SELECT chat_message_id, character_id, COALESCE(account_id, ''), channel, COALESCE(target_character_id, ''), COALESCE(region_id, ''), text, COALESCE(session_id, ''), COALESCE(command_id, ''), COALESCE(command_seq, 0), created_at
+		`SELECT chat_message_id, character_id, COALESCE(account_id, ''), channel, COALESCE(alliance_id, ''), COALESCE(target_character_id, ''), COALESCE(region_id, ''), text, COALESCE(session_id, ''), COALESCE(command_id, ''), COALESCE(command_seq, 0), created_at
 		 FROM chat_messages
 		 WHERE character_id = $1
 		 ORDER BY created_at DESC, chat_message_id DESC`,
@@ -200,14 +207,18 @@ func (p *postgresStoreBackend) ListChatMessagesByFilter(ctx context.Context, que
 
 	var baseQuery strings.Builder
 	baseQuery.WriteString(
-		`SELECT chat_message_id, character_id, COALESCE(account_id, ''), channel, COALESCE(target_character_id, ''), COALESCE(region_id, ''), text, COALESCE(session_id, ''), COALESCE(command_id, ''), COALESCE(command_seq, 0), created_at
+		`SELECT chat_message_id, character_id, COALESCE(account_id, ''), channel, COALESCE(alliance_id, ''), COALESCE(target_character_id, ''), COALESCE(region_id, ''), text, COALESCE(session_id, ''), COALESCE(command_id, ''), COALESCE(command_seq, 0), created_at
 		 FROM chat_messages`,
 	)
-	conditions := make([]string, 0, 6)
+	conditions := make([]string, 0, 7)
 	args := make([]any, 0, 8)
 	if query.CharacterID != "" {
 		args = append(args, query.CharacterID)
 		conditions = append(conditions, fmt.Sprintf("character_id = $%d", len(args)))
+	}
+	if query.AllianceID != "" {
+		args = append(args, query.AllianceID)
+		conditions = append(conditions, fmt.Sprintf("alliance_id = $%d", len(args)))
 	}
 	if query.TargetCharacterID != "" {
 		args = append(args, query.TargetCharacterID)

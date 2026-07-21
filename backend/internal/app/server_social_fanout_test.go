@@ -277,6 +277,85 @@ func TestRemoteWhisperCrossesInstancesAndReplayDoesNotDuplicate(t *testing.T) {
 	}
 }
 
+func TestRemoteAllianceChatCrossesInstancesAndReplayDoesNotDuplicate(t *testing.T) {
+	fixture := newCrossInstanceSocialFixture(t, "social_alliance_chat")
+
+	createChatTestClan(t, fixture.serverA, fixture.actor, "RemoteNightfall", 1)
+	createChatTestClan(t, fixture.serverB, fixture.target, "RemoteDawnbreak", 1)
+	createChatTestAlliance(t, fixture.serverA, fixture.actor, "RemoteEclipse", 2)
+	aimPartyInviteTarget(fixture.actor, fixture.target)
+	inviteOutbound := dispatchPartyCommand(t, fixture.serverA, fixture.actor, "cmd_chat_alliance_invite_"+fixture.target.session.CharacterID, 3, "invite_alliance_clan", map[string]any{})
+	if extractRejectReason(inviteOutbound) != "" {
+		t.Fatalf("remote alliance invite outbound=%+v", inviteOutbound)
+	}
+	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/alliance-invite-worker"); claimed != 1 {
+		t.Fatalf("remote alliance invite claimed=%d", claimed)
+	}
+	inviteNotice := findAllianceNotice(fixture.targetMessageSnapshot(), allianceNoticeStatusInviteReceived)
+	if inviteNotice == nil {
+		t.Fatalf("remote alliance invite notice messages=%+v", fixture.targetMessageSnapshot())
+	}
+	inviteID, _ := inviteNotice["invite_id"].(string)
+	if inviteID == "" {
+		t.Fatalf("remote alliance invite id missing in %+v", inviteNotice)
+	}
+	fixture.actor.resetMessages()
+	fixture.target.resetMessages()
+	acceptOutbound := dispatchPartyCommand(t, fixture.serverB, fixture.target, "cmd_chat_alliance_accept_"+inviteID, 2, "accept_alliance_invite", map[string]any{
+		"invite_id": inviteID,
+	})
+	if extractRejectReason(acceptOutbound) != "" {
+		t.Fatalf("remote alliance accept outbound=%+v", acceptOutbound)
+	}
+	startingEventCount := fixture.backend.nextGameplayEventID
+
+	command := commandEnvelope{
+		ProtocolVersion: 1,
+		CommandID:       "remote_alliance_chat_command",
+		CommandSeq:      4,
+		Type:            "send_chat_message",
+		Payload: mustMarshalCommandPayload(t, map[string]any{
+			"channel": chatChannelAlliance,
+			"text":    "  coordinated\nadvance  ",
+		}),
+	}
+	first, _ := fixture.serverA.processGameplayCommandWithDedup(context.Background(), fixture.actor.session, fixture.actor.runtime, command)
+	if extractRejectReason(first) != "" || findChatMessage(first, chatChannelAlliance) == nil {
+		t.Fatalf("remote alliance chat result=%+v", first)
+	}
+	eventKey := "gameplay-command/" + fixture.actor.session.ID + "/4/social/chat-alliance/" + fixture.targetCharacter.ID
+	event, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), eventKey)
+	if err != nil || event.Type != remoteChatMessageEventType || event.TargetSessionID != fixture.target.session.ID {
+		t.Fatalf("remote alliance chat event=%+v err=%v", event, err)
+	}
+	if records, listErr := fixture.storeA.ChatMessages.ListByCharacterID(context.Background(), fixture.actorCharacter.ID); listErr != nil || len(records) != 1 || records[0].Channel != chatChannelAlliance || records[0].AllianceID == "" {
+		t.Fatalf("remote alliance chat history=%+v err=%v", records, listErr)
+	}
+
+	replayed, shouldFanOut := fixture.serverA.processGameplayCommandWithDedup(context.Background(), fixture.actor.session, fixture.actor.runtime, command)
+	if extractRejectReason(replayed) != "" || shouldFanOut || fixture.backend.nextGameplayEventID != startingEventCount+1 {
+		t.Fatalf("remote alliance replay=%+v fanout=%v event_count=%d", replayed, shouldFanOut, fixture.backend.nextGameplayEventID)
+	}
+	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/alliance-chat-worker"); claimed != 1 {
+		t.Fatalf("remote alliance claimed=%d", claimed)
+	}
+	targetMessages := fixture.targetMessageSnapshot()
+	remoteMessage := findChatMessage(targetMessages, chatChannelAlliance)
+	remoteEventID := float64(0)
+	if remoteMessage != nil {
+		remoteEventID, _ = remoteMessage["event_id"].(float64)
+	}
+	if remoteMessage == nil || int64(remoteEventID) != event.ID || remoteMessage["text"] != "coordinated advance" {
+		t.Fatalf("remote alliance delivery=%+v", targetMessages)
+	}
+	if err := fixture.serverB.deliverGameplayEvent(context.Background(), event, "instance-b/alliance-chat-duplicate"); err != nil {
+		t.Fatalf("duplicate remote alliance delivery error=%v", err)
+	}
+	if countMessageKind(fixture.targetMessageSnapshot(), chatMessageKind) != 1 {
+		t.Fatalf("duplicate remote alliance chat was rendered twice: %+v", fixture.targetMessageSnapshot())
+	}
+}
+
 func TestRemotePartyInviteAndAcceptDeliverAuthoritativeState(t *testing.T) {
 	fixture := newCrossInstanceSocialFixture(t, "social_party")
 	aimPartyInviteTarget(fixture.actor, fixture.target)

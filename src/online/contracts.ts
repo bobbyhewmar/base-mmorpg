@@ -208,7 +208,7 @@ export interface PartyInviteDecisionPayload {
   invite_id: string;
 }
 
-export type ChatChannel = 'region' | 'party' | 'whisper';
+export type ChatChannel = 'region' | 'party' | 'alliance' | 'whisper';
 
 export interface SendChatMessagePayload {
   channel: ChatChannel;

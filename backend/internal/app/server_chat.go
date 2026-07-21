@@ -112,6 +112,35 @@ func (s *Server) attachedSessionByCharacterName(characterName string) *attachedS
 	return nil
 }
 
+func (s *Server) allianceChatCharacterIDs(ctx context.Context, characterID string) (string, []string, error) {
+	if s == nil || s.store == nil || s.store.Alliances == nil {
+		return "", nil, errors.New("alliance chat store is unavailable")
+	}
+	alliance, err := s.store.Alliances.GetByCharacterID(ctx, characterID)
+	if err != nil {
+		return "", nil, err
+	}
+	members, err := s.store.Alliances.ListMembers(ctx, alliance.ID)
+	if err != nil {
+		return "", nil, err
+	}
+	recipients := make([]string, 0)
+	seen := map[string]struct{}{}
+	for _, member := range members {
+		for _, memberCharacterID := range s.clanCharacterIDs(ctx, member.ClanID) {
+			if memberCharacterID == "" {
+				continue
+			}
+			if _, exists := seen[memberCharacterID]; exists {
+				continue
+			}
+			seen[memberCharacterID] = struct{}{}
+			recipients = append(recipients, memberCharacterID)
+		}
+	}
+	return alliance.ID, recipients, nil
+}
+
 func (s *Server) processChatCommand(ctx context.Context, session *Session, runtime *attachedRuntime, command commandEnvelope) []map[string]any {
 	if session == nil || runtime == nil || s == nil || s.store == nil || s.store.ChatMessages == nil {
 		return []map[string]any{rejectMessage(command.CommandID, command.CommandSeq, "internal.unexpected_error", "Gameplay chat pipeline is unavailable.")}
@@ -130,7 +159,7 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 	outbound := []map[string]any{ackMessage(command.CommandID, command.CommandSeq)}
 
 	channel := strings.TrimSpace(strings.ToLower(parsed.chatChannel))
-	if channel != chatChannelRegion && channel != chatChannelParty && channel != chatChannelWhisper {
+	if channel != chatChannelRegion && channel != chatChannelParty && channel != chatChannelAlliance && channel != chatChannelWhisper {
 		runtime.mu.Unlock()
 		return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "chat.channel_unknown", "Chat channel is not supported."))
 	}
@@ -159,6 +188,8 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 	}
 
 	var partyMemberIDs []string
+	allianceID := ""
+	var allianceMemberIDs []string
 	if channel == chatChannelParty {
 		if runtime.party == nil || len(runtime.party.Members) == 0 {
 			runtime.mu.Unlock()
@@ -173,6 +204,17 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 		}
 	}
 	runtime.mu.Unlock()
+
+	if channel == chatChannelAlliance {
+		var allianceErr error
+		allianceID, allianceMemberIDs, allianceErr = s.allianceChatCharacterIDs(ctx, actorCharacterID)
+		if allianceErr != nil {
+			if errors.Is(allianceErr, errRecordNotFound) {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "chat.alliance_required", "Alliance chat requires current alliance membership."))
+			}
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve authoritative alliance membership."))
+		}
+	}
 
 	targetCharacterName := ""
 	targetCharacterID := ""
@@ -214,6 +256,7 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 		CharacterID:       actorCharacterID,
 		AccountID:         session.AccountID,
 		Channel:           channel,
+		AllianceID:        allianceID,
 		TargetCharacterID: targetCharacterID,
 		Text:              text,
 		SessionID:         session.ID,
@@ -264,6 +307,46 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote whisper delivery."))
 		}
 	}
+	allianceLocalRecipients := make([]*attachedSession, 0)
+	remoteAllianceEvents := make([]*GameplayEvent, 0)
+	if channel == chatChannelAlliance {
+		notified := map[string]struct{}{
+			actorCharacterID: {},
+		}
+		for _, memberCharacterID := range allianceMemberIDs {
+			if memberCharacterID == "" {
+				continue
+			}
+			if _, exists := notified[memberCharacterID]; exists {
+				continue
+			}
+			notified[memberCharacterID] = struct{}{}
+			scope, attached, ownership, presenceErr := s.resolveCharacterPresence(ctx, memberCharacterID)
+			if presenceErr != nil {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve authoritative alliance recipients."))
+			}
+			switch scope {
+			case characterPresenceLocal:
+				if attached != nil && attached.runtime != nil {
+					allianceLocalRecipients = append(allianceLocalRecipients, attached)
+				}
+			case characterPresenceRemote:
+				event, buildErr := buildRemoteSocialDeliveryEvent(
+					session,
+					command,
+					ownership,
+					memberCharacterID,
+					remoteChatMessageEventType,
+					"chat-alliance",
+					recipientMessage,
+				)
+				if buildErr != nil {
+					return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote alliance chat delivery."))
+				}
+				remoteAllianceEvents = append(remoteAllianceEvents, event)
+			}
+		}
+	}
 	remoteRegionEvents := make([]*GameplayEvent, 0)
 	if channel == chatChannelRegion {
 		ownerships, ownershipErr := s.store.GameplaySessions.ListActiveOwnershipsByRegion(ctx, actorRegionID)
@@ -306,6 +389,11 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote region chat delivery."))
 		}
 	}
+	for _, event := range remoteAllianceEvents {
+		if err := collectGameplayEvent(ctx, event); err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote alliance chat delivery."))
+		}
+	}
 
 	switch channel {
 	case chatChannelRegion:
@@ -344,6 +432,14 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 	case chatChannelWhisper:
 		if whisperTarget != nil && whisperTarget.runtime != nil && whisperTarget.runtime.characterID != actorCharacterID {
 			deferSocialSideEffect(ctx, func() { _ = whisperTarget.sendSerialized(recipientMessage) })
+		}
+	case chatChannelAlliance:
+		for _, target := range allianceLocalRecipients {
+			if target == nil || target.runtime == nil || target.runtime.characterID == actorCharacterID {
+				continue
+			}
+			target := target
+			deferSocialSideEffect(ctx, func() { _ = target.sendSerialized(recipientMessage) })
 		}
 	}
 

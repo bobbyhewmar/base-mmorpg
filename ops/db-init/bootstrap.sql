@@ -332,6 +332,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   character_id TEXT NOT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
   account_id TEXT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
   channel TEXT NOT NULL,
+  alliance_id TEXT NULL,
   target_character_id TEXT NULL REFERENCES characters(character_id) ON DELETE CASCADE,
   region_id TEXT NULL,
   text TEXT NOT NULL,
@@ -341,7 +342,10 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS alliance_id TEXT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_chat_messages_character_id ON chat_messages(character_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_alliance_id ON chat_messages(alliance_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_target_character_id ON chat_messages(target_character_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_channel ON chat_messages(channel, created_at);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_region_id ON chat_messages(region_id, created_at);

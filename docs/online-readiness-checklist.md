@@ -171,8 +171,8 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Disconnect of inviter or invitee cancels the pending invite; late accept after expiry or disconnect does not recreate stale party state.
 - [x] The party cap is 9 and the party does not remain functional at one member; leave or kick that drops the roster to one dissolves the party.
 - [x] Leader leave transfers leadership deterministically to the oldest remaining member when 2 or more members remain; manual leader transfer remains out of scope.
-- [x] `send_chat_message` validates only the current functional channels (`region`, `party`, `whisper`), text bounds, whisper target lookup, party membership, and rate limits on the backend.
-- [x] `chat_message` fans out only to same-region sessions, online party members, or the named whisper target plus sender.
+- [x] `send_chat_message` validates only the current functional channels (`region`, `party`, `alliance`, `whisper`), text bounds, whisper target lookup, current alliance membership when required, and rate limits on the backend.
+- [x] `chat_message` fans out only to same-region sessions, online party members, current online or attached members of the sender's alliance, or the named whisper target plus sender.
 - [x] A named whisper target online on another instance receives `social.chat_message.v1` through the outbox; text stays server-sanitized and bounded.
 - [x] Region chat resolves active same-region ownership server-side, delivers local recipients only after commit, and creates one exact-owner outbox event plus durable receipt per remote recipient; other regions are excluded.
 - [x] Party/clan invite, accept, decline, leave, kick, and dissolve lifecycle feedback reaches affected remote-owned members through idempotent outbox events.
@@ -202,7 +202,7 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Alliance invite acceptance adds the target clan and consumes the invite atomically, with storage-level uniqueness for one live outbound invite per leader alliance and one live inbound invite per target clan.
 - [x] `world/enter` and attach-time runtime hydration restore authoritative `alliance` and `alliance_invites` snapshots without client-authored success.
 - [x] `ALT+N` also projects minimum alliance truth on top of clan truth with `Create Alliance`, joined alliance summary, authority-only `Invite Clan` or `Expel` or `Dissolve Alliance`, leader-clan-only restrictions, and a dedicated non-draggable alliance invite modal above the hotbar.
-- [x] Alliance chat, command channel, siege, clan war expansion, alliance warehouse, rich crest UX, complex privileges, cooldowns classicos de 24h, and manual leader transfer remain intentionally out of scope for this slice.
+- [x] Command channel, siege, clan war expansion, alliance warehouse, rich crest UX, complex privileges, cooldowns classicos de 24h, and manual leader transfer remain intentionally out of scope for this slice.
 - [x] Alliance, siege, clan war expansion, clan chat, clan warehouse, clan skills, academy or subunits, rich crest UX, complex privileges, and manual leader transfer remain intentionally out of scope for this slice.
 - [x] `/invite Nome`, command channel, round-robin, master loot, dice or distribution UI, clan or alliance reward sharing, party finder, matchmaking, offline mail, manual leader transfer, and advanced moderation remain intentionally out of scope for this slice.
 

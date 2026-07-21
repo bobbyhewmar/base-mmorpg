@@ -5,6 +5,7 @@ import "time"
 const (
 	chatChannelRegion  = "region"
 	chatChannelParty   = "party"
+	chatChannelAlliance = "alliance"
 	chatChannelWhisper = "whisper"
 )
 
@@ -13,6 +14,7 @@ type ChatMessageRecord struct {
 	CharacterID       string
 	AccountID         string
 	Channel           string
+	AllianceID        string
 	TargetCharacterID string
 	RegionID          string
 	Text              string
@@ -24,6 +26,7 @@ type ChatMessageRecord struct {
 
 type ChatMessageQuery struct {
 	CharacterID       string
+	AllianceID        string
 	TargetCharacterID string
 	Channel           string
 	RegionID          string

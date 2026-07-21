@@ -146,6 +146,8 @@ describe('hud skill gating', () => {
     expect(chatFilterMatches('region', 'local' as never)).toBe(false);
     expect(chatFilterMatches('region', 'region')).toBe(true);
     expect(chatFilterMatches('region', 'party')).toBe(false);
+    expect(chatFilterMatches('alliance', 'alliance')).toBe(true);
+    expect(chatFilterMatches('alliance', 'party')).toBe(false);
     expect(chatFilterMatches('whisper', 'whisper')).toBe(true);
     expect(chatFilterMatches('whisper', 'region')).toBe(false);
   });

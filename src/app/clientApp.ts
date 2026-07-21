@@ -64,7 +64,7 @@ declare global {
       sendExpelAllianceClan: (targetClanId: string) => void;
       sendDissolveAlliance: () => void;
       sendChatMessage: (
-        channel: 'region' | 'party' | 'whisper',
+        channel: 'region' | 'party' | 'alliance' | 'whisper',
         text: string,
         targetCharacterName?: string,
       ) => void;
@@ -1241,7 +1241,7 @@ export class ClientApp {
   }
 
   private sendChatMessage(
-    channel: 'region' | 'party' | 'whisper',
+    channel: 'region' | 'party' | 'alliance' | 'whisper',
     text: string,
     targetCharacterName?: string,
   ): boolean {

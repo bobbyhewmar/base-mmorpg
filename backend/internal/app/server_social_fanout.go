@@ -313,6 +313,10 @@ func (s *Server) deliverRemoteChatMessage(ctx context.Context, event *GameplayEv
 		if targetCharacterID != "" || regionID == "" || regionID != event.TargetRegionID {
 			return errors.New("social.invalid_payload")
 		}
+	case chatChannelAlliance:
+		if targetCharacterID != "" || regionID != "" {
+			return errors.New("social.invalid_payload")
+		}
 	default:
 		return errors.New("social.invalid_payload")
 	}

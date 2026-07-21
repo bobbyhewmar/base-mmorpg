@@ -2454,7 +2454,7 @@ export class OnlineReadModel {
       this.pushLog('Command flow is blocked. Reset online bootstrap before sending new commands.', 'warning');
       return null;
     }
-    const normalizedChannel = channel === 'region' || channel === 'party' || channel === 'whisper'
+    const normalizedChannel = channel === 'region' || channel === 'party' || channel === 'alliance' || channel === 'whisper'
       ? channel
       : null;
     if (!normalizedChannel) {
@@ -2473,6 +2473,10 @@ export class OnlineReadModel {
     }
     if (normalizedChannel === 'party' && !this.authoritativeParty) {
       this.pushLog('Party chat failed: character is not currently in a party.', 'warning');
+      return null;
+    }
+    if (normalizedChannel === 'alliance' && !this.authoritativeAlliance) {
+      this.pushLog('Alliance chat failed: character is not currently in an alliance.', 'warning');
       return null;
     }
 

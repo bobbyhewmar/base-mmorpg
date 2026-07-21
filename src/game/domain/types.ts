@@ -384,7 +384,7 @@ export interface QuestState {
   goal: number;
 }
 
-export type LogChannel = 'system' | 'region' | 'party' | 'whisper' | 'trade';
+export type LogChannel = 'system' | 'region' | 'party' | 'alliance' | 'whisper' | 'trade';
 
 export interface LogEntry {
   id: string;

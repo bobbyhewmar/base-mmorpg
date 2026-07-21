@@ -80,14 +80,14 @@ type HudOptions = {
   onInteractNpc?: (npcId: string, actionId?: 'accept_task' | 'turn_in_task') => void;
   onCloseDialog?: () => void;
   onSendChatMessage?: (
-    channel: 'region' | 'party' | 'whisper',
+    channel: 'region' | 'party' | 'alliance' | 'whisper',
     text: string,
     targetCharacterName?: string,
   ) => boolean;
 };
 
-export type ChatLogFilter = 'all' | 'region' | 'party' | 'whisper';
-type ChatComposeChannel = 'region' | 'party' | 'whisper';
+export type ChatLogFilter = 'all' | 'region' | 'party' | 'alliance' | 'whisper';
+type ChatComposeChannel = 'region' | 'party' | 'alliance' | 'whisper';
 
 type HudPanelId =
   | 'player'
@@ -648,7 +648,7 @@ const escapeHudText = (value: string): string =>
     .replace(/'/g, '&#39;');
 
 const composeChatChannelForFilter = (filter: ChatLogFilter): ChatComposeChannel =>
-  filter === 'party' || filter === 'whisper' ? filter : 'region';
+  filter === 'party' || filter === 'alliance' || filter === 'whisper' ? filter : 'region';
 
 export const chatFilterMatches = (filter: ChatLogFilter, channel: GameState['logs'][number]['channel']): boolean => {
   if (filter === 'all') {
@@ -1482,7 +1482,7 @@ export class Hud {
   private readonly onInteractNpc?: (npcId: string, actionId?: 'accept_task' | 'turn_in_task') => void;
   private readonly onCloseDialog?: () => void;
   private readonly onSendChatMessage?: (
-    channel: 'region' | 'party' | 'whisper',
+    channel: 'region' | 'party' | 'alliance' | 'whisper',
     text: string,
     targetCharacterName?: string,
   ) => boolean;
@@ -1667,10 +1667,13 @@ export class Hud {
     const nearbyTradePlayers = getNearbyTradePlayers(state).slice(0, 3);
     const nowMs = Date.now();
     const composeChannel = composeChatChannelForFilter(this.activeChatFilter);
-    const composeSendLabel = composeChannel === 'party' ? '#' : composeChannel === 'whisper' ? '@' : '~';
+    const composeSendLabel =
+      composeChannel === 'party' ? '#' : composeChannel === 'alliance' ? '&' : composeChannel === 'whisper' ? '@' : '~';
     const composePlaceholder =
       composeChannel === 'party'
         ? 'Party message'
+        : composeChannel === 'alliance'
+          ? 'Alliance message'
         : composeChannel === 'whisper'
           ? 'Whisper message'
           : 'Region message';
@@ -1925,6 +1928,7 @@ export class Hud {
           <button type="button" data-chat-filter="all" class="${this.activeChatFilter === 'all' ? 'active' : ''}">All</button>
           <button type="button" data-chat-filter="region" class="${this.activeChatFilter === 'region' ? 'active' : ''}">Region</button>
           <button type="button" data-chat-filter="party" class="${this.activeChatFilter === 'party' ? 'active' : ''}">#Party</button>
+          <button type="button" data-chat-filter="alliance" class="${this.activeChatFilter === 'alliance' ? 'active' : ''}">&amp;Alliance</button>
           <button type="button" data-chat-filter="whisper" class="${this.activeChatFilter === 'whisper' ? 'active' : ''}">@Whisper</button>
           <button type="button" class="disabled" disabled aria-disabled="true">+Trade</button>
         </div>

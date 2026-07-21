@@ -108,7 +108,7 @@ The current implementation persists the first canonical-minimum party slice in `
 
 The current implementation persists the canonical-minimum clan slice in `clans`, `clan_members`, and `clan_invites`, with unique normalized names, leader truth, membership, short-lived pending invite expiry, and storage-level uniqueness for live inbound and outbound invites.
 
-The current implementation persists the first chat slice in `chat_messages`, keyed by `chat_message_id`, with sender, account, channel, optional target, optional region, sanitized text, and command metadata when available.
+The current implementation persists the first chat slice in `chat_messages`, keyed by `chat_message_id`, with sender, account, channel, optional `alliance_id`, optional target, optional region, sanitized text, and command metadata when available.
 
 ### Motivation
 
@@ -482,7 +482,7 @@ The current canonical minimum alliance semantics are:
 - `expel_alliance_clan` and `dissolve_alliance` are leader-clan-only
 - the leader clan cannot use `leave_alliance` in this phase
 - `dissolve_alliance` is only valid when only the leader clan remains
-- manual leader transfer, auto-transfer, alliance chat, command channel, siege, clan war expansion, alliance warehouse, rich crest UX, complex privileges, and 24h classical cooldowns remain out of scope
+- manual leader transfer, auto-transfer, command channel, siege, clan war expansion, alliance warehouse, rich crest UX, complex privileges, and 24h classical cooldowns remain out of scope
 
 This slice rehydrates:
 
@@ -504,6 +504,7 @@ The current online slice keeps in runtime:
 - the active sender session binding
 - the current region used for `region` chat fan-out
 - current party membership snapshot used for `party` fan-out
+- current alliance membership snapshot used for `alliance` chat fan-out
 - ephemeral burst rate-limit windows for chat spam protection
 - dead state for combat legality, which does not block the current social chat slice
 
@@ -513,6 +514,7 @@ The current online slice persists minimum chat history in `chat_messages` with:
 - sender `account_id`
 - `channel`
 - sanitized `text`
+- optional `alliance_id` for `alliance`
 - optional whisper `target_character_id`
 - optional region id for `region`
 - `session_id`
@@ -520,11 +522,11 @@ The current online slice persists minimum chat history in `chat_messages` with:
 - `command_seq`
 - server `created_at`
 
-For a whisper target with an active owner on another instance, sanitized history, command outcome, and one `social.chat_message.v1` delivery intent commit atomically. Region chat uses the actor's runtime region to list active durable ownerships, persists one exact-owner event per remote recipient in that same transaction, and defers still-eligible local sockets until commit. The destination exact instance/session/character/fencing-token tuple is revalidated before every remote delivery; region chat also revalidates ownership and runtime region. A durable consumed receipt prevents the same event from reaching the socket after a logical consumer restart. A changed/offline owner, including the same session id under a newer fence, releases the pending reservation, retries, and eventually dead-letters; the system does not reroute or create a local fallback. Party chat remains local-instance fanout in this slice.
+For a whisper target with an active owner on another instance, sanitized history, command outcome, and one `social.chat_message.v1` delivery intent commit atomically. Region chat uses the actor's runtime region to list active durable ownerships, while alliance chat resolves active online or attached ownerships for all characters whose current clans belong to the actor's current alliance; both persist one exact-owner event per remote recipient in that same transaction and defer still-eligible local sockets until commit. The destination exact instance/session/character/fencing-token tuple is revalidated before every remote delivery; region chat also revalidates ownership and runtime region. A durable consumed receipt prevents the same event from reaching the socket after a logical consumer restart. A changed/offline owner, including the same session id under a newer fence, releases the pending reservation, retries, and eventually dead-letters; the system does not reroute or create a local fallback. Party chat remains local-instance fanout in this slice.
 
 The browser keeps a bounded set of received remote social `event_id` values and does not append the same chat or notice twice. It also suppresses a repeated sender echo by authoritative chat `command_id`, so deterministic command replay cannot duplicate the local visual message. It still derives no success from ack: chat text appears only when `chat_message` arrives, and party/clan truth changes only from snapshot/delta.
 
-The runtime does not persist an offline mailbox, chat-tab UI state, or draft text. The durable outbox is a bounded live-delivery mechanism, not offline chat storage. The browser remains responsible only for rendering escaped text and focusing the compact composer; it never decides delivery scope or whisper success.
+The runtime does not persist an offline mailbox, chat-tab UI state, or draft text. The durable outbox is a bounded live-delivery mechanism, not offline chat storage. The browser remains responsible only for rendering escaped text and focusing the compact composer; it never decides delivery scope, alliance membership, or whisper success.
 
 ### Target State
 

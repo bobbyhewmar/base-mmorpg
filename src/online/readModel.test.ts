@@ -812,6 +812,31 @@ describe('online read model', () => {
           },
         ],
       },
+      alliance: {
+        alliance_id: 'alliance_1',
+        name: 'Eclipse',
+        leader_clan_id: 'clan_1',
+        leader_clan_name: 'Nightfall',
+        clan_cap: 3,
+        members: [
+          {
+            clan_id: 'clan_1',
+            name: 'Nightfall',
+            leader_character_id: 'char_1',
+            leader_name: 'Arden',
+            member_count: 2,
+            is_leader_clan: true,
+          },
+          {
+            clan_id: 'clan_2',
+            name: 'Dawnbreak',
+            leader_character_id: 'char_2',
+            leader_name: 'Selene',
+            member_count: 1,
+            is_leader_clan: false,
+          },
+        ],
+      },
     });
 
     const regionCommand = model.createSendChatMessage('region', '  Hello   there  ');
@@ -875,6 +900,29 @@ describe('online read model', () => {
     expect(model.snapshot.logs[0]).toMatchObject({
       text: '[Whisper -> Selene] Meet at gate.',
       channel: 'whisper',
+    });
+
+    const allianceCommand = model.createSendChatMessage('alliance', 'Alliance hold.');
+    expect(allianceCommand?.type).toBe('send_chat_message');
+    expect(allianceCommand?.payload).toEqual({
+      channel: 'alliance',
+      text: 'Alliance hold.',
+    });
+
+    model.applyMessage({
+      kind: 'chat_message',
+      emitted_at_ms: Date.now(),
+      command_id: allianceCommand?.command_id,
+      command_seq: allianceCommand?.command_seq,
+      channel: 'alliance',
+      sender_character_id: 'char_2',
+      sender_name: 'Selene',
+      text: 'Alliance hold.',
+    });
+
+    expect(model.snapshot.logs[0]).toMatchObject({
+      text: '[Alliance] Selene: Alliance hold.',
+      channel: 'alliance',
     });
   });
 
@@ -953,6 +1001,9 @@ describe('online read model', () => {
 
     expect(model.createSendChatMessage('party', 'Hello party.')).toBeNull();
     expect(model.snapshot.logs[0].text).toBe('Party chat failed: character is not currently in a party.');
+
+    expect(model.createSendChatMessage('alliance', 'Hello alliance.')).toBeNull();
+    expect(model.snapshot.logs[0].text).toBe('Alliance chat failed: character is not currently in an alliance.');
 
     expect(model.createSendChatMessage('whisper', 'Hello whisper.', '   ')).toBeNull();
     expect(model.snapshot.logs[0].text).toBe('Whisper failed: choose an online target character name.');

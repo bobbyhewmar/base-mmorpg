@@ -92,7 +92,7 @@ type WorldRuntimeOptions = {
   onWithdrawWarehouseItem?: (itemId: string, quantity: number) => void;
   onHotbarChange?: (hotbar: PlayerHotbarState) => void;
   onSendChatMessage?: (
-    channel: 'region' | 'party' | 'whisper',
+    channel: 'region' | 'party' | 'alliance' | 'whisper',
     text: string,
     targetCharacterName?: string,
   ) => boolean;
@@ -470,7 +470,7 @@ export class WorldRuntime {
       onWithdrawWarehouseItem: (itemId: string, quantity: number) => void;
       onHotbarChange: (hotbar: PlayerHotbarState) => void;
       onSendChatMessage: (
-        channel: 'region' | 'party' | 'whisper',
+        channel: 'region' | 'party' | 'alliance' | 'whisper',
         text: string,
         targetCharacterName?: string,
       ) => boolean;

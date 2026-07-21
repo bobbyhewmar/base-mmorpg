@@ -82,7 +82,7 @@ The repository already contains these online capabilities:
 - authoritative `use_item` for consumables from inventory and hotbar shortcuts
 - authoritative pets, taming, summon or dismiss, and mount or dismount in a first vertical slice with persistent ownership and backend-owned mounted move speed
 - authoritative canonical-minimum party invites, membership, leave or kick, and compact roster projection in a first social slice
-- authoritative social chat through `send_chat_message`, with `region`, `party`, and `whisper` fan-out plus minimum persisted history
+- authoritative social chat through `send_chat_message`, with `region`, `party`, `alliance`, and `whisper` fan-out plus minimum persisted history
 - minimum authoritative party reward sharing, including same-party online/attached/alive XP split and party-owned loot pickup eligibility
 
 ### Implemented But Still Incomplete For Public Readiness
@@ -109,7 +109,7 @@ Focus:
 - align backlog wording with shipped code
 - add an explicit readiness checklist for the current online slice
 - align skill guidance with the master prompt
-- reflect that authoritative alliance foundation is now shipped while alliance chat, command channel, siege, and broader political systems remain deferred
+- reflect that authoritative alliance foundation and the first authoritative alliance-chat slice are now shipped while command channel, siege, and broader political systems remain deferred
 
 ## Depois
 
@@ -312,9 +312,9 @@ Status:
 - the current player target is the only invite source in this slice; `/invite` and `/leave` are client-side affordances that normalize into authoritative gameplay commands instead of routing through `send_chat_message`
 - the HUD now renders a compact party frame for roster, leave, and leader kick actions, while incoming invites use a dedicated classic modal centered above the hotbar with `Accept`, `Cancel`, and a countdown bar derived from authoritative `expires_at_ms`
 - `ALT+C` now exposes authoritative `party_invite` and `party_leave` actions in addition to the existing social and companion shortcuts
-- `send_chat_message` now validates `region`, `party`, and `whisper` on the backend, trims or bounds text, rate-limits burst spam, and rejects unknown channels with stable `chat.*` reason codes
-- `chat_message` now fans out only to same-region sessions, online party members, or the named whisper target plus sender, without trusting client-side scope or delivery success
-- `chat_messages` now persist minimum history in PostgreSQL or memory with actor, account, target, region, sanitized text, and command metadata for future auditability
+- `send_chat_message` now validates `region`, `party`, `alliance`, and `whisper` on the backend, trims or bounds text, rate-limits burst spam, and rejects unknown channels with stable `chat.*` reason codes including `chat.alliance_required`
+- `chat_message` now fans out only to same-region sessions, online party members, all online or attached members of the sender's current alliance, or the named whisper target plus sender, without trusting client-side scope or delivery success
+- `chat_messages` now persist minimum history in PostgreSQL or memory with actor, account, `alliance_id` when applicable, target, region, sanitized text, and command metadata for future auditability
 - the bottom-left classic chat panel now renders safe escaped text plus a compact authoritative composer instead of fake local chat success
 - dead actors remain allowed to use this first social chat slice; social chat is not blocked by combat death state in the current phase
 - `local` remains reserved for a later distinct scope and is not exposed as a separate functional channel from `region` in the current slice
@@ -332,7 +332,7 @@ Status:
 - a real two-character Docker Compose browser smoke now covers create, invite, accept, reconnect hydration, leave, decline, reaccept, kick, and dissolve without local success fallback
 - `world/enter.self_state.clan` and `self_state.clan_invites` now rehydrate compact clan truth without fake local success; runtime deltas and `clan_notice` remain lifecycle feedback rather than state authority
 - `ALT+N` now renders the minimum clan panel with `No Clan` plus `Create Clan` affordance when empty, compact roster when joined, leader-only `Invite`, `Kick`, and `Dissolve`, member-only `Leave`, and a dedicated non-draggable clan invite modal above the hotbar with countdown derived from authoritative `expires_at_ms`
-- alliance, siege, clan war expansion, clan chat, clan warehouse, clan skills, academy, subunits, rich crest UX, privileges, `/invite Nome`, command channel, round-robin, master loot, dice or distribution UI, clan or alliance reward sharing, party finder, matchmaking, offline mail, manual leader transfer, and advanced moderation remain intentionally out of scope for this slice
+- siege, clan war expansion, clan chat, clan warehouse, clan skills, academy, subunits, rich crest UX, privileges, `/invite Nome`, command channel, round-robin, master loot, dice or distribution UI, clan or alliance reward sharing, party finder, matchmaking, offline mail, manual leader transfer, and advanced moderation remain intentionally out of scope for this slice
 - the first authoritative PvP/PK slice now reuses `basic_attack` and single-target `use_skill` for known players while preserving the existing mob/PvE path
 - player selection remains target state only; player damage additionally validates live attachment, same region, fail-closed region PvP policy, alive state, party, clan, range, learned skill, cooldown, and MP
 - player damage consumes CP before HP, applies death and simple respawn on the backend, and publishes no XP, loot, currency, or client-local success
