@@ -158,6 +158,123 @@ func TestRegionPlayerProjectionFiltersOutFarRemoteOwnerships(t *testing.T) {
 		t.Fatalf("far recipient should not receive projection row, err=%v", err)
 	}
 	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_events_total{result="out_of_interest"} 1`)
+	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_fanout_total{result="candidates_before_filtering"} 2`)
+	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_fanout_total{result="eligible_after_filtering"} 1`)
+	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_fanout_total{reason="outside_interest_entry",result="filtered_out"} 1`)
+	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_fanout_total{result="projection_rows_produced"} 1`)
+}
+
+func TestRegionPlayerProjectionMovementCorridorExpandsEligibility(t *testing.T) {
+	fixture := newCrossInstanceSocialFixture(t, "region_projection_corridor")
+	actorAttached := fixture.serverA.attachedSessionBySessionID(fixture.actor.session.ID)
+	if actorAttached == nil {
+		t.Fatal("actor attachment missing")
+	}
+	entryRadius := regionProjectionInterestEnterRadius(fixture.serverA.config.RegionProjectionInterestRadius)
+	targetAnchor := runtimePoint{X: entryRadius + 12, Z: 0}
+	if _, err := fixture.storeB.GameplaySessions.RefreshOwnershipAnchor(context.Background(), fixture.targetCharacter.ID, fixture.target.session.ID, "instance-b", fixture.target.session.FencingToken, "dawn_plaza", targetAnchor); err != nil {
+		t.Fatalf("RefreshOwnershipAnchor(target) error=%v", err)
+	}
+	fixture.actor.runtime.mu.Lock()
+	fixture.actor.runtime.position = runtimePoint{}
+	fixture.actor.runtime.activeMovement = &runtimeMovementState{
+		AcceptedDestination: runtimePoint{X: targetAnchor.X + 20, Z: 0},
+		Waypoints:           []runtimePoint{{X: targetAnchor.X + 20, Z: 0}},
+		LastAdvancedAt:      time.Now(),
+	}
+	fixture.actor.runtime.mu.Unlock()
+
+	requests := actorAttached.nextRegionProjectionRequests(regionProjectionActionUpsert, time.Now())
+	if len(requests) != 1 {
+		t.Fatalf("movement corridor requests=%d", len(requests))
+	}
+	if produced := fixture.serverA.publishRegionProjectionRequest(context.Background(), requests[0]); produced != 1 {
+		t.Fatalf("movement corridor produced=%d", produced)
+	}
+
+	key := "region-player-projection/" + fixture.actorCharacter.ID + "/" + formatInt64(fixture.actor.session.FencingToken) + "/1/" + fixture.targetCharacter.ID + "/" + formatInt64(fixture.target.session.FencingToken)
+	event, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), key)
+	if err != nil {
+		t.Fatalf("movement corridor event error=%v", err)
+	}
+	if event.ProjectionAction != regionProjectionActionUpsert {
+		t.Fatalf("movement corridor projection action=%q", event.ProjectionAction)
+	}
+	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_fanout_total{result="eligible_after_filtering"} 1`)
+	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_fanout_total{result="projection_rows_produced"} 1`)
+}
+
+func TestRegionPlayerProjectionRetainsRelevantRecipientAndDespawnsOnInterestLoss(t *testing.T) {
+	fixture := newCrossInstanceSocialFixture(t, "region_projection_hysteresis")
+	actorAttached := fixture.serverA.attachedSessionBySessionID(fixture.actor.session.ID)
+	if actorAttached == nil {
+		t.Fatal("actor attachment missing")
+	}
+	radius := fixture.serverA.config.RegionProjectionInterestRadius
+	entryRadius := regionProjectionInterestEnterRadius(radius)
+	initialAnchor := runtimePoint{X: entryRadius - 5, Z: 0}
+	if _, err := fixture.storeB.GameplaySessions.RefreshOwnershipAnchor(context.Background(), fixture.targetCharacter.ID, fixture.target.session.ID, "instance-b", fixture.target.session.FencingToken, "dawn_plaza", initialAnchor); err != nil {
+		t.Fatalf("RefreshOwnershipAnchor(initial) error=%v", err)
+	}
+
+	if produced := fixture.serverA.publishAttachedRegionProjectionNow(context.Background(), actorAttached, regionProjectionActionUpsert, time.Now()); produced != 1 {
+		t.Fatalf("initial projection produced=%d", produced)
+	}
+	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/projection-hysteresis-initial"); claimed != 1 {
+		t.Fatalf("initial hysteresis claim=%d", claimed)
+	}
+
+	retainedAnchor := runtimePoint{X: entryRadius + 8, Z: 0}
+	if _, err := fixture.storeB.GameplaySessions.RefreshOwnershipAnchor(context.Background(), fixture.targetCharacter.ID, fixture.target.session.ID, "instance-b", fixture.target.session.FencingToken, "dawn_plaza", retainedAnchor); err != nil {
+		t.Fatalf("RefreshOwnershipAnchor(retained) error=%v", err)
+	}
+	if produced := fixture.serverA.publishAttachedRegionProjectionNow(context.Background(), actorAttached, regionProjectionActionUpsert, time.Now()); produced != 1 {
+		t.Fatalf("retained projection produced=%d", produced)
+	}
+	retainedKey := "region-player-projection/" + fixture.actorCharacter.ID + "/" + formatInt64(fixture.actor.session.FencingToken) + "/2/" + fixture.targetCharacter.ID + "/" + formatInt64(fixture.target.session.FencingToken)
+	retainedEvent, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), retainedKey)
+	if err != nil || retainedEvent.ProjectionAction != regionProjectionActionUpsert {
+		t.Fatalf("retained projection event=%+v err=%v", retainedEvent, err)
+	}
+
+	lostAnchor := runtimePoint{X: radius + 40, Z: 0}
+	if _, err := fixture.storeB.GameplaySessions.RefreshOwnershipAnchor(context.Background(), fixture.targetCharacter.ID, fixture.target.session.ID, "instance-b", fixture.target.session.FencingToken, "dawn_plaza", lostAnchor); err != nil {
+		t.Fatalf("RefreshOwnershipAnchor(lost) error=%v", err)
+	}
+	if produced := fixture.serverA.publishAttachedRegionProjectionNow(context.Background(), actorAttached, regionProjectionActionUpsert, time.Now()); produced != 1 {
+		t.Fatalf("lost-interest projection produced=%d", produced)
+	}
+	lostKey := "region-player-projection/" + fixture.actorCharacter.ID + "/" + formatInt64(fixture.actor.session.FencingToken) + "/3/" + fixture.targetCharacter.ID + "/" + formatInt64(fixture.target.session.FencingToken)
+	lostEvent, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), lostKey)
+	if err != nil {
+		t.Fatalf("lost-interest event error=%v", err)
+	}
+	if lostEvent.ProjectionAction != regionProjectionActionDespawn {
+		t.Fatalf("lost-interest action=%q", lostEvent.ProjectionAction)
+	}
+	retainedEvent, err = fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), retainedKey)
+	if err != nil {
+		t.Fatalf("retained event reload error=%v", err)
+	}
+	if retainedEvent.SupersededAt.IsZero() || retainedEvent.SupersededByEventID != lostEvent.ID {
+		t.Fatalf("lost-interest despawn did not supersede prior upsert: retained=%+v lost=%+v", retainedEvent, lostEvent)
+	}
+
+	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/projection-hysteresis-lost"); claimed != 1 {
+		t.Fatalf("lost-interest claim=%d", claimed)
+	}
+	fixture.target.runtime.mu.Lock()
+	_, known := fixture.target.runtime.knownEntities[fixture.actorCharacter.ID]
+	meta := fixture.target.runtime.remotePlayerProjections[fixture.actorCharacter.ID]
+	fixture.target.runtime.mu.Unlock()
+	if known || meta.Visible || meta.Version != lostEvent.ProjectionVersion {
+		t.Fatalf("lost-interest despawn missed visibility cleanup known=%v meta=%+v", known, meta)
+	}
+	if message, result := fixture.target.runtime.applyRegionPlayerProjection(requestsPayloadForProjectionTest(t, fixture, regionProjectionActionUpsert, 2, runtimePoint{X: 0, Z: 0}), time.Now()); message != nil || result != regionProjectionStale {
+		t.Fatalf("superseded upsert resurrected after lost-interest despawn message=%+v result=%q", message, result)
+	}
+	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_fanout_total{reason="outside_refined_interest",result="filtered_out"} 1`)
+	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_events_total{result="projection_row_superseded"} 1`)
 }
 
 func TestRegionPlayerProjectionBuildsOrderedRegionTransition(t *testing.T) {

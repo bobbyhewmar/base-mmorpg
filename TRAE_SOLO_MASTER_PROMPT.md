@@ -1074,6 +1074,7 @@ Foundation multi-instancia de sessao ja resolvida:
 - drift de ownership nao faz reroute implicito: destinatario offline/stale segue retry/dead-letter com reason interno estavel, sem fallback local; a validacao inclui o fencing token capturado, entao reuso da mesma session sob fence novo nao cruza takeover
 - runtime e read-model mantem dedup limitado por `event_id`; party/clan reidratam delta autoritativo antes do notice remoto
 - `presence.region_player_projection.v1` publica upsert/despawn exato por ownership remoto da mesma regiao; fence + versao monotona impedem overwrite/resurrection stale, heartbeat repara snapshot, TTL remove visual sem conceder autoridade e o outbox agora supersede/compacta snapshots duraveis obsoletos por source/recipient route sem entregar backlog vencido
+- a elegibilidade remota de projection ja nao usa apenas ponto + raio simples: o producer filtra recipients pelo corredor autoritativo de movimento do source, aplica histerese de entrada/retencao sobre a ownership anchor do recipient e emite `despawn` exato quando uma rota antes relevante perde relevancia; tudo continua backend-only, sem known-set distribuido, sem reroute e sem fallback local
 - a fila runtime de publicacao e limitada, independente do dispatcher e possui coalescing bounded do ultimo snapshot por source; pressao/drop e atraso sum/count/max sao observaveis, e o consumer revalida recipient fence e source ownership antes de projetar apenas identity/appearance/position/facing/movement/target visual necessarios
 - o profile Compose `multi-backend` e seu Playwright real validam ownership separado, projecao/chat bidirecional, burst, stop/restart, retry/dead-letter, receipt, TTL/despawn, tombstone sem resurrection stale, reconnect e recovery
 - reconnect da mesma gameplay session recebe `next_command_seq` derivado do maior command record duravel, preservando o namespace de replay em vez de reiniciar localmente em 1
@@ -2251,7 +2252,7 @@ Estado atual que voce deve tratar como entregue, salvo evidencia contraria no co
 - Renderer, ground raycast/picking plane, server geodata bounds, spawn/checkpoint, exits e testes precisam compartilhar esse mesmo contrato de mapa.
 - Nao reintroduza clamp hardcoded do mapa antigo, visual Stonecross, props/spawns antigos, blockers antigos, nem bounds antigos de `dawn_plaza`.
 
-Prioridade 1: aprofundar interest management cross-instance em cima da supersessao/compactacao segura ja entregue e do party chat remoto com receipts, preservando `presence.target_remote` para combate e sem introduzir Redis/fila externa antes de medir necessidade.
+Prioridade 1: medir e endurecer o efeito do filtro de interest management cross-instance ja refinado por corredor autoritativo + histerese + relevance-loss despawn, alem de ampliar social cross-instance somente com contrato explicito, preservando `presence.target_remote` para combate e sem introduzir Redis/fila externa antes de medir necessidade.
 - Reuse runtime autoritativo, persistencia curta e HUD classica.
 - Preserve toda autoridade de sessao, presence, party, chat, clan, shared XP, party loot, elegibilidade PvP, dano, morte e consequencias no backend.
 - Nao aceite membership, reward split, target legality, presence truth, chat delivery ou loot ownership vindo do client.

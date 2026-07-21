@@ -54,7 +54,7 @@ The repository already contains these online capabilities:
 - PostgreSQL gameplay outbox with monotonic event ids, exact-instance claiming, immutable idempotency keys, retry/dead-letter state, delivered-only retention, and structured lifecycle observability
 - replay-safe remote-target notice from one instance to the current target owner while the originating command still rejects with `presence.target_remote`
 - replay-safe remote whisper plus party/clan lifecycle notices, with exact-session-and-fence ownership validation, durable delivery/consume receipts, bounded server/client duplicate suppression, authoritative social-state rehydration, and explicit stale-owner retry/dead-letter
-- exact-recipient same-region player visual projections through the PostgreSQL outbox, with source/recipient ownership revalidation, monotonic fence/version ordering, heartbeat snapshots, bounded/coalescing publication, durable supersession/compaction of obsolete undelivered snapshots, position-anchor-based remote interest filtering, despawn, TTL, delivery-pressure metrics, and existing browser interpolation
+- exact-recipient same-region player visual projections through the PostgreSQL outbox, with source/recipient ownership revalidation, monotonic fence/version ordering, heartbeat snapshots, bounded/coalescing publication, durable supersession/compaction of obsolete undelivered snapshots, ownership-anchor-based point-or-movement-corridor interest filtering with enter/retain hysteresis, relevance-loss despawn, TTL, fanout metrics, delivery-pressure metrics, and existing browser interpolation
 - a separate two-backend Docker Compose profile and Playwright fault/load scenario covering bidirectional projection/region chat, stop/restart, retries, receipts, stale owner, tombstone non-resurrection, TTL, recovery, and measured outbox delay/volume
 - backend-derived `next_command_seq` hydration preserves the durable replay namespace when reconnect reuses an existing gameplay session
 - command-driven party/clan mutation, command outcome, and remote outbox intents committed atomically, with local fanout deferred until commit
@@ -97,7 +97,7 @@ Remaining work:
 
 The current execution priority should follow the master prompt and the real repository state:
 
-1. iterate on measured interest-anchor accuracy and broader cross-instance social fanout on top of the shipped safe supersession/compaction for obsolete undelivered regional projection snapshots and remote party chat, without remote combat or new infrastructure
+1. iterate on measured interest-anchor accuracy from the shipped corridor-plus-hysteresis projection filter and broader cross-instance social fanout on top of safe supersession/compaction for obsolete undelivered regional projection snapshots and remote party chat, without remote combat or new infrastructure
 2. keep the shipped PvP/PK transaction and attribution audit under multi-actor load, then deepen karma recovery, account/device correlation, and alerting without automatic punishment
 3. instances, siege, olympiad, and broader competitive systems only after ownership, cross-instance presence delivery, PvP/PK, and clan base remain stable
 

@@ -224,3 +224,82 @@ func TestPostgresSessionOwnershipSerializesTwoServerInstances(t *testing.T) {
 		t.Fatalf("PostgreSQL fence reset after release: winner=%+v next=%+v", winnerSession, next.Ownership)
 	}
 }
+
+func TestPostgresSessionOwnershipAnchorRefreshPersistsInterestCoordinates(t *testing.T) {
+	env := newPersistenceTestEnv(t)
+	accountID, _ := registerAndLogin(t, env, "ownership.anchor@test")
+	character := &Character{
+		ID:           "character_pg_anchor",
+		AccountID:    accountID,
+		Name:         "Ownership Anchor",
+		Race:         "Human",
+		BaseClass:    "Fighter",
+		Sex:          "Male",
+		Level:        1,
+		CurrentCP:    80,
+		CurrentHP:    122,
+		CurrentMP:    58,
+		LastRegionID: "dawn_plaza",
+		PositionX:    4,
+		PositionZ:    7,
+		IsEnterable:  true,
+	}
+	if err := env.store.CreateCharacterWithItemSeed(context.Background(), character, initialCharacterItemSeed(character)); err != nil {
+		t.Fatalf("CreateCharacterWithItemSeed() error = %v", err)
+	}
+	session := &Session{
+		ID:              "session_pg_anchor",
+		AccountID:       accountID,
+		CharacterID:     character.ID,
+		AttachToken:     "attach_pg_anchor",
+		AttachExpiresAt: time.Now().Add(5 * time.Minute),
+		Status:          sessionStatusPendingAttach,
+	}
+	if err := env.store.GameplaySessions.Create(context.Background(), session); err != nil {
+		t.Fatalf("GameplaySessions.Create() error = %v", err)
+	}
+	owned, err := env.store.GameplaySessions.AcquireOwnership(context.Background(), session.ID, session.AttachToken, "pg-anchor-instance", time.Minute, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("AcquireOwnership() error = %v", err)
+	}
+
+	secondStore, err := NewStore(os.Getenv("L2BG_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("NewStore(second instance) error = %v", err)
+	}
+	defer secondStore.Close()
+
+	refreshed, err := env.store.GameplaySessions.RefreshOwnershipAnchor(
+		context.Background(),
+		character.ID,
+		owned.Session.ID,
+		"pg-anchor-instance",
+		owned.Session.FencingToken,
+		"gate_road",
+		runtimePoint{X: 88, Z: -33},
+	)
+	if err != nil {
+		t.Fatalf("RefreshOwnershipAnchor() error = %v", err)
+	}
+	if refreshed.RegionID != "gate_road" || refreshed.PositionX != 88 || refreshed.PositionZ != -33 {
+		t.Fatalf("RefreshOwnershipAnchor() returned %+v", refreshed)
+	}
+
+	previousRegion, err := secondStore.GameplaySessions.ListActiveOwnershipsByRegion(context.Background(), "dawn_plaza")
+	if err != nil {
+		t.Fatalf("ListActiveOwnershipsByRegion(dawn_plaza) error = %v", err)
+	}
+	if len(previousRegion) != 0 {
+		t.Fatalf("previous region retained stale ownerships: %+v", previousRegion)
+	}
+	currentRegion, err := secondStore.GameplaySessions.ListActiveOwnershipsByRegion(context.Background(), "gate_road")
+	if err != nil {
+		t.Fatalf("ListActiveOwnershipsByRegion(gate_road) error = %v", err)
+	}
+	if len(currentRegion) != 1 || currentRegion[0].CharacterID != character.ID {
+		t.Fatalf("current region ownerships = %+v", currentRegion)
+	}
+	if currentRegion[0].PositionX != 88 || currentRegion[0].PositionZ != -33 {
+		t.Fatalf("ownership anchor coordinates not persisted: %+v", currentRegion[0])
+	}
+}

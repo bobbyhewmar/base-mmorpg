@@ -52,7 +52,9 @@ The owner captures a projection snapshot when the player:
 
 Publication is placed on a bounded in-process queue and persisted by a dedicated publisher, so PostgreSQL writes do not block command or movement application or the delivery dispatcher. When the primary queue is full, a bounded latest-per-source buffer coalesces superseded not-yet-persisted snapshots. When both bounds are exhausted, the new request is dropped with explicit pressure telemetry. A later heartbeat repairs a missed upsert and TTL repairs a missed despawn. Default heartbeat is two seconds and default projection TTL is six seconds.
 
-The current eligibility contract is stricter than bare same-region ownership for `upsert`: the producer resolves active remote ownerships in the same region, then filters them by the recipient's current authoritative ownership anchor (`position_x`, `position_z`) within the configured projection interest radius. The owner refreshes that anchor from its live runtime on a short heartbeat cadence, without changing ownership authority or adding new infrastructure. `despawn` remains same-region-wide so explicit disappearance still cleans remote visuals promptly, while TTL remains the safety net when a recipient simply drifts out of interest.
+The current eligibility contract is stricter than bare same-region ownership for `upsert`: the producer resolves active remote ownerships in the same region, then filters them by the recipient's current authoritative ownership anchor (`position_x`, `position_z`) against the source's authoritative projection path. When the source is moving, the path is the current position plus accepted movement destination; otherwise it is the current position only. New recipients must enter a slightly tighter interest radius than the configured retention radius, while already-relevant recipients may stay until they leave the full configured radius. This hysteresis reduces edge churn and avoids sending cold near-edge recipients that are not yet visually relevant enough.
+
+The owner refreshes the ownership anchor from its live runtime on a short heartbeat cadence, without changing ownership authority or adding new infrastructure. It also keeps a per-source/fence runtime set of currently relevant exact-recipient routes. When a previously relevant recipient leaves the refined interest rule, the producer emits one exact-recipient `despawn` for that route instead of waiting only for TTL. `despawn` remains same-region-wide for explicit source disappearance or region transition, while TTL remains the safety net when a recipient simply stops receiving current state.
 
 Once persisted, a newer projection row for the same `source_character_id + recipient_character_id + recipient_fence` route durably supersedes any older undelivered row with a lower `(source_fence, version)` pair. Superseded rows become ineligible for claim, clear any transient claim lease, and are compacted separately from normal delivered-event retention. A despawn therefore supersedes older upserts for that route, and a newer source fence supersedes every older fence for the same recipient epoch.
 
@@ -110,6 +112,7 @@ The browser consumes only server `entity_appear`, delta, and `entity_disappear`.
 The publisher and delivery path additionally expose:
 
 - `l2bg_region_projection_queue_events_total{result}` for enqueue, dequeue, coalescing, and bounded drop
+- `l2bg_region_projection_fanout_total{result,reason}` for candidates before filtering, eligible after filtering, filtered-out reason codes, and produced rows
 - queue depth, configured capacity, and coalesced-buffer depth gauges
 - delivery delay sum, count, and maximum gauges derived from durable event creation time
 
@@ -120,7 +123,7 @@ The reproducible two-instance fault/load procedure and measured local baseline a
 ## Invariants
 
 - only a fenced owner publishes a player projection
-- only exact same-region remote ownerships receive a row, and `upsert` delivery is further reduced to recipients whose authoritative ownership anchor is still inside the projection interest radius
+- only exact same-region remote ownerships receive a row, and `upsert` delivery is further reduced to recipients whose authoritative ownership anchor remains relevant to the source's current point-or-movement corridor under the enter/retain hysteresis rule
 - exact-recipient receipts make transport redelivery safe across consumer restart
 - exact-recipient validation includes the captured recipient fence; session-id reuse cannot cross takeover
 - old or duplicate versions never duplicate an entity or overwrite newer visual state

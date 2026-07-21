@@ -45,6 +45,7 @@ The run is destructive only to the test accounts/characters it creates. It does 
 The profile intentionally sets `L2BG_REGION_PROJECTION_QUEUE_SIZE=4`. Movement bursts therefore exercise the bounded publisher and its latest-per-source coalescing buffer. Inspect either backend's `/metrics` endpoint for:
 
 - `l2bg_region_projection_queue_events_total{result="enqueued|dequeued|coalesced|dropped"}`
+- `l2bg_region_projection_fanout_total{result="candidates_before_filtering|eligible_after_filtering|filtered_out|projection_rows_produced",reason?}`
 - `l2bg_region_projection_queue_depth`
 - `l2bg_region_projection_queue_capacity`
 - `l2bg_region_projection_queue_coalesced_depth`
@@ -69,7 +70,7 @@ delivery_delay_avg_ms=3468.1
 delivery_delay_max_ms=21413.594
 ```
 
-The retry and dead-letter counts are expected in this fault scenario because backend B is intentionally unavailable while exact-owner events continue to be produced. The result is a reproducible functional baseline, not a production latency SLO. The maximum delay shows how far backlog can stretch under outage even after supersession/compaction; the next slice should therefore focus on measuring the accuracy of ownership-anchor-based interest filtering and broader social fanout such as remote party chat under the same receipt contract.
+The retry and dead-letter counts are expected in this fault scenario because backend B is intentionally unavailable while exact-owner events continue to be produced. The result is a reproducible functional baseline, not a production latency SLO. The maximum delay shows how far backlog can stretch under outage even after supersession/compaction; the current projection slice now also expects the fanout counters to show how many remote candidates were considered, how many stayed eligible after the refined corridor-plus-hysteresis filter, and how many were filtered out by stable reason code before rows were produced.
 
 ## Failure Interpretation
 

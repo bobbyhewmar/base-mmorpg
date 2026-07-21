@@ -12,15 +12,16 @@ import (
 )
 
 const (
-	regionPlayerProjectionEventType = "presence.region_player_projection.v1"
-	regionProjectionActionUpsert    = "upsert"
-	regionProjectionActionDespawn   = "despawn"
-	regionProjectionDisappear       = "remote_projection_despawn"
-	regionProjectionExpired         = "remote_projection_expired"
-	regionProjectionSuperseded      = "projection_row_superseded"
-	regionProjectionStaleSkipped    = "stale_delivery_skipped"
-	regionProjectionCompacted       = "compacted_obsolete"
-	regionProjectionOutOfInterest   = "out_of_interest"
+	regionPlayerProjectionEventType    = "presence.region_player_projection.v1"
+	regionProjectionActionUpsert       = "upsert"
+	regionProjectionActionDespawn      = "despawn"
+	regionProjectionDisappear          = "remote_projection_despawn"
+	regionProjectionExpired            = "remote_projection_expired"
+	regionProjectionSuperseded         = "projection_row_superseded"
+	regionProjectionStaleSkipped       = "stale_delivery_skipped"
+	regionProjectionCompacted          = "compacted_obsolete"
+	regionProjectionOutOfInterest      = "out_of_interest"
+	regionProjectionInterestEnterRatio = 0.85
 )
 
 type regionPlayerProjectionPayload struct {
@@ -48,6 +49,19 @@ type regionPlayerProjectionPayload struct {
 
 type regionProjectionPublishRequest struct {
 	Payload regionPlayerProjectionPayload
+}
+
+type regionProjectionRecipientRoute struct {
+	CharacterID           string
+	SessionID             string
+	ServerInstanceID      string
+	RegionID              string
+	RecipientFencingToken int64
+}
+
+type regionProjectionEligibility struct {
+	Eligible   bool
+	ReasonCode string
 }
 
 type remotePlayerProjectionMeta struct {
@@ -170,6 +184,38 @@ func (attached *attachedSession) regionProjectionRegion() string {
 	attached.projectionMu.Lock()
 	defer attached.projectionMu.Unlock()
 	return attached.projectionRegionID
+}
+
+func (attached *attachedSession) projectionRecipientSnapshot() map[string]regionProjectionRecipientRoute {
+	if attached == nil {
+		return nil
+	}
+	attached.projectionMu.Lock()
+	defer attached.projectionMu.Unlock()
+	if len(attached.projectionRecipients) == 0 {
+		return nil
+	}
+	snapshot := make(map[string]regionProjectionRecipientRoute, len(attached.projectionRecipients))
+	for key, route := range attached.projectionRecipients {
+		snapshot[key] = route
+	}
+	return snapshot
+}
+
+func (attached *attachedSession) replaceProjectionRecipients(recipients map[string]regionProjectionRecipientRoute) {
+	if attached == nil {
+		return
+	}
+	attached.projectionMu.Lock()
+	defer attached.projectionMu.Unlock()
+	if len(recipients) == 0 {
+		attached.projectionRecipients = nil
+		return
+	}
+	attached.projectionRecipients = make(map[string]regionProjectionRecipientRoute, len(recipients))
+	for key, route := range recipients {
+		attached.projectionRecipients[key] = route
+	}
 }
 
 func (s *Server) enqueueRegionPlayerProjection(attached *attachedSession, action string, now time.Time) {
@@ -330,7 +376,21 @@ func (s *Server) publishRegionProjectionRequest(ctx context.Context, request reg
 		s.recordRegionProjectionEvent("failed", nil, &payload, "presence_unavailable")
 		return 0
 	}
+	var attached *attachedSession
+	var previousRecipients map[string]regionProjectionRecipientRoute
+	if payload.Action == regionProjectionActionUpsert {
+		if current := s.attachedSessionBySessionID(payload.SourceSessionID); current != nil && current.characterID == payload.CharacterID && current.fencingToken == payload.FencingToken {
+			attached = current
+			previousRecipients = current.projectionRecipientSnapshot()
+		}
+	} else if current := s.attachedSessionBySessionID(payload.SourceSessionID); current != nil && current.characterID == payload.CharacterID && current.fencingToken == payload.FencingToken {
+		attached = current
+	}
 	produced := 0
+	candidatesBefore := 0
+	eligibleAfter := 0
+	currentRecipients := make(map[string]regionProjectionRecipientRoute)
+	filteredReasons := make(map[string]int)
 	for index := range ownerships {
 		recipient := &ownerships[index]
 		if recipient.CharacterID == "" || recipient.SessionID == "" || recipient.ServerInstanceID == "" || recipient.FencingToken <= 0 {
@@ -339,89 +399,76 @@ func (s *Server) publishRegionProjectionRequest(ctx context.Context, request reg
 		if recipient.CharacterID == payload.CharacterID || recipient.ServerInstanceID == s.config.ServerInstanceID {
 			continue
 		}
-		if !s.regionProjectionRecipientEligible(payload, recipient) {
-			s.recordRegionProjectionEvent(regionProjectionOutOfInterest, nil, &payload, "")
+		candidatesBefore++
+		route := regionProjectionRecipientRoute{
+			CharacterID:           recipient.CharacterID,
+			SessionID:             recipient.SessionID,
+			ServerInstanceID:      recipient.ServerInstanceID,
+			RegionID:              recipient.RegionID,
+			RecipientFencingToken: recipient.FencingToken,
+		}
+		_, alreadyRelevant := previousRecipients[route.key()]
+		decision := s.regionProjectionRecipientEligibility(payload, recipient, alreadyRelevant)
+		if !decision.Eligible {
+			filteredReasons[decision.ReasonCode]++
+			s.recordRegionProjectionEvent(regionProjectionOutOfInterest, nil, &payload, decision.ReasonCode)
 			continue
 		}
-		recipientPayload := payload
-		recipientPayload.RecipientFencingToken = recipient.FencingToken
-		encoded, marshalErr := json.Marshal(recipientPayload)
-		if marshalErr != nil {
-			s.recordRegionProjectionEvent("failed", nil, &recipientPayload, "invalid_payload")
-			continue
-		}
-		event := &GameplayEvent{
-			IdempotencyKey: fmt.Sprintf(
-				"region-player-projection/%s/%d/%d/%s/%d",
-				payload.CharacterID,
-				payload.FencingToken,
-				payload.Version,
-				recipient.CharacterID,
-				recipient.FencingToken,
-			),
-			Type:                            regionPlayerProjectionEventType,
-			Payload:                         encoded,
-			TargetServerInstanceID:          recipient.ServerInstanceID,
-			TargetRegionID:                  payload.RegionID,
-			TargetSessionID:                 recipient.SessionID,
-			TargetCharacterID:               recipient.CharacterID,
-			ProjectionSourceCharacterID:     payload.CharacterID,
-			ProjectionSourceFencingToken:    payload.FencingToken,
-			ProjectionVersion:               payload.Version,
-			ProjectionRecipientFencingToken: recipient.FencingToken,
-			ProjectionAction:                payload.Action,
-		}
-		created, createErr := s.store.GameplayEvents.Create(ctx, event)
-		if createErr != nil {
-			s.recordStoreError("region_projection.create", createErr, errRecordConflict)
-			s.recordRegionProjectionEvent("failed", event, &payload, "outbox_create_failed")
-			continue
-		}
-		result := "duplicate"
-		if created {
-			result = "projection_produced"
+		currentRecipients[route.key()] = route
+		eligibleAfter++
+		if s.produceRegionProjectionRoute(ctx, payload, route) {
 			produced++
-			supersededCount, supersedeErr := s.store.GameplayEvents.SupersedeRegionProjection(ctx, RegionProjectionSupersession{
-				TargetServerInstanceID:          recipient.ServerInstanceID,
-				TargetCharacterID:               recipient.CharacterID,
-				ProjectionSourceCharacterID:     payload.CharacterID,
-				ProjectionSourceFencingToken:    payload.FencingToken,
-				ProjectionVersion:               payload.Version,
-				ProjectionRecipientFencingToken: recipient.FencingToken,
-				SupersedingEventID:              event.ID,
-				SupersededAt:                    event.CreatedAt,
-			})
-			if supersedeErr != nil {
-				s.recordStoreError("region_projection.supersede", supersedeErr)
-				s.recordRegionProjectionEvent("failed", event, &payload, "supersession_failed")
-			} else {
-				for supersededIndex := 0; supersededIndex < supersededCount; supersededIndex++ {
-					s.recordRegionProjectionEvent(regionProjectionSuperseded, event, &payload, "")
-				}
+		}
+	}
+	if payload.Action == regionProjectionActionUpsert {
+		for key, route := range previousRecipients {
+			if _, stillRelevant := currentRecipients[key]; stillRelevant {
+				continue
+			}
+			despawnPayload := payload
+			despawnPayload.Action = regionProjectionActionDespawn
+			despawnPayload.RegionID = route.RegionID
+			if s.produceRegionProjectionRoute(ctx, despawnPayload, route) {
+				produced++
 			}
 		}
-		s.recordGameplayEvent(map[bool]string{true: "produced", false: "duplicate"}[created], event, "")
-		s.recordRegionProjectionEvent(result, event, &payload, "")
+	}
+	s.recordRegionProjectionFanout(payload, candidatesBefore, eligibleAfter, produced, filteredReasons)
+	if attached != nil {
+		if payload.Action == regionProjectionActionUpsert {
+			attached.replaceProjectionRecipients(currentRecipients)
+		} else if payload.Action == regionProjectionActionDespawn {
+			attached.replaceProjectionRecipients(nil)
+		}
 	}
 	return produced
 }
 
-func (s *Server) regionProjectionRecipientEligible(payload regionPlayerProjectionPayload, recipient *SessionOwnership) bool {
+func (s *Server) regionProjectionRecipientEligibility(payload regionPlayerProjectionPayload, recipient *SessionOwnership, alreadyRelevant bool) regionProjectionEligibility {
 	if recipient == nil {
-		return false
+		return regionProjectionEligibility{ReasonCode: "invalid_recipient"}
 	}
 	if payload.Action == regionProjectionActionDespawn {
-		return true
+		return regionProjectionEligibility{Eligible: true}
 	}
 	radius := s.config.RegionProjectionInterestRadius
 	if radius <= 0 {
-		return true
+		return regionProjectionEligibility{Eligible: true}
 	}
 	recipientPosition := runtimePoint{X: recipient.PositionX, Z: recipient.PositionZ}
 	if !finiteProjectionNumber(recipientPosition.X) || !finiteProjectionNumber(recipientPosition.Z) {
-		return true
+		return regionProjectionEligibility{Eligible: true}
 	}
-	return distance(payload.Position, recipientPosition) <= radius
+	limit := radius
+	reasonCode := "outside_refined_interest"
+	if !alreadyRelevant {
+		limit = regionProjectionInterestEnterRadius(radius)
+		reasonCode = "outside_interest_entry"
+	}
+	if regionProjectionPathDistance(payload, recipientPosition) <= limit {
+		return regionProjectionEligibility{Eligible: true}
+	}
+	return regionProjectionEligibility{ReasonCode: reasonCode}
 }
 
 func validateRegionPlayerProjectionPayload(payload regionPlayerProjectionPayload) error {
@@ -445,6 +492,109 @@ func validateRegionPlayerProjectionPayload(payload regionPlayerProjectionPayload
 
 func finiteProjectionNumber(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func regionProjectionInterestEnterRadius(radius float64) float64 {
+	if radius <= 0 {
+		return radius
+	}
+	return radius * regionProjectionInterestEnterRatio
+}
+
+func regionProjectionPathDistance(payload regionPlayerProjectionPayload, recipient runtimePoint) float64 {
+	if payload.Moving && payload.MovementDestination != nil && finiteProjectionNumber(payload.MovementDestination.X) && finiteProjectionNumber(payload.MovementDestination.Z) {
+		return pointToSegmentDistance(recipient, payload.Position, *payload.MovementDestination)
+	}
+	return distance(payload.Position, recipient)
+}
+
+func pointToSegmentDistance(point runtimePoint, start runtimePoint, end runtimePoint) float64 {
+	deltaX := end.X - start.X
+	deltaZ := end.Z - start.Z
+	lengthSquared := deltaX*deltaX + deltaZ*deltaZ
+	if lengthSquared <= 0 {
+		return distance(point, start)
+	}
+	projection := ((point.X-start.X)*deltaX + (point.Z-start.Z)*deltaZ) / lengthSquared
+	if projection < 0 {
+		projection = 0
+	} else if projection > 1 {
+		projection = 1
+	}
+	closest := runtimePoint{
+		X: start.X + projection*deltaX,
+		Z: start.Z + projection*deltaZ,
+	}
+	return distance(point, closest)
+}
+
+func (route regionProjectionRecipientRoute) key() string {
+	return fmt.Sprintf("%s/%d", route.CharacterID, route.RecipientFencingToken)
+}
+
+func (s *Server) produceRegionProjectionRoute(ctx context.Context, payload regionPlayerProjectionPayload, route regionProjectionRecipientRoute) bool {
+	if s == nil || s.store == nil || s.store.GameplayEvents == nil {
+		return false
+	}
+	recipientPayload := payload
+	recipientPayload.RecipientFencingToken = route.RecipientFencingToken
+	encoded, marshalErr := json.Marshal(recipientPayload)
+	if marshalErr != nil {
+		s.recordRegionProjectionEvent("failed", nil, &recipientPayload, "invalid_payload")
+		return false
+	}
+	event := &GameplayEvent{
+		IdempotencyKey: fmt.Sprintf(
+			"region-player-projection/%s/%d/%d/%s/%d",
+			payload.CharacterID,
+			payload.FencingToken,
+			payload.Version,
+			route.CharacterID,
+			route.RecipientFencingToken,
+		),
+		Type:                            regionPlayerProjectionEventType,
+		Payload:                         encoded,
+		TargetServerInstanceID:          route.ServerInstanceID,
+		TargetRegionID:                  route.RegionID,
+		TargetSessionID:                 route.SessionID,
+		TargetCharacterID:               route.CharacterID,
+		ProjectionSourceCharacterID:     payload.CharacterID,
+		ProjectionSourceFencingToken:    payload.FencingToken,
+		ProjectionVersion:               payload.Version,
+		ProjectionRecipientFencingToken: route.RecipientFencingToken,
+		ProjectionAction:                payload.Action,
+	}
+	created, createErr := s.store.GameplayEvents.Create(ctx, event)
+	if createErr != nil {
+		s.recordStoreError("region_projection.create", createErr, errRecordConflict)
+		s.recordRegionProjectionEvent("failed", event, &payload, "outbox_create_failed")
+		return false
+	}
+	result := "duplicate"
+	if created {
+		result = "projection_produced"
+		supersededCount, supersedeErr := s.store.GameplayEvents.SupersedeRegionProjection(ctx, RegionProjectionSupersession{
+			TargetServerInstanceID:          route.ServerInstanceID,
+			TargetCharacterID:               route.CharacterID,
+			ProjectionSourceCharacterID:     payload.CharacterID,
+			ProjectionSourceFencingToken:    payload.FencingToken,
+			ProjectionVersion:               payload.Version,
+			ProjectionRecipientFencingToken: route.RecipientFencingToken,
+			SupersedingEventID:              event.ID,
+			SupersededAt:                    event.CreatedAt,
+		})
+		if supersedeErr != nil {
+			s.recordStoreError("region_projection.supersede", supersedeErr)
+			s.recordRegionProjectionEvent("failed", event, &payload, "supersession_failed")
+		} else {
+			for supersededIndex := 0; supersededIndex < supersededCount; supersededIndex++ {
+				s.recordRegionProjectionEvent(regionProjectionSuperseded, event, &payload, "")
+			}
+		}
+	}
+	s.recordGameplayEvent(map[bool]string{true: "produced", false: "duplicate"}[created], event, "")
+	s.recordRegionProjectionEvent(result, event, &payload, "")
+	return created
 }
 
 func (payload regionPlayerProjectionPayload) runtimeEntity() runtimeEntity {
@@ -667,4 +817,40 @@ func (s *Server) recordRegionProjectionEvent(result string, event *GameplayEvent
 		level = "error"
 	}
 	s.observer.log(level, "region_player_projection", fields)
+}
+
+func (s *Server) recordRegionProjectionFanout(payload regionPlayerProjectionPayload, candidatesBefore int, eligibleAfter int, produced int, filteredReasons map[string]int) {
+	if s == nil || s.observer == nil {
+		return
+	}
+	record := func(result string, reason string, count int) {
+		if count <= 0 {
+			return
+		}
+		labels := map[string]string{"result": result}
+		if reason != "" {
+			labels["reason"] = reason
+		}
+		s.observer.incCounter("l2bg_region_projection_fanout_total", "Total cross-instance regional projection fanout counts by filtering stage.", labels, float64(count))
+	}
+	record("candidates_before_filtering", "", candidatesBefore)
+	record("eligible_after_filtering", "", eligibleAfter)
+	record("projection_rows_produced", "", produced)
+	for reason, count := range filteredReasons {
+		record("filtered_out", reason, count)
+	}
+	fields := map[string]any{
+		"server_instance_id":          s.config.ServerInstanceID,
+		"source_character_id":         payload.CharacterID,
+		"fencing_token":               payload.FencingToken,
+		"projection_version":          payload.Version,
+		"projection_action":           payload.Action,
+		"candidates_before_filtering": candidatesBefore,
+		"eligible_after_filtering":    eligibleAfter,
+		"projection_rows_produced":    produced,
+	}
+	if len(filteredReasons) > 0 {
+		fields["filtered_out_reasons"] = filteredReasons
+	}
+	s.observer.log("info", "region_projection_fanout", fields)
 }

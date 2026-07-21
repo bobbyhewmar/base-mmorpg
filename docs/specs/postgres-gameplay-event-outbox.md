@@ -77,7 +77,7 @@ PostgreSQL time owns claim, delivery, retry, and dead-letter deadlines so clock 
 
 Transport is at-least-once. `gameplay_event_receipts` persists `event_id`, recipient session/character, destination instance, claim lease, `delivered_at`, and `consumed_at`. A consumed receipt survives consumer restart: redelivery of the same event skips the socket and lets the outbox finish without a second visual message. Concurrent consumers serialize on the receipt row, so only one owns delivery. Failed ownership/socket validation releases an unconsumed reservation; retry and dead-letter never become local success.
 
-Regional player projections also use one exact-recipient receipt per outbox row. Their source fence plus version provides a second ordering barrier: an older delivered event cannot overwrite or resurrect a newer projection even when transport order differs from production order. The outbox now also performs durable supersession per source/recipient route, so an older undelivered projection row becomes ineligible for claim as soon as a newer `(source_fence, version)` or despawn row for that route is persisted. See `cross-instance-region-player-projections.md`.
+Regional player projections also use one exact-recipient receipt per outbox row. Their source fence plus version provides a second ordering barrier: an older delivered event cannot overwrite or resurrect a newer projection even when transport order differs from production order. The outbox now also performs durable supersession per source/recipient route, so an older undelivered projection row becomes ineligible for claim as soon as a newer `(source_fence, version)` or despawn row for that route is persisted. The projection producer may create a route-specific despawn when a previously relevant recipient leaves the refined interest rule, so relevance loss is durably ordered instead of waiting only for TTL. See `cross-instance-region-player-projections.md`.
 
 Every delivery also carries the stable monotonic `event_id`, and the browser read-model keeps a bounded set of remote social event ids. Party and clan state still changes only from the freshly rehydrated authoritative delta sent before the notice; a notice alone is never mutation authority.
 
@@ -164,7 +164,7 @@ Logs include event id, event type, destination instance, retry count, and a boun
 
 `l2bg_region_projection_events_total{result}` and structured `region_player_projection` logs cover production, consumption, duplicate/stale suppression, expiry, despawn, failure, and dead-letter without logging payload JSON, display name, position, or visual target.
 
-Regional projection publication also exposes bounded queue/coalescing pressure counters and gauges. Delivery exposes event-age sum, count, and maximum gauges so a two-instance run can report average and maximum outbox delay without logging payloads. The canonical operational scenario is `docs/operations/multi-backend-fanout-validation.md`.
+Regional projection publication also exposes bounded queue/coalescing pressure counters and gauges plus `l2bg_region_projection_fanout_total{result,reason}` for candidates before filtering, eligible after filtering, filtered-out reason codes, and produced rows. Delivery exposes event-age sum, count, and maximum gauges so a two-instance run can report average and maximum outbox delay without logging payloads. The canonical operational scenario is `docs/operations/multi-backend-fanout-validation.md`.
 
 ## Memory Adapter
 

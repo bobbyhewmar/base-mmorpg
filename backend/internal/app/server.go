@@ -65,6 +65,7 @@ type attachedSession struct {
 	projectionRegionID    string
 	projectionPublishedAt time.Time
 	ownershipAnchorAt     time.Time
+	projectionRecipients  map[string]regionProjectionRecipientRoute
 }
 
 type pendingMovementDispatch struct {
