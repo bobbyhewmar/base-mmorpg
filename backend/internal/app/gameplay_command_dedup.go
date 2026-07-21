@@ -216,6 +216,7 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 					s.recordGameplayEvent(result, event, "")
 					s.recordSocialFanoutEvent(result, event, "")
 					s.recordRegionChatEnqueue(event, result)
+					s.recordPartyChatEnqueue(event, result)
 				}
 			}
 		} else if len(eventCollector.events) > 0 {
@@ -231,6 +232,7 @@ func (s *Server) processGameplayCommandWithDedup(ctx context.Context, session *S
 					s.recordGameplayEvent(result, event, "")
 					s.recordSocialFanoutEvent(result, event, "")
 					s.recordRegionChatEnqueue(event, result)
+					s.recordPartyChatEnqueue(event, result)
 				}
 			}
 		} else {

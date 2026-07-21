@@ -234,7 +234,8 @@ type GameplaySessionRepository interface {
 	SanitizeStartupLifecycle(ctx context.Context, now time.Time) error
 	UpdateStatus(ctx context.Context, sessionID string, status SessionStatus) error
 	AcquireOwnership(ctx context.Context, sessionID string, attachToken string, serverInstanceID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnershipAcquisition, error)
-	RenewOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error)
+	RenewOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, position runtimePoint, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error)
+	RefreshOwnershipAnchor(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, position runtimePoint) (*SessionOwnership, error)
 	ReleaseOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64) (bool, error)
 	GetActiveOwnershipByCharacterID(ctx context.Context, characterID string) (*SessionOwnership, error)
 	ListActiveOwnershipsByRegion(ctx context.Context, regionID string) ([]SessionOwnership, error)

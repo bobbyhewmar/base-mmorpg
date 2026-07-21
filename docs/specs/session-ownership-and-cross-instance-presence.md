@@ -19,6 +19,7 @@ The source reference contributed only lifecycle concepts: one active character b
 - `server_instance_id`
 - monotonic positive `fencing_token`
 - current `region_id`
+- authoritative projection anchor `position_x`, `position_z`
 - absolute `lease_expires_at`
 - `acquired_at`
 - `renewed_at`
@@ -26,6 +27,8 @@ The source reference contributed only lifecycle concepts: one active character b
 `gameplay_sessions` remains the durable session and attach-credential record. The ownership row is the online authority record; status `attached` alone is not proof of a live owner.
 
 PostgreSQL time owns acquire and renewal deadlines. The memory adapter uses the same acquire, conflict, renewal, expiry, replacement, and conditional-release semantics under one critical section.
+
+The ownership anchor is refreshed from the live attached runtime on a short heartbeat cadence for cross-instance visual interest filtering. It is routing metadata only: it narrows remote projection fanout but does not create remote movement authority, target success, or combat eligibility.
 
 ## Acquire and Attach
 

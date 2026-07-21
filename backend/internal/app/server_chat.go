@@ -188,6 +188,7 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 	}
 
 	var partyMemberIDs []string
+	partyID := ""
 	allianceID := ""
 	var allianceMemberIDs []string
 	if channel == chatChannelParty {
@@ -195,6 +196,7 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 			runtime.mu.Unlock()
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "chat.party_required", "Party chat requires current party membership."))
 		}
+		partyID = runtime.party.PartyID
 		partyMemberIDs = make([]string, 0, len(runtime.party.Members))
 		for _, member := range runtime.party.Members {
 			if member.CharacterID == "" {
@@ -291,6 +293,10 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 		text,
 		now,
 	)
+	if channel == chatChannelParty && partyID != "" {
+		senderMessage["party_id"] = partyID
+		recipientMessage["party_id"] = partyID
+	}
 	var remoteWhisperEvent *GameplayEvent
 	if channel == chatChannelWhisper && whisperOwnership != nil {
 		var buildErr error
@@ -309,6 +315,46 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 	}
 	allianceLocalRecipients := make([]*attachedSession, 0)
 	remoteAllianceEvents := make([]*GameplayEvent, 0)
+	partyLocalRecipients := make([]*attachedSession, 0)
+	remotePartyEvents := make([]*GameplayEvent, 0)
+	if channel == chatChannelParty {
+		notified := map[string]struct{}{
+			actorCharacterID: {},
+		}
+		for _, memberCharacterID := range partyMemberIDs {
+			if memberCharacterID == "" {
+				continue
+			}
+			if _, exists := notified[memberCharacterID]; exists {
+				continue
+			}
+			notified[memberCharacterID] = struct{}{}
+			scope, attached, ownership, presenceErr := s.resolveCharacterPresence(ctx, memberCharacterID)
+			if presenceErr != nil {
+				return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to resolve authoritative party recipients."))
+			}
+			switch scope {
+			case characterPresenceLocal:
+				if attached != nil && attached.runtime != nil {
+					partyLocalRecipients = append(partyLocalRecipients, attached)
+				}
+			case characterPresenceRemote:
+				event, buildErr := buildRemoteSocialDeliveryEvent(
+					session,
+					command,
+					ownership,
+					memberCharacterID,
+					remoteChatMessageEventType,
+					"chat-party",
+					recipientMessage,
+				)
+				if buildErr != nil {
+					return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote party chat delivery."))
+				}
+				remotePartyEvents = append(remotePartyEvents, event)
+			}
+		}
+	}
 	if channel == chatChannelAlliance {
 		notified := map[string]struct{}{
 			actorCharacterID: {},
@@ -394,6 +440,11 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote alliance chat delivery."))
 		}
 	}
+	for _, event := range remotePartyEvents {
+		if err := collectGameplayEvent(ctx, event); err != nil {
+			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "system.persistence_failed", "Unable to queue remote party chat delivery."))
+		}
+	}
 
 	switch channel {
 	case chatChannelRegion:
@@ -414,20 +465,16 @@ func (s *Server) processChatCommand(ctx context.Context, session *Session, runti
 			})
 		}
 	case chatChannelParty:
-		notified := map[string]struct{}{
-			actorCharacterID: {},
-		}
-		for _, memberCharacterID := range partyMemberIDs {
-			if memberCharacterID == "" {
+		for _, target := range partyLocalRecipients {
+			if target == nil || target.runtime == nil || target.runtime.characterID == actorCharacterID {
 				continue
 			}
-			if _, exists := notified[memberCharacterID]; exists {
-				continue
-			}
-			notified[memberCharacterID] = struct{}{}
-			if target := s.attachedSessionByCharacterID(memberCharacterID); target != nil {
-				deferSocialSideEffect(ctx, func() { _ = target.sendSerialized(recipientMessage) })
-			}
+			target := target
+			deferSocialSideEffect(ctx, func() {
+				if target.sendSerialized(recipientMessage) {
+					s.recordPartyChatEvent("local_delivered", nil, "")
+				}
+			})
 		}
 	case chatChannelWhisper:
 		if whisperTarget != nil && whisperTarget.runtime != nil && whisperTarget.runtime.characterID != actorCharacterID {

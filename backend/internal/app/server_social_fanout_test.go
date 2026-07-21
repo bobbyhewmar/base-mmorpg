@@ -97,6 +97,37 @@ func (fixture *crossInstanceSocialFixture) resetMessages() {
 	fixture.targetMessagesMu.Unlock()
 }
 
+func establishRemotePartyForFixture(t *testing.T, fixture *crossInstanceSocialFixture, inviteSeq int, acceptSeq int) string {
+	t.Helper()
+	aimPartyInviteTarget(fixture.actor, fixture.target)
+	inviteOutbound := dispatchPartyCommand(t, fixture.serverA, fixture.actor, "remote_party_setup_invite", inviteSeq, "invite_party_member", map[string]any{})
+	if extractRejectReason(inviteOutbound) != "" {
+		t.Fatalf("remote party invite=%+v", inviteOutbound)
+	}
+	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/party-setup-invite"); claimed != 1 {
+		t.Fatalf("remote party setup invite claimed=%d", claimed)
+	}
+	inviteNotice := findPartyNotice(fixture.targetMessageSnapshot(), partyNoticeStatusInviteReceived)
+	if inviteNotice == nil {
+		t.Fatalf("remote party setup invite delivery=%+v", fixture.targetMessageSnapshot())
+	}
+	inviteID, _ := inviteNotice["invite_id"].(string)
+	fixture.resetMessages()
+	acceptOutbound := dispatchPartyCommand(t, fixture.serverB, fixture.target, "remote_party_setup_accept", acceptSeq, "accept_party_invite", map[string]any{"invite_id": inviteID})
+	if extractRejectReason(acceptOutbound) != "" {
+		t.Fatalf("remote party accept=%+v", acceptOutbound)
+	}
+	if claimed := fixture.serverA.dispatchGameplayEventsOnce(context.Background(), "instance-a/party-setup-accept"); claimed != 1 {
+		t.Fatalf("remote party setup accept claimed=%d", claimed)
+	}
+	party, err := fixture.storeA.Parties.GetByCharacterID(context.Background(), fixture.actorCharacter.ID)
+	if err != nil || party == nil {
+		t.Fatalf("remote party setup missing membership: party=%+v err=%v", party, err)
+	}
+	fixture.resetMessages()
+	return party.ID
+}
+
 func TestRegionChatFansOutLocallyAndAcrossInstancesWithDurableDedup(t *testing.T) {
 	fixture := newCrossInstanceSocialFixture(t, "social_region")
 	remoteOtherCharacter, remoteOtherSession := createOwnershipTestCharacterAndSession(t, fixture.storeA, "social_region_remote_other", "social_region_remote_other_session")
@@ -104,7 +135,7 @@ func TestRegionChatFansOutLocallyAndAcrossInstancesWithDurableDedup(t *testing.T
 	if err != nil {
 		t.Fatalf("AcquireOwnership(remote other region) error=%v", err)
 	}
-	if _, err := fixture.storeB.GameplaySessions.RenewOwnership(context.Background(), remoteOtherCharacter.ID, remoteOtherOwned.Session.ID, "instance-b", remoteOtherOwned.Session.FencingToken, "gate_road", time.Minute, 5*time.Minute); err != nil {
+	if _, err := fixture.storeB.GameplaySessions.RenewOwnership(context.Background(), remoteOtherCharacter.ID, remoteOtherOwned.Session.ID, "instance-b", remoteOtherOwned.Session.FencingToken, "gate_road", runtimePoint{}, time.Minute, 5*time.Minute); err != nil {
 		t.Fatalf("RenewOwnership(remote other region) error=%v", err)
 	}
 	remoteOtherCharacter.LastRegionID = "gate_road"
@@ -356,6 +387,57 @@ func TestRemoteAllianceChatCrossesInstancesAndReplayDoesNotDuplicate(t *testing.
 	}
 }
 
+func TestRemotePartyChatCrossesInstancesAndReplayDoesNotDuplicate(t *testing.T) {
+	fixture := newCrossInstanceSocialFixture(t, "social_party_chat")
+	partyID := establishRemotePartyForFixture(t, fixture, 1, 1)
+
+	command := commandEnvelope{
+		ProtocolVersion: 1,
+		CommandID:       "remote_party_chat_command",
+		CommandSeq:      2,
+		Type:            "send_chat_message",
+		Payload: mustMarshalCommandPayload(t, map[string]any{
+			"channel": chatChannelParty,
+			"text":    "  regroup\nat statue  ",
+		}),
+	}
+	first, _ := fixture.serverA.processGameplayCommandWithDedup(context.Background(), fixture.actor.session, fixture.actor.runtime, command)
+	partyMessage := findChatMessage(first, chatChannelParty)
+	if extractRejectReason(first) != "" || partyMessage == nil || partyMessage["party_id"] != partyID {
+		t.Fatalf("remote party chat result=%+v", first)
+	}
+	eventKey := "gameplay-command/" + fixture.actor.session.ID + "/2/social/chat-party/" + fixture.targetCharacter.ID
+	event, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), eventKey)
+	if err != nil || event.Type != remoteChatMessageEventType || event.TargetSessionID != fixture.target.session.ID {
+		t.Fatalf("remote party chat event=%+v err=%v", event, err)
+	}
+	if records, listErr := fixture.storeA.ChatMessages.ListByCharacterID(context.Background(), fixture.actorCharacter.ID); listErr != nil || len(records) != 1 || records[0].Channel != chatChannelParty {
+		t.Fatalf("remote party chat history=%+v err=%v", records, listErr)
+	}
+
+	replayed, shouldFanOut := fixture.serverA.processGameplayCommandWithDedup(context.Background(), fixture.actor.session, fixture.actor.runtime, command)
+	if extractRejectReason(replayed) != "" || shouldFanOut || fixture.backend.nextGameplayEventID != 3 {
+		t.Fatalf("remote party replay=%+v fanout=%v event_count=%d", replayed, shouldFanOut, fixture.backend.nextGameplayEventID)
+	}
+	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/party-chat-worker"); claimed != 1 {
+		t.Fatalf("remote party chat claimed=%d", claimed)
+	}
+	targetMessages := fixture.targetMessageSnapshot()
+	remoteMessage := findChatMessage(targetMessages, chatChannelParty)
+	remoteEventID := float64(0)
+	if remoteMessage != nil {
+		remoteEventID, _ = remoteMessage["event_id"].(float64)
+	}
+	if remoteMessage == nil || int64(remoteEventID) != event.ID || remoteMessage["text"] != "regroup at statue" || remoteMessage["party_id"] != partyID {
+		t.Fatalf("remote party delivery=%+v", targetMessages)
+	}
+	if receipt, receiptErr := fixture.storeB.GameplayReceipts.GetByEventID(context.Background(), event.ID); receiptErr != nil || receipt.ConsumedAt.IsZero() {
+		t.Fatalf("remote party receipt=%+v error=%v", receipt, receiptErr)
+	}
+	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_party_chat_events_total{result="remote_enqueued"} 1`)
+	assertMetricLine(t, fixture.serverB.observer.renderPrometheus(), `l2bg_party_chat_events_total{result="remote_consumed"} 1`)
+}
+
 func TestRemotePartyInviteAndAcceptDeliverAuthoritativeState(t *testing.T) {
 	fixture := newCrossInstanceSocialFixture(t, "social_party")
 	aimPartyInviteTarget(fixture.actor, fixture.target)
@@ -415,6 +497,55 @@ func TestRemotePartyDisconnectExpiryNoticeIsIdempotent(t *testing.T) {
 	}
 	if findPartyNotice(fixture.targetMessageSnapshot(), partyNoticeStatusInviteExpired) == nil {
 		t.Fatalf("remote party disconnect expiry delivery=%+v", fixture.targetMessageSnapshot())
+	}
+}
+
+func TestRemotePartyChatRejectsReusedSessionWithNewFence(t *testing.T) {
+	fixture := newCrossInstanceSocialFixture(t, "social_party_chat_new_fence")
+	partyID := establishRemotePartyForFixture(t, fixture, 1, 1)
+
+	command := commandEnvelope{
+		ProtocolVersion: 1,
+		CommandID:       "remote_party_chat_new_fence",
+		CommandSeq:      2,
+		Type:            "send_chat_message",
+		Payload: mustMarshalCommandPayload(t, map[string]any{
+			"channel": chatChannelParty,
+			"text":    "must not cross takeover",
+		}),
+	}
+	first, _ := fixture.serverA.processGameplayCommandWithDedup(context.Background(), fixture.actor.session, fixture.actor.runtime, command)
+	if extractRejectReason(first) != "" || findChatMessage(first, chatChannelParty) == nil {
+		t.Fatalf("remote party chat result=%+v", first)
+	}
+	eventKey := "gameplay-command/" + fixture.actor.session.ID + "/2/social/chat-party/" + fixture.targetCharacter.ID
+	event, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), eventKey)
+	if err != nil {
+		t.Fatalf("remote party chat event error=%v", err)
+	}
+	oldFence := fixture.target.session.FencingToken
+	fixture.backend.mu.Lock()
+	fixture.backend.sessionOwnerships[fixture.targetCharacter.ID].FencingToken = oldFence + 1
+	fixture.backend.mu.Unlock()
+	attached := fixture.serverB.attachedSessionBySessionID(fixture.target.session.ID)
+	attached.fencingToken = oldFence + 1
+	fixture.serverB.config.GameplayEventMaxRetries = 1
+
+	if claimed := fixture.serverB.dispatchGameplayEventsOnce(context.Background(), "instance-b/party-chat-new-fence"); claimed != 1 {
+		t.Fatalf("remote party chat stale fence claimed=%d", claimed)
+	}
+	persisted, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), event.IdempotencyKey)
+	if err != nil || persisted.DeadLetteredAt.IsZero() || persisted.LastError != "social.recipient_stale_owner" {
+		t.Fatalf("remote party stale fence event=%+v err=%v", persisted, err)
+	}
+	if countMessageKind(fixture.targetMessageSnapshot(), chatMessageKind) != 0 {
+		t.Fatalf("new fence received stale remote party chat: %+v", fixture.targetMessageSnapshot())
+	}
+	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_party_chat_events_total{result="remote_enqueued"} 1`)
+	assertMetricLine(t, fixture.serverB.observer.renderPrometheus(), `l2bg_party_chat_events_total{result="stale_owner"} 1`)
+	assertMetricLine(t, fixture.serverB.observer.renderPrometheus(), `l2bg_party_chat_events_total{result="dead_letter"} 1`)
+	if partyID == "" {
+		t.Fatal("party id missing after setup")
 	}
 }
 

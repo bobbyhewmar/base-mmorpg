@@ -133,6 +133,7 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent,
 	if s.gameplayEventWasSeen(event.ID) {
 		s.recordSocialFanoutEvent("duplicate", event, "")
 		s.recordRegionChatEvent("duplicate", event, "")
+		s.recordPartyChatEvent("duplicate", event, "")
 		if isRegionPlayerProjectionEvent(event) {
 			s.recordRegionProjectionEvent("duplicate", event, nil, "")
 		}
@@ -170,6 +171,7 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent,
 		s.recordGameplayEventReceipt("duplicate_receipt", event, &reservation.Receipt)
 		s.recordSocialFanoutEvent("duplicate", event, "")
 		s.recordRegionChatEvent("duplicate", event, "")
+		s.recordPartyChatEvent("duplicate", event, "")
 		if isRegionPlayerProjectionEvent(event) {
 			s.recordRegionProjectionEvent("duplicate", event, nil, "durable_receipt")
 		}
@@ -218,6 +220,7 @@ func (s *Server) deliverGameplayEvent(ctx context.Context, event *GameplayEvent,
 	storedReceipt, _ := s.store.GameplayReceipts.GetByEventID(ctx, event.ID)
 	s.recordGameplayEventReceipt("consumed", event, storedReceipt)
 	s.recordRegionChatEvent("remote_consumed", event, "")
+	s.recordPartyChatEvent("remote_consumed", event, "")
 	return nil
 }
 
@@ -313,13 +316,16 @@ func (s *Server) failGameplayEvent(ctx context.Context, workerID string, event *
 	if failureCode == "social.recipient_stale_owner" {
 		s.recordSocialFanoutEvent("stale_owner", event, failureCode)
 		s.recordRegionChatEvent("stale_owner", event, failureCode)
+		s.recordPartyChatEvent("stale_owner", event, failureCode)
 	} else {
 		s.recordSocialFanoutEvent("failed", event, failureCode)
+		s.recordPartyChatEvent("retry", event, failureCode)
 	}
 	if failure.DeadLettered {
 		s.recordGameplayEvent("dead_lettered", event, failureCode)
 		s.recordSocialFanoutEvent("dead_letter", event, failureCode)
 		s.recordRegionChatEvent("dead_letter", event, failureCode)
+		s.recordPartyChatEvent("dead_letter", event, failureCode)
 		if isRegionPlayerProjectionEvent(event) {
 			s.recordRegionProjectionEvent("dead_letter", event, nil, failureCode)
 		}

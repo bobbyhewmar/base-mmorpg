@@ -52,6 +52,8 @@ The owner captures a projection snapshot when the player:
 
 Publication is placed on a bounded in-process queue and persisted by a dedicated publisher, so PostgreSQL writes do not block command or movement application or the delivery dispatcher. When the primary queue is full, a bounded latest-per-source buffer coalesces superseded not-yet-persisted snapshots. When both bounds are exhausted, the new request is dropped with explicit pressure telemetry. A later heartbeat repairs a missed upsert and TTL repairs a missed despawn. Default heartbeat is two seconds and default projection TTL is six seconds.
 
+The current eligibility contract is stricter than bare same-region ownership for `upsert`: the producer resolves active remote ownerships in the same region, then filters them by the recipient's current authoritative ownership anchor (`position_x`, `position_z`) within the configured projection interest radius. The owner refreshes that anchor from its live runtime on a short heartbeat cadence, without changing ownership authority or adding new infrastructure. `despawn` remains same-region-wide so explicit disappearance still cleans remote visuals promptly, while TTL remains the safety net when a recipient simply drifts out of interest.
+
 Once persisted, a newer projection row for the same `source_character_id + recipient_character_id + recipient_fence` route durably supersedes any older undelivered row with a lower `(source_fence, version)` pair. Superseded rows become ineligible for claim, clear any transient claim lease, and are compacted separately from normal delivered-event retention. A despawn therefore supersedes older upserts for that route, and a newer source fence supersedes every older fence for the same recipient epoch.
 
 For a region transition, the producer advances the same source version sequence, emits a despawn for the previous region, then an upsert for the new authoritative region. The current world has no player-facing region-transfer command yet, but ownership renewal and the projection producer share this transition contract.
@@ -96,6 +98,7 @@ The browser consumes only server `entity_appear`, delta, and `entity_disappear`.
 - `projection_consumed`
 - `stale_ignored`
 - `projection_row_superseded`
+- `out_of_interest`
 - `stale_delivery_skipped`
 - `expired`
 - `despawned`
@@ -117,7 +120,7 @@ The reproducible two-instance fault/load procedure and measured local baseline a
 ## Invariants
 
 - only a fenced owner publishes a player projection
-- only exact same-region remote ownerships receive a row
+- only exact same-region remote ownerships receive a row, and `upsert` delivery is further reduced to recipients whose authoritative ownership anchor is still inside the projection interest radius
 - exact-recipient receipts make transport redelivery safe across consumer restart
 - exact-recipient validation includes the captured recipient fence; session-id reuse cannot cross takeover
 - old or duplicate versions never duplicate an entity or overwrite newer visual state
@@ -131,7 +134,6 @@ The reproducible two-instance fault/load procedure and measured local baseline a
 - remote PvP or damage transaction
 - remote trade, pickup, party-state replication, or interaction
 - mob, NPC, loot, pet, summon, or AI replication
-- interest management finer than current region ownership
 - party-chat broadcast
 - seamless region transfer UX
 - Redis, broker, external queue, or entity event sourcing

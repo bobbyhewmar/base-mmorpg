@@ -1053,7 +1053,7 @@ Riscos residuais de auth/sessao:
 - rate limit ainda e in-memory e single-instance
 - ainda nao existe endpoint HTTP explicito de logout/revocation
 - sessoes expiradas sao rejeitadas na leitura, mas ainda nao ha limpeza operacional dedicada
-- fan-out cross-instance amplo ainda nao existe; a foundation atual classifica local, remote-online e offline, entrega notice de target, whisper/region chat, notices party/clan e projecao visual versionada de player/movimento via outbox PostgreSQL, mas party chat, combate remoto e replicacao autoritativa continuam pendentes
+- fan-out cross-instance amplo ainda nao existe; a foundation atual classifica local, remote-online e offline, entrega notice de target, whisper/region chat, party chat, notices party/clan e projecao visual versionada de player/movimento via outbox PostgreSQL, mas combate remoto e replicacao autoritativa continuam pendentes
 
 Foundation multi-instancia de sessao ja resolvida:
 
@@ -1643,7 +1643,7 @@ Done:
 - disconnect de inviter ou invitee cancela o convite pendente; self-invite, target ja em party, duplicate invite e party cheia rejeitam com `party.*`
 - party nao existe funcionalmente com 1 membro: leave ou kick que derrubam para 1 dissolvem; se o leader sair com 2+ remanescentes, a lideranca passa deterministicamente ao membro restante mais antigo
 - `send_chat_message` agora cobre `region`, `party`, `alliance` e `whisper` com validacao, trim, limite de tamanho, rate limit simples, dedup replay-safe e fan-out autoritativo
-- `chat_message` entrega apenas para sessoes elegiveis por regiao, party online, alliance atual do clan do emissor ou whisper target online/localizavel por nome; whisper, region e alliance chat remotos usam outbox PostgreSQL com owner/session exatos, sem fallback local de sucesso
+- `chat_message` entrega apenas para sessoes elegiveis por regiao, party online/attached, alliance atual do clan do emissor ou whisper target online/localizavel por nome; whisper, region, party e alliance chat remotos usam outbox PostgreSQL com owner/session exatos, sem fallback local de sucesso
 - `chat_messages` persiste historico minimo server-side para auditabilidade futura com actor, account, canal, `alliance_id` quando aplicavel, alvo quando houver, regiao quando aplicavel, texto saneado e metadata de comando; no chat remoto, history + command outcome + eventos commitam atomicamente e fanout local espera o commit
 - HUD de chat reutiliza a janela canonica no canto inferior esquerdo com filtros `All`/`Region`/`Party`/`Whisper`, Enter para focar/enviar e Esc para cancelar, sempre renderizando texto escapado
 - estado morto nao bloqueia `send_chat_message` neste primeiro slice social; o backend continua autoridade de validacao, fan-out e persistencia
@@ -2251,7 +2251,7 @@ Estado atual que voce deve tratar como entregue, salvo evidencia contraria no co
 - Renderer, ground raycast/picking plane, server geodata bounds, spawn/checkpoint, exits e testes precisam compartilhar esse mesmo contrato de mapa.
 - Nao reintroduza clamp hardcoded do mapa antigo, visual Stonecross, props/spawns antigos, blockers antigos, nem bounds antigos de `dawn_plaza`.
 
-Prioridade 1: limitar e superseder com seguranca snapshots duraveis de projecao obsoletos expostos pelo backlog medido durante falha, depois aprofundar interest management/party chat, preservando `presence.target_remote` para combate e sem introduzir Redis/fila externa antes de medir necessidade.
+Prioridade 1: aprofundar interest management cross-instance em cima da supersessao/compactacao segura ja entregue e do party chat remoto com receipts, preservando `presence.target_remote` para combate e sem introduzir Redis/fila externa antes de medir necessidade.
 - Reuse runtime autoritativo, persistencia curta e HUD classica.
 - Preserve toda autoridade de sessao, presence, party, chat, clan, shared XP, party loot, elegibilidade PvP, dano, morte e consequencias no backend.
 - Nao aceite membership, reward split, target legality, presence truth, chat delivery ou loot ownership vindo do client.

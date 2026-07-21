@@ -16,22 +16,23 @@ import (
 )
 
 const (
-	passwordAlgorithmSHA256             = "sha256"
-	passwordAlgorithmBcryptV1           = "bcrypt_v1"
-	defaultAccessTokenTTL               = 2 * time.Hour
-	defaultSessionLeaseDuration         = 30 * time.Second
-	defaultSessionLeaseRenewInterval    = 10 * time.Second
-	defaultSessionAttachTokenTTL        = 5 * time.Minute
-	defaultGameplayEventPollInterval    = 250 * time.Millisecond
-	defaultGameplayEventClaimLease      = 5 * time.Second
-	defaultGameplayEventRetryDelay      = 500 * time.Millisecond
-	defaultGameplayEventRetention       = 24 * time.Hour
-	defaultGameplayEventCleanupInterval = 10 * time.Minute
-	defaultGameplayEventBatchSize       = 32
-	defaultGameplayEventMaxRetries      = 5
-	defaultRegionProjectionTTL          = 6 * time.Second
-	defaultRegionProjectionHeartbeat    = 2 * time.Second
-	defaultRegionProjectionQueueSize    = 256
+	passwordAlgorithmSHA256               = "sha256"
+	passwordAlgorithmBcryptV1             = "bcrypt_v1"
+	defaultAccessTokenTTL                 = 2 * time.Hour
+	defaultSessionLeaseDuration           = 30 * time.Second
+	defaultSessionLeaseRenewInterval      = 10 * time.Second
+	defaultSessionAttachTokenTTL          = 5 * time.Minute
+	defaultGameplayEventPollInterval      = 250 * time.Millisecond
+	defaultGameplayEventClaimLease        = 5 * time.Second
+	defaultGameplayEventRetryDelay        = 500 * time.Millisecond
+	defaultGameplayEventRetention         = 24 * time.Hour
+	defaultGameplayEventCleanupInterval   = 10 * time.Minute
+	defaultGameplayEventBatchSize         = 32
+	defaultGameplayEventMaxRetries        = 5
+	defaultRegionProjectionTTL            = 6 * time.Second
+	defaultRegionProjectionHeartbeat      = 2 * time.Second
+	defaultRegionProjectionQueueSize      = 256
+	defaultRegionProjectionInterestRadius = 128.0
 )
 
 type RateLimitConfig struct {
@@ -40,26 +41,27 @@ type RateLimitConfig struct {
 }
 
 type ServerConfig struct {
-	AllowedOrigins               []string
-	AccessTokenTTL               time.Duration
-	AuthRateLimit                RateLimitConfig
-	AttachRateLimit              RateLimitConfig
-	InternalAuditEnabled         bool
-	InternalAuditToken           string
-	ServerInstanceID             string
-	SessionLeaseDuration         time.Duration
-	SessionLeaseRenewInterval    time.Duration
-	SessionAttachTokenTTL        time.Duration
-	GameplayEventPollInterval    time.Duration
-	GameplayEventClaimLease      time.Duration
-	GameplayEventRetryDelay      time.Duration
-	GameplayEventRetention       time.Duration
-	GameplayEventCleanupInterval time.Duration
-	GameplayEventBatchSize       int
-	GameplayEventMaxRetries      int
-	RegionProjectionTTL          time.Duration
-	RegionProjectionHeartbeat    time.Duration
-	RegionProjectionQueueSize    int
+	AllowedOrigins                 []string
+	AccessTokenTTL                 time.Duration
+	AuthRateLimit                  RateLimitConfig
+	AttachRateLimit                RateLimitConfig
+	InternalAuditEnabled           bool
+	InternalAuditToken             string
+	ServerInstanceID               string
+	SessionLeaseDuration           time.Duration
+	SessionLeaseRenewInterval      time.Duration
+	SessionAttachTokenTTL          time.Duration
+	GameplayEventPollInterval      time.Duration
+	GameplayEventClaimLease        time.Duration
+	GameplayEventRetryDelay        time.Duration
+	GameplayEventRetention         time.Duration
+	GameplayEventCleanupInterval   time.Duration
+	GameplayEventBatchSize         int
+	GameplayEventMaxRetries        int
+	RegionProjectionTTL            time.Duration
+	RegionProjectionHeartbeat      time.Duration
+	RegionProjectionQueueSize      int
+	RegionProjectionInterestRadius float64
 }
 
 type fixedWindowRateLimiter struct {
@@ -85,19 +87,20 @@ func defaultServerConfig() ServerConfig {
 			MaxAttempts: 16,
 			Window:      time.Minute,
 		},
-		SessionLeaseDuration:         defaultSessionLeaseDuration,
-		SessionLeaseRenewInterval:    defaultSessionLeaseRenewInterval,
-		SessionAttachTokenTTL:        defaultSessionAttachTokenTTL,
-		GameplayEventPollInterval:    defaultGameplayEventPollInterval,
-		GameplayEventClaimLease:      defaultGameplayEventClaimLease,
-		GameplayEventRetryDelay:      defaultGameplayEventRetryDelay,
-		GameplayEventRetention:       defaultGameplayEventRetention,
-		GameplayEventCleanupInterval: defaultGameplayEventCleanupInterval,
-		GameplayEventBatchSize:       defaultGameplayEventBatchSize,
-		GameplayEventMaxRetries:      defaultGameplayEventMaxRetries,
-		RegionProjectionTTL:          defaultRegionProjectionTTL,
-		RegionProjectionHeartbeat:    defaultRegionProjectionHeartbeat,
-		RegionProjectionQueueSize:    defaultRegionProjectionQueueSize,
+		SessionLeaseDuration:           defaultSessionLeaseDuration,
+		SessionLeaseRenewInterval:      defaultSessionLeaseRenewInterval,
+		SessionAttachTokenTTL:          defaultSessionAttachTokenTTL,
+		GameplayEventPollInterval:      defaultGameplayEventPollInterval,
+		GameplayEventClaimLease:        defaultGameplayEventClaimLease,
+		GameplayEventRetryDelay:        defaultGameplayEventRetryDelay,
+		GameplayEventRetention:         defaultGameplayEventRetention,
+		GameplayEventCleanupInterval:   defaultGameplayEventCleanupInterval,
+		GameplayEventBatchSize:         defaultGameplayEventBatchSize,
+		GameplayEventMaxRetries:        defaultGameplayEventMaxRetries,
+		RegionProjectionTTL:            defaultRegionProjectionTTL,
+		RegionProjectionHeartbeat:      defaultRegionProjectionHeartbeat,
+		RegionProjectionQueueSize:      defaultRegionProjectionQueueSize,
+		RegionProjectionInterestRadius: defaultRegionProjectionInterestRadius,
 	}
 }
 
@@ -156,6 +159,9 @@ func normalizeServerConfig(config ServerConfig) ServerConfig {
 	}
 	if config.RegionProjectionQueueSize <= 0 {
 		config.RegionProjectionQueueSize = defaults.RegionProjectionQueueSize
+	}
+	if config.RegionProjectionInterestRadius <= 0 {
+		config.RegionProjectionInterestRadius = defaults.RegionProjectionInterestRadius
 	}
 	config.ServerInstanceID = strings.TrimSpace(config.ServerInstanceID)
 	config.AllowedOrigins = normalizeAllowedOrigins(config.AllowedOrigins)

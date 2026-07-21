@@ -20,6 +20,7 @@ const (
 	regionProjectionSuperseded      = "projection_row_superseded"
 	regionProjectionStaleSkipped    = "stale_delivery_skipped"
 	regionProjectionCompacted       = "compacted_obsolete"
+	regionProjectionOutOfInterest   = "out_of_interest"
 )
 
 type regionPlayerProjectionPayload struct {
@@ -142,6 +143,24 @@ func (attached *attachedSession) regionProjectionHeartbeatDue(now time.Time, int
 	attached.projectionMu.Lock()
 	defer attached.projectionMu.Unlock()
 	return attached.projectionPublishedAt.IsZero() || !now.Before(attached.projectionPublishedAt.Add(interval))
+}
+
+func (attached *attachedSession) ownershipAnchorRefreshDue(now time.Time, interval time.Duration) bool {
+	if attached == nil || interval <= 0 {
+		return false
+	}
+	attached.projectionMu.Lock()
+	defer attached.projectionMu.Unlock()
+	return attached.ownershipAnchorAt.IsZero() || !now.Before(attached.ownershipAnchorAt.Add(interval))
+}
+
+func (attached *attachedSession) markOwnershipAnchorRefreshed(now time.Time) {
+	if attached == nil {
+		return
+	}
+	attached.projectionMu.Lock()
+	defer attached.projectionMu.Unlock()
+	attached.ownershipAnchorAt = now
 }
 
 func (attached *attachedSession) regionProjectionRegion() string {
@@ -320,6 +339,10 @@ func (s *Server) publishRegionProjectionRequest(ctx context.Context, request reg
 		if recipient.CharacterID == payload.CharacterID || recipient.ServerInstanceID == s.config.ServerInstanceID {
 			continue
 		}
+		if !s.regionProjectionRecipientEligible(payload, recipient) {
+			s.recordRegionProjectionEvent(regionProjectionOutOfInterest, nil, &payload, "")
+			continue
+		}
 		recipientPayload := payload
 		recipientPayload.RecipientFencingToken = recipient.FencingToken
 		encoded, marshalErr := json.Marshal(recipientPayload)
@@ -381,6 +404,24 @@ func (s *Server) publishRegionProjectionRequest(ctx context.Context, request reg
 		s.recordRegionProjectionEvent(result, event, &payload, "")
 	}
 	return produced
+}
+
+func (s *Server) regionProjectionRecipientEligible(payload regionPlayerProjectionPayload, recipient *SessionOwnership) bool {
+	if recipient == nil {
+		return false
+	}
+	if payload.Action == regionProjectionActionDespawn {
+		return true
+	}
+	radius := s.config.RegionProjectionInterestRadius
+	if radius <= 0 {
+		return true
+	}
+	recipientPosition := runtimePoint{X: recipient.PositionX, Z: recipient.PositionZ}
+	if !finiteProjectionNumber(recipientPosition.X) || !finiteProjectionNumber(recipientPosition.Z) {
+		return true
+	}
+	return distance(payload.Position, recipientPosition) <= radius
 }
 
 func validateRegionPlayerProjectionPayload(payload regionPlayerProjectionPayload) error {

@@ -65,7 +65,7 @@ func TestWorldEnterReissuesActiveOwnedSessionForReconnect(t *testing.T) {
 	if reconnectedSession.FencingToken <= ownedSession.FencingToken {
 		t.Fatalf("reconnect did not advance the durable fence: before=%+v after=%+v", ownedSession, reconnectedSession)
 	}
-	if _, err := env.store.GameplaySessions.RenewOwnership(context.Background(), characterID, ownedSession.ID, env.server.config.ServerInstanceID, ownedSession.FencingToken, "dawn_plaza", time.Minute, 5*time.Minute); !errors.Is(err, errOwnershipStale) {
+	if _, err := env.store.GameplaySessions.RenewOwnership(context.Background(), characterID, ownedSession.ID, env.server.config.ServerInstanceID, ownedSession.FencingToken, "dawn_plaza", runtimePoint{}, time.Minute, 5*time.Minute); !errors.Is(err, errOwnershipStale) {
 		t.Fatalf("previous socket fence remained valid after reconnect: %v", err)
 	}
 }
@@ -175,7 +175,7 @@ func TestPostgresSessionOwnershipSerializesTwoServerInstances(t *testing.T) {
 	if winnerInstance == "pg-instance-b" {
 		ownerStore = secondStore
 	}
-	renewed, err := ownerStore.GameplaySessions.RenewOwnership(context.Background(), character.ID, winnerSession.ID, winnerInstance, winnerSession.FencingToken, "dawn_plaza", time.Minute, 5*time.Minute)
+	renewed, err := ownerStore.GameplaySessions.RenewOwnership(context.Background(), character.ID, winnerSession.ID, winnerInstance, winnerSession.FencingToken, "dawn_plaza", runtimePoint{}, time.Minute, 5*time.Minute)
 	if err != nil {
 		t.Fatalf("RenewOwnership(winner) error = %v", err)
 	}
@@ -194,7 +194,7 @@ func TestPostgresSessionOwnershipSerializesTwoServerInstances(t *testing.T) {
 	if winnerInstance == wrongInstance {
 		wrongInstance = "pg-instance-b"
 	}
-	if _, err := ownerStore.GameplaySessions.RenewOwnership(context.Background(), character.ID, winnerSession.ID, wrongInstance, winnerSession.FencingToken, "dawn_plaza", time.Minute, 5*time.Minute); !errors.Is(err, errOwnershipStale) {
+	if _, err := ownerStore.GameplaySessions.RenewOwnership(context.Background(), character.ID, winnerSession.ID, wrongInstance, winnerSession.FencingToken, "dawn_plaza", runtimePoint{}, time.Minute, 5*time.Minute); !errors.Is(err, errOwnershipStale) {
 		t.Fatalf("expected wrong instance to be fenced, got %v", err)
 	}
 	released, err := ownerStore.GameplaySessions.ReleaseOwnership(context.Background(), character.ID, winnerSession.ID, winnerInstance, winnerSession.FencingToken)

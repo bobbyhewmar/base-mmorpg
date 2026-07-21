@@ -26,7 +26,7 @@ func TestRegionPlayerProjectionCrossesInstancesAndRemainsProjectionOnly(t *testi
 	if err != nil {
 		t.Fatalf("AcquireOwnership(other region) error=%v", err)
 	}
-	if _, err := fixture.storeB.GameplaySessions.RenewOwnership(context.Background(), otherCharacter.ID, otherOwned.Session.ID, "instance-b", otherOwned.Session.FencingToken, "gate_road", time.Minute, 5*time.Minute); err != nil {
+	if _, err := fixture.storeB.GameplaySessions.RenewOwnership(context.Background(), otherCharacter.ID, otherOwned.Session.ID, "instance-b", otherOwned.Session.FencingToken, "gate_road", runtimePoint{}, time.Minute, 5*time.Minute); err != nil {
 		t.Fatalf("RenewOwnership(other region) error=%v", err)
 	}
 	actorAttached := fixture.serverA.attachedSessionBySessionID(fixture.actor.session.ID)
@@ -124,6 +124,40 @@ func TestRegionPlayerProjectionCrossesInstancesAndRemainsProjectionOnly(t *testi
 	if reason := extractRejectReason(outbound); reason != "presence.target_remote" {
 		t.Fatalf("projected remote target reason=%q outbound=%+v", reason, outbound)
 	}
+}
+
+func TestRegionPlayerProjectionFiltersOutFarRemoteOwnerships(t *testing.T) {
+	fixture := newCrossInstanceSocialFixture(t, "region_projection_interest")
+	farCharacter, farSession := createOwnershipTestCharacterAndSession(t, fixture.storeA, "region_projection_far", "region_projection_far_session")
+	farOwned, err := fixture.storeB.GameplaySessions.AcquireOwnership(context.Background(), farSession.ID, farSession.AttachToken, "instance-b", time.Minute, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("AcquireOwnership(far recipient) error=%v", err)
+	}
+	if _, err := fixture.storeB.GameplaySessions.RefreshOwnershipAnchor(context.Background(), farCharacter.ID, farOwned.Session.ID, "instance-b", farOwned.Session.FencingToken, "dawn_plaza", runtimePoint{X: fixture.serverA.config.RegionProjectionInterestRadius + 200, Z: 0}); err != nil {
+		t.Fatalf("RefreshOwnershipAnchor(far recipient) error=%v", err)
+	}
+	actorAttached := fixture.serverA.attachedSessionBySessionID(fixture.actor.session.ID)
+	if actorAttached == nil {
+		t.Fatal("actor attachment missing")
+	}
+
+	requests := actorAttached.nextRegionProjectionRequests(regionProjectionActionUpsert, time.Now())
+	if len(requests) != 1 {
+		t.Fatalf("interest-filter projection requests=%d", len(requests))
+	}
+	if produced := fixture.serverA.publishRegionProjectionRequest(context.Background(), requests[0]); produced != 1 {
+		t.Fatalf("interest-filter projection produced=%d", produced)
+	}
+
+	nearKey := "region-player-projection/" + fixture.actorCharacter.ID + "/" + formatInt64(fixture.actor.session.FencingToken) + "/1/" + fixture.targetCharacter.ID + "/" + formatInt64(fixture.target.session.FencingToken)
+	if _, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), nearKey); err != nil {
+		t.Fatalf("near recipient missing projection row: %v", err)
+	}
+	farKey := "region-player-projection/" + fixture.actorCharacter.ID + "/" + formatInt64(fixture.actor.session.FencingToken) + "/1/" + farCharacter.ID + "/" + formatInt64(farOwned.Session.FencingToken)
+	if _, err := fixture.storeA.GameplayEvents.GetByIdempotencyKey(context.Background(), farKey); !errors.Is(err, errRecordNotFound) {
+		t.Fatalf("far recipient should not receive projection row, err=%v", err)
+	}
+	assertMetricLine(t, fixture.serverA.observer.renderPrometheus(), `l2bg_region_projection_events_total{result="out_of_interest"} 1`)
 }
 
 func TestRegionPlayerProjectionBuildsOrderedRegionTransition(t *testing.T) {

@@ -34,13 +34,25 @@ func (attached *attachedSession) leaseDeadline() time.Time {
 	return attached.leaseExpiresAt
 }
 
-func (s *Server) renewSessionOwnership(ctx context.Context, session *Session, regionID string, observeSuccess bool) error {
+func runtimeOwnershipAnchor(runtime *attachedRuntime, fallbackRegionID string) (string, runtimePoint) {
+	if runtime == nil {
+		return fallbackRegionID, runtimePoint{}
+	}
+	regionID, position := runtime.characterWorldState()
+	if regionID == "" {
+		regionID = fallbackRegionID
+	}
+	return regionID, position
+}
+
+func (s *Server) renewSessionOwnership(ctx context.Context, session *Session, runtime *attachedRuntime, fallbackRegionID string, observeSuccess bool) error {
 	if s == nil || session == nil || session.FencingToken == 0 {
 		return nil
 	}
 	if s.store == nil || s.store.GameplaySessions == nil {
 		return errOwnershipStale
 	}
+	regionID, position := runtimeOwnershipAnchor(runtime, fallbackRegionID)
 	ownership, err := s.store.GameplaySessions.RenewOwnership(
 		ctx,
 		session.CharacterID,
@@ -48,6 +60,7 @@ func (s *Server) renewSessionOwnership(ctx context.Context, session *Session, re
 		s.config.ServerInstanceID,
 		session.FencingToken,
 		regionID,
+		position,
 		s.config.SessionLeaseDuration,
 		s.config.SessionAttachTokenTTL,
 	)
@@ -71,12 +84,32 @@ func (s *Server) renewSessionOwnership(ctx context.Context, session *Session, re
 	return nil
 }
 
+func (s *Server) refreshSessionOwnershipAnchor(ctx context.Context, session *Session, runtime *attachedRuntime, fallbackRegionID string) error {
+	if s == nil || session == nil || runtime == nil || session.FencingToken == 0 {
+		return nil
+	}
+	if s.store == nil || s.store.GameplaySessions == nil {
+		return errOwnershipStale
+	}
+	regionID, position := runtimeOwnershipAnchor(runtime, fallbackRegionID)
+	_, err := s.store.GameplaySessions.RefreshOwnershipAnchor(
+		ctx,
+		session.CharacterID,
+		session.ID,
+		s.config.ServerInstanceID,
+		session.FencingToken,
+		regionID,
+		position,
+	)
+	return err
+}
+
 func (s *Server) commandOwnershipReject(ctx context.Context, session *Session, runtime *attachedRuntime, command commandEnvelope) map[string]any {
 	regionID := ""
 	if runtime != nil {
 		regionID = runtime.regionIDValue()
 	}
-	err := s.renewSessionOwnership(ctx, session, regionID, false)
+	err := s.renewSessionOwnership(ctx, session, runtime, regionID, false)
 	if err == nil {
 		return nil
 	}
@@ -195,6 +228,7 @@ func (s *Server) recordOwnershipEvent(result string, session *Session, ownership
 		fields["character_id"] = ownership.CharacterID
 		fields["owner_server_instance_id"] = ownership.ServerInstanceID
 		fields["fencing_token"] = ownership.FencingToken
+		fields["region_id"] = ownership.RegionID
 		fields["lease_expires_at"] = ownership.LeaseExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	s.observer.incCounter("l2bg_session_ownership_events_total", "Total durable gameplay session ownership events.", map[string]string{

@@ -54,7 +54,7 @@ The repository already contains these online capabilities:
 - PostgreSQL gameplay outbox with monotonic event ids, exact-instance claiming, immutable idempotency keys, retry/dead-letter state, delivered-only retention, and structured lifecycle observability
 - replay-safe remote-target notice from one instance to the current target owner while the originating command still rejects with `presence.target_remote`
 - replay-safe remote whisper plus party/clan lifecycle notices, with exact-session-and-fence ownership validation, durable delivery/consume receipts, bounded server/client duplicate suppression, authoritative social-state rehydration, and explicit stale-owner retry/dead-letter
-- exact-recipient same-region player visual projections through the PostgreSQL outbox, with source/recipient ownership revalidation, monotonic fence/version ordering, heartbeat snapshots, bounded/coalescing publication, durable supersession/compaction of obsolete undelivered snapshots, despawn, TTL, delivery-pressure metrics, and existing browser interpolation
+- exact-recipient same-region player visual projections through the PostgreSQL outbox, with source/recipient ownership revalidation, monotonic fence/version ordering, heartbeat snapshots, bounded/coalescing publication, durable supersession/compaction of obsolete undelivered snapshots, position-anchor-based remote interest filtering, despawn, TTL, delivery-pressure metrics, and existing browser interpolation
 - a separate two-backend Docker Compose profile and Playwright fault/load scenario covering bidirectional projection/region chat, stop/restart, retries, receipts, stale owner, tombstone non-resurrection, TTL, recovery, and measured outbox delay/volume
 - backend-derived `next_command_seq` hydration preserves the durable replay namespace when reconnect reuses an existing gameplay session
 - command-driven party/clan mutation, command outcome, and remote outbox intents committed atomically, with local fanout deferred until commit
@@ -82,7 +82,7 @@ The repository already contains these online capabilities:
 - authoritative `use_item` for consumables from inventory and hotbar shortcuts
 - authoritative pets, taming, summon or dismiss, and mount or dismount in a first vertical slice with persistent ownership and backend-owned mounted move speed
 - authoritative canonical-minimum party invites, membership, leave or kick, and compact roster projection in a first social slice
-- authoritative social chat through `send_chat_message`, with `region`, `party`, `alliance`, and `whisper` fan-out plus minimum persisted history
+- authoritative social chat through `send_chat_message`, with `region`, `party`, `alliance`, and `whisper` fan-out plus minimum persisted history and cross-instance exact-recipient delivery for remote party members
 - minimum authoritative party reward sharing, including same-party online/attached/alive XP split and party-owned loot pickup eligibility
 
 ### Implemented But Still Incomplete For Public Readiness
@@ -97,7 +97,7 @@ Remaining work:
 
 The current execution priority should follow the master prompt and the real repository state:
 
-1. deepen interest management and cross-instance visual/social fanout on top of the shipped safe supersession/compaction for obsolete undelivered regional projection snapshots, without remote combat or new infrastructure
+1. iterate on measured interest-anchor accuracy and broader cross-instance social fanout on top of the shipped safe supersession/compaction for obsolete undelivered regional projection snapshots and remote party chat, without remote combat or new infrastructure
 2. keep the shipped PvP/PK transaction and attribution audit under multi-actor load, then deepen karma recovery, account/device correlation, and alerting without automatic punishment
 3. instances, siege, olympiad, and broader competitive systems only after ownership, cross-instance presence delivery, PvP/PK, and clan base remain stable
 
@@ -138,7 +138,7 @@ Status:
 
 - concluida para o slice online atual
 - hardening multi-instancia concluido para ownership: attach serializado por personagem no PostgreSQL, lease renovavel, fencing monotono, stale-owner reject antes de ack/dedup e release idempotente/condicional
-- presence cross-instance minima distingue player local, remote-online e offline; outbox PostgreSQL entrega notice de target, whisper remoto, region chat, notices party/clan e projecao visual versionada de player/movimento na mesma regiao, enquanto party chat, combate remoto e replicacao autoritativa continuam pendentes
+- presence cross-instance minima distingue player local, remote-online e offline; outbox PostgreSQL entrega notice de target, whisper remoto, region chat, party chat, notices party/clan e projecao visual versionada de player/movimento na mesma regiao com filtro remoto por ancora de posicao autoritativa, enquanto combate remoto e replicacao autoritativa continuam pendentes
 
 ### Fase F - Persistencia de Progressao Online
 
@@ -313,7 +313,7 @@ Status:
 - the HUD now renders a compact party frame for roster, leave, and leader kick actions, while incoming invites use a dedicated classic modal centered above the hotbar with `Accept`, `Cancel`, and a countdown bar derived from authoritative `expires_at_ms`
 - `ALT+C` now exposes authoritative `party_invite` and `party_leave` actions in addition to the existing social and companion shortcuts
 - `send_chat_message` now validates `region`, `party`, `alliance`, and `whisper` on the backend, trims or bounds text, rate-limits burst spam, and rejects unknown channels with stable `chat.*` reason codes including `chat.alliance_required`
-- `chat_message` now fans out only to same-region sessions, online party members, all online or attached members of the sender's current alliance, or the named whisper target plus sender, without trusting client-side scope or delivery success
+- `chat_message` now fans out only to same-region sessions, online or attached members of the sender's current party, all online or attached members of the sender's current alliance, or the named whisper target plus sender, without trusting client-side scope or delivery success
 - `chat_messages` now persist minimum history in PostgreSQL or memory with actor, account, `alliance_id` when applicable, target, region, sanitized text, and command metadata for future auditability
 - the bottom-left classic chat panel now renders safe escaped text plus a compact authoritative composer instead of fake local chat success
 - dead actors remain allowed to use this first social chat slice; social chat is not blocked by combat death state in the current phase
@@ -360,7 +360,7 @@ Status:
 
 After the online foundation becomes secure, replay-safe, and observable, the roadmap can continue into:
 
-- finer interest management and party-chat broadcast on top of the shipped safe supersession/compaction for obsolete undelivered player-projection rows, with infrastructure expansion only if measured load requires it
+- finer interest-anchor accuracy, broader social broadcast, and only then infrastructure expansion if measured load requires it
 - protocol-level client consume acknowledgements only if the residual socket-accept/receipt-commit ambiguity becomes operationally unacceptable; reroute remains a separate explicit policy decision
 - broader vendor and warehouse variants
 - PvP/PK expansion beyond the hardened single-target slice: karma recovery, economic/death penalties, alerting, richer named-zone/content policy, and weighted/non-player attribution

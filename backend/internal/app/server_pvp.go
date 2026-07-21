@@ -93,7 +93,7 @@ func (s *Server) processPvPCommand(ctx context.Context, session *Session, actor 
 			ServerInstanceID: targetAttached.serverInstanceID,
 			FencingToken:     targetAttached.fencingToken,
 		}
-		if err := s.renewSessionOwnership(ctx, targetSession, targetAttached.runtime.regionIDValue(), false); err != nil {
+		if err := s.renewSessionOwnership(ctx, targetSession, targetAttached.runtime, targetAttached.runtime.regionIDValue(), false); err != nil {
 			return append(outbound, rejectMessage(command.CommandID, command.CommandSeq, "pvp.target_unavailable", "Referenced player no longer has valid local ownership."))
 		}
 	}

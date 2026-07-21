@@ -257,6 +257,18 @@ func isRegionChatGameplayEvent(event *GameplayEvent) bool {
 	return channel == chatChannelRegion
 }
 
+func isPartyChatGameplayEvent(event *GameplayEvent) bool {
+	if event == nil || event.Type != remoteChatMessageEventType {
+		return false
+	}
+	var payload remoteSocialDeliveryPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil || payload.Message == nil {
+		return false
+	}
+	channel, _ := payload.Message["channel"].(string)
+	return channel == chatChannelParty
+}
+
 func decodeRemoteSocialDelivery(event *GameplayEvent, expectedKind string) (*remoteSocialDeliveryPayload, error) {
 	if event == nil {
 		return nil, errors.New("social.invalid_event")
@@ -313,6 +325,11 @@ func (s *Server) deliverRemoteChatMessage(ctx context.Context, event *GameplayEv
 		if targetCharacterID != "" || regionID == "" || regionID != event.TargetRegionID {
 			return errors.New("social.invalid_payload")
 		}
+	case chatChannelParty:
+		partyID, _ := payload.Message["party_id"].(string)
+		if partyID == "" || targetCharacterID != "" || regionID != "" {
+			return errors.New("social.invalid_payload")
+		}
 	case chatChannelAlliance:
 		if targetCharacterID != "" || regionID != "" {
 			return errors.New("social.invalid_payload")
@@ -326,6 +343,13 @@ func (s *Server) deliverRemoteChatMessage(ctx context.Context, event *GameplayEv
 	}
 	if channel == chatChannelRegion && (ownership.RegionID != regionID || attached.runtime == nil || attached.runtime.regionIDValue() != regionID) {
 		return errors.New("social.recipient_stale_owner")
+	}
+	if channel == chatChannelParty {
+		partyID, _ := payload.Message["party_id"].(string)
+		party, err := s.store.Parties.GetByCharacterID(ctx, event.TargetCharacterID)
+		if err != nil || party == nil || party.ID != partyID {
+			return errors.New("social.recipient_stale_owner")
+		}
 	}
 	payload.Message["event_id"] = event.ID
 	if !attached.sendSerialized(payload.Message) {
@@ -443,6 +467,17 @@ func (s *Server) recordRegionChatEnqueue(event *GameplayEvent, outboxResult stri
 	s.recordRegionChatEvent(result, event, "")
 }
 
+func (s *Server) recordPartyChatEnqueue(event *GameplayEvent, outboxResult string) {
+	if !isPartyChatGameplayEvent(event) {
+		return
+	}
+	result := "remote_enqueued"
+	if outboxResult == "duplicate" {
+		result = "duplicate"
+	}
+	s.recordPartyChatEvent(result, event, "")
+}
+
 func (s *Server) recordRegionChatEvent(result string, event *GameplayEvent, reasonCode string) {
 	if s == nil || s.observer == nil {
 		return
@@ -472,4 +507,34 @@ func (s *Server) recordRegionChatEvent(result string, event *GameplayEvent, reas
 		level = "error"
 	}
 	s.observer.log(level, "region_chat", fields)
+}
+
+func (s *Server) recordPartyChatEvent(result string, event *GameplayEvent, reasonCode string) {
+	if s == nil || s.observer == nil {
+		return
+	}
+	if event != nil && !isPartyChatGameplayEvent(event) {
+		return
+	}
+	s.observer.incCounter("l2bg_party_chat_events_total", "Total authoritative party chat lifecycle events.", map[string]string{
+		"result": result,
+	}, 1)
+	fields := map[string]any{
+		"result":             result,
+		"server_instance_id": s.config.ServerInstanceID,
+	}
+	if event != nil {
+		fields["event_id"] = event.ID
+		fields["event_type"] = event.Type
+		fields["target_server_instance_id"] = event.TargetServerInstanceID
+		fields["retry_count"] = event.RetryCount
+	}
+	if reasonCode != "" {
+		fields["reason_code"] = reasonCode
+	}
+	level := "info"
+	if result == "stale_owner" || result == "dead_letter" {
+		level = "error"
+	}
+	s.observer.log(level, "party_chat", fields)
 }

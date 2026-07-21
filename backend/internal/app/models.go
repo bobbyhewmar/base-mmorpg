@@ -293,6 +293,8 @@ type SessionOwnership struct {
 	ServerInstanceID string
 	FencingToken     int64
 	RegionID         string
+	PositionX        float64
+	PositionZ        float64
 	LeaseExpiresAt   time.Time
 	AcquiredAt       time.Time
 	RenewedAt        time.Time

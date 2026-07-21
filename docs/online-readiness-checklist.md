@@ -105,6 +105,7 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] Same-region remote-owned players receive exact-recipient `presence.region_player_projection.v1` upsert/despawn events with durable receipts, source ownership revalidation, and fence/version ordering.
 - [x] Regional projection redelivery and older events cannot duplicate, overwrite, or resurrect a newer entity; TTL removes stale visuals while retaining an ordering tombstone.
 - [x] Obsolete undelivered regional projection rows are durably superseded and compacted by newer `(source_fence, version)` or despawn state for the same source/recipient route, so backlog recovery cannot deliver stale visual resurrection.
+- [x] Remote region-player projection eligibility is narrower than bare same-region ownership: upserts fan out only to exact recipients whose authoritative ownership anchor remains within the current projection interest radius, while despawn and TTL still clean stale visuals safely.
 - [x] The browser reuses bounded other-player interpolation and does not set target or command success from projection appearance; backend selection/PvP remain `presence.target_remote`.
 - [x] A separate Docker Compose `multi-backend` profile validates two real backend processes, distinct ownership, bidirectional projection and region chat without changing the default development services.
 - [x] The multi-backend scenario stops/restarts one backend, verifies retry/dead-letter, receipt behavior, TTL/despawn, tombstone protection, stale-owner suppression, reconnect fencing, and recovery.
@@ -173,8 +174,9 @@ This checklist is intentionally stricter than "feature exists". It is about whet
 - [x] The party cap is 9 and the party does not remain functional at one member; leave or kick that drops the roster to one dissolves the party.
 - [x] Leader leave transfers leadership deterministically to the oldest remaining member when 2 or more members remain; manual leader transfer remains out of scope.
 - [x] `send_chat_message` validates only the current functional channels (`region`, `party`, `alliance`, `whisper`), text bounds, whisper target lookup, current alliance membership when required, and rate limits on the backend.
-- [x] `chat_message` fans out only to same-region sessions, online party members, current online or attached members of the sender's alliance, or the named whisper target plus sender.
+- [x] `chat_message` fans out only to same-region sessions, online or attached members of the sender's current party, current online or attached members of the sender's alliance, or the named whisper target plus sender.
 - [x] A named whisper target online on another instance receives `social.chat_message.v1` through the outbox; text stays server-sanitized and bounded.
+- [x] A remote party member online on another instance receives `social.chat_message.v1` through the outbox with exact recipient fence, durable receipt, and current party revalidation; chat alone never creates or repairs party membership.
 - [x] Region chat resolves active same-region ownership server-side, delivers local recipients only after commit, and creates one exact-owner outbox event plus durable receipt per remote recipient; other regions are excluded.
 - [x] Party/clan invite, accept, decline, leave, kick, and dissolve lifecycle feedback reaches affected remote-owned members through idempotent outbox events.
 - [x] Remote party/clan delivery rehydrates authoritative durable state into a delta before its notice; ack/notice alone cannot create membership or invite success.

@@ -64,6 +64,7 @@ type attachedSession struct {
 	projectionVersion     int64
 	projectionRegionID    string
 	projectionPublishedAt time.Time
+	ownershipAnchorAt     time.Time
 }
 
 type pendingMovementDispatch struct {
@@ -1097,7 +1098,7 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 				return
 			case now := <-ticker.C:
 				if session.FencingToken != 0 && (!attached.leaseDeadline().After(now) || !now.Before(nextOwnershipRenewAt)) {
-					if err := s.renewSessionOwnership(loopCtx, session, runtime.regionIDValue(), true); err != nil {
+					if err := s.renewSessionOwnership(loopCtx, session, runtime, runtime.regionIDValue(), true); err != nil {
 						reasonCode := "session.stale_owner"
 						message := "Gameplay session ownership is no longer valid on this server instance."
 						if !errors.Is(err, errOwnershipStale) && !errors.Is(err, errOwnershipExpired) {
@@ -1109,6 +1110,7 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 						cancelLoop()
 						return
 					}
+					attached.markOwnershipAnchorRefreshed(now)
 					nextOwnershipRenewAt = now.Add(s.config.SessionLeaseRenewInterval)
 				}
 				var movementChanged bool
@@ -1136,6 +1138,18 @@ func (s *Server) handleGameplayWS(w http.ResponseWriter, r *http.Request) {
 					s.persistCharacterProgression(session.CharacterID, runtime)
 					if !movementChanged {
 						s.fanOutPresenceState(session.ID, runtime)
+					}
+				}
+				if attached != nil && attached.runtime != nil && attached.ownershipAnchorRefreshDue(now, s.config.RegionProjectionHeartbeat) {
+					if err := s.refreshSessionOwnershipAnchor(loopCtx, session, attached.runtime, attached.runtime.regionIDValue()); err != nil {
+						if errors.Is(err, errOwnershipStale) || errors.Is(err, errOwnershipExpired) {
+							sendOutbound(rejectMessage("", 0, "session.stale_owner", "Gameplay session ownership is no longer valid on this server instance."))
+							cancelLoop()
+							return
+						}
+						s.recordStoreError("gameplay_sessions.refresh_anchor", err)
+					} else {
+						attached.markOwnershipAnchorRefreshed(now)
 					}
 				}
 				if attached != nil && !movementChanged && attached.regionProjectionHeartbeatDue(now, s.config.RegionProjectionHeartbeat) {
@@ -1649,7 +1663,7 @@ func (s *Server) finalizeOwnedAttachedSession(session *Session, runtime *attache
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	err := s.renewSessionOwnership(ctx, session, runtime.regionIDValue(), false)
+	err := s.renewSessionOwnership(ctx, session, runtime, runtime.regionIDValue(), false)
 	cancel()
 	if err == nil {
 		s.persistCharacterWorldState(session.CharacterID, runtime)

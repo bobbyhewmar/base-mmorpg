@@ -4,7 +4,7 @@
 
 Freeze the minimum cross-instance gameplay fanout contract that runs on the existing PostgreSQL deployment. This slice adds no Redis, external queue, broker, remote combat, client fallback, or map change.
 
-The shipped consumers are an informational remote-target notice, canonical remote whisper/region chat, party/clan notices, and exact-recipient regional player projections. They prove durable production, instance-scoped claiming, retry, delivery, receipts, and retention without making a remote player locally authoritative or introducing remote combat.
+The shipped consumers are an informational remote-target notice, canonical remote whisper/region/party chat, party/clan notices, and exact-recipient regional player projections. They prove durable production, instance-scoped claiming, retry, delivery, receipts, and retention without making a remote player locally authoritative or introducing remote combat.
 
 ## Conceptual Reference Boundary
 
@@ -101,17 +101,19 @@ Remote PvP remains unsupported and continues to return `presence.target_remote`.
 
 The social fanout contract currently supports three versioned event types:
 
-- `social.chat_message.v1` for one server-owned, normalized, maximum-240-rune whisper or region message to one online remote character
+- `social.chat_message.v1` for one server-owned, normalized, maximum-240-rune whisper, region, or party message to one online remote character
 - `social.party_notice.v1` for invite, accept, decline, leave, kick, dissolve-by-roster-rule, and related party lifecycle feedback
 - `social.clan_notice.v1` for invite, accept, decline, leave, kick, and dissolve lifecycle feedback
 
 Whisper lookup uses canonical persisted character identity and durable ownership. An offline or unknown recipient is rejected as `chat.whisper_target_not_found`; a remote recipient creates one exact-session event rather than local fallback.
 
-Region chat requires the actor's authoritative non-empty region. The server lists active ownerships in that region, excludes the actor and current-instance recipients from the remote set, and creates one `chat-region` event per remote character/session. Ready local recipients are snapshotted from the local runtime but receive only after the history, command outcome, and complete remote event set commit. A recipient that is offline, unavailable, malformed, or outside the region does not invalidate delivery to otherwise valid recipients. Party chat remains local-instance in this slice.
+Region chat requires the actor's authoritative non-empty region. The server lists active ownerships in that region, excludes the actor and current-instance recipients from the remote set, and creates one `chat-region` event per remote character/session. Ready local recipients are snapshotted from the local runtime but receive only after the history, command outcome, and complete remote event set commit. A recipient that is offline, unavailable, malformed, or outside the region does not invalidate delivery to otherwise valid recipients.
+
+Party chat follows the Lucera-aligned semantics of membership-based delivery: if the actor is authoritatively in a party, the server resolves every current member from durable party membership, sends locally to attached same-instance members after commit, and creates one `chat-party` event per remote online owner. The remote consumer then revalidates exact recipient ownership and current `party_id` before socket delivery, so chat cannot create or repair membership.
 
 Party and clan commands still resolve invite identity from the actor's authoritative current target. If a previously local known target moves to a remote owner before the invite command, the backend may create the durable invite and exact-owner notice after revalidating social eligibility. Accept, decline, leave, kick, and dissolve notify every currently online affected remote member with a distinct stable purpose/recipient key.
 
-On consumption, ownership and the exact target instance, session, character, and fencing token captured at production are revalidated. Region-chat delivery additionally requires the event target region, current ownership region, and attached runtime region to match. Party/clan delivery loads current durable social state and emits an authoritative delta before the lifecycle notice. The payload cannot supply region scope, membership, roster, invite, or delivery success to the read-model.
+On consumption, ownership and the exact target instance, session, character, and fencing token captured at production are revalidated. Region-chat delivery additionally requires the event target region, current ownership region, and attached runtime region to match. Party-chat delivery additionally requires the recipient to still belong to the same authoritative `party_id`. Party/clan delivery loads current durable social state and emits an authoritative delta before the lifecycle notice. The payload cannot supply region scope, membership, roster, invite, or delivery success to the read-model.
 
 ### Ownership drift policy
 
@@ -158,6 +160,8 @@ Logs include event id, event type, destination instance, retry count, and a boun
 
 `l2bg_region_chat_events_total{result}` and structured `region_chat` logs cover `region_chat_produced`, `local_delivered`, `remote_enqueued`, `remote_consumed`, `duplicate`, `stale_owner`, and `dead_letter`. They contain only routing/lifecycle metadata and never message text or payload JSON.
 
+`l2bg_party_chat_events_total{result}` and structured `party_chat` logs cover `local_delivered`, `remote_enqueued`, `remote_consumed`, `duplicate`, `stale_owner`, `retry`, and `dead_letter`. They contain only routing/lifecycle metadata and never message text or payload JSON.
+
 `l2bg_region_projection_events_total{result}` and structured `region_player_projection` logs cover production, consumption, duplicate/stale suppression, expiry, despawn, failure, and dead-letter without logging payload JSON, display name, position, or visual target.
 
 Regional projection publication also exposes bounded queue/coalescing pressure counters and gauges. Delivery exposes event-age sum, count, and maximum gauges so a two-instance run can report average and maximum outbox delay without logging payloads. The canonical operational scenario is `docs/operations/multi-backend-fanout-validation.md`.
@@ -183,7 +187,6 @@ Two `Store` wrappers may share one memory backend to simulate separate server in
 
 - remote damage or cross-instance combat transactions
 - cross-instance mob/NPC/loot/pet replication or any remote entity authority beyond player visual projection
-- cross-instance party-chat broadcast
 - state-changing remote party/clan authority beyond the already persisted domain command
 - Redis, broker, external queue, or event sourcing
 - admin panel or manual replay UI

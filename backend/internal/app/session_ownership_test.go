@@ -81,7 +81,7 @@ func TestMemorySessionOwnershipFencesConcurrentAttachRenewsAndExpires(t *testing
 	}
 
 	time.Sleep(5 * time.Millisecond)
-	renewed, err := store.GameplaySessions.RenewOwnership(context.Background(), character.ID, first.Session.ID, "instance-a", first.Ownership.FencingToken, "dawn_plaza", 60*time.Millisecond, 5*time.Minute)
+	renewed, err := store.GameplaySessions.RenewOwnership(context.Background(), character.ID, first.Session.ID, "instance-a", first.Ownership.FencingToken, "dawn_plaza", runtimePoint{}, 60*time.Millisecond, 5*time.Minute)
 	if err != nil {
 		t.Fatalf("RenewOwnership() error = %v", err)
 	}
@@ -97,7 +97,7 @@ func TestMemorySessionOwnershipFencesConcurrentAttachRenewsAndExpires(t *testing
 	if replacement.Change != sessionOwnershipReplaced || replacement.Ownership.FencingToken != 2 || replacement.Previous == nil {
 		t.Fatalf("unexpected replacement acquisition: %+v", replacement)
 	}
-	if _, err := store.GameplaySessions.RenewOwnership(context.Background(), character.ID, first.Session.ID, "instance-a", first.Ownership.FencingToken, "dawn_plaza", time.Minute, 5*time.Minute); !errors.Is(err, errOwnershipStale) {
+	if _, err := store.GameplaySessions.RenewOwnership(context.Background(), character.ID, first.Session.ID, "instance-a", first.Ownership.FencingToken, "dawn_plaza", runtimePoint{}, time.Minute, 5*time.Minute); !errors.Is(err, errOwnershipStale) {
 		t.Fatalf("expected stale old owner, got %v", err)
 	}
 	persistedFirst, err := store.GameplaySessions.GetByID(context.Background(), first.Session.ID)

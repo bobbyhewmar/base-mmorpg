@@ -69,7 +69,7 @@ delivery_delay_avg_ms=3468.1
 delivery_delay_max_ms=21413.594
 ```
 
-The retry and dead-letter counts are expected in this fault scenario because backend B is intentionally unavailable while exact-owner events continue to be produced. The result is a reproducible functional baseline, not a production latency SLO. The maximum delay shows that obsolete durable projection rows can accumulate while an owner is down; safe supersession/compaction of obsolete undelivered projection snapshots is the recommended next slice before finer interest management.
+The retry and dead-letter counts are expected in this fault scenario because backend B is intentionally unavailable while exact-owner events continue to be produced. The result is a reproducible functional baseline, not a production latency SLO. The maximum delay shows how far backlog can stretch under outage even after supersession/compaction; the next slice should therefore focus on measuring the accuracy of ownership-anchor-based interest filtering and broader social fanout such as remote party chat under the same receipt contract.
 
 ## Failure Interpretation
 

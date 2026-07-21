@@ -2003,6 +2003,8 @@ func (repo memoryGameplaySessionRepo) AcquireOwnership(_ context.Context, sessio
 		ServerInstanceID: serverInstanceID,
 		FencingToken:     nextToken,
 		RegionID:         repo.memoryCharacterRegion(session.CharacterID),
+		PositionX:        repo.memoryCharacterPositionX(session.CharacterID),
+		PositionZ:        repo.memoryCharacterPositionZ(session.CharacterID),
 		LeaseExpiresAt:   now.Add(leaseDuration),
 		AcquiredAt:       now,
 		RenewedAt:        now,
@@ -2021,7 +2023,7 @@ func (repo memoryGameplaySessionRepo) AcquireOwnership(_ context.Context, sessio
 	}, nil
 }
 
-func (repo memoryGameplaySessionRepo) RenewOwnership(_ context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error) {
+func (repo memoryGameplaySessionRepo) RenewOwnership(_ context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, position runtimePoint, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error) {
 	repo.backend.mu.Lock()
 	defer repo.backend.mu.Unlock()
 
@@ -2042,8 +2044,36 @@ func (repo memoryGameplaySessionRepo) RenewOwnership(_ context.Context, characte
 	if regionID != "" {
 		ownership.RegionID = regionID
 	}
+	if finiteProjectionNumber(position.X) && finiteProjectionNumber(position.Z) {
+		ownership.PositionX = position.X
+		ownership.PositionZ = position.Z
+	}
 	session.AttachExpiresAt = now.Add(attachTokenTTL)
 	applyOwnershipToSession(session, ownership)
+	copy := *ownership
+	return &copy, nil
+}
+
+func (repo memoryGameplaySessionRepo) RefreshOwnershipAnchor(_ context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, position runtimePoint) (*SessionOwnership, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	ownership := repo.backend.sessionOwnerships[characterID]
+	if ownership == nil || ownership.SessionID != sessionID || ownership.ServerInstanceID != serverInstanceID || ownership.FencingToken != fencingToken {
+		return nil, errOwnershipStale
+	}
+	now := time.Now().UTC()
+	if !ownership.LeaseExpiresAt.After(now) {
+		return nil, errOwnershipExpired
+	}
+	if regionID != "" {
+		ownership.RegionID = regionID
+	}
+	if finiteProjectionNumber(position.X) && finiteProjectionNumber(position.Z) {
+		ownership.PositionX = position.X
+		ownership.PositionZ = position.Z
+	}
+	ownership.RenewedAt = now
 	copy := *ownership
 	return &copy, nil
 }
@@ -2139,6 +2169,22 @@ func (repo memoryGameplaySessionRepo) memoryCharacterRegion(characterID string) 
 		return ""
 	}
 	return character.LastRegionID
+}
+
+func (repo memoryGameplaySessionRepo) memoryCharacterPositionX(characterID string) float64 {
+	character := repo.backend.characters[characterID]
+	if character == nil {
+		return 0
+	}
+	return character.PositionX
+}
+
+func (repo memoryGameplaySessionRepo) memoryCharacterPositionZ(characterID string) float64 {
+	character := repo.backend.characters[characterID]
+	if character == nil {
+		return 0
+	}
+	return character.PositionZ
 }
 
 func applyOwnershipToSession(session *Session, ownership *SessionOwnership) {

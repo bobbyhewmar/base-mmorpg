@@ -3536,7 +3536,7 @@ func (p *postgresStoreBackend) AcquireSessionOwnership(ctx context.Context, sess
 	row := tx.QueryRowContext(
 		ctx,
 		`SELECT session.session_id, session.account_id, session.character_id, session.attach_token,
-		        session.status, session.attach_expires_at, character.last_region_id, NOW()
+		        session.status, session.attach_expires_at, character.last_region_id, character.current_position_x, character.current_position_z, NOW()
 		 FROM gameplay_sessions session
 		 JOIN characters character ON character.character_id = session.character_id
 		 WHERE session.session_id = $1 AND session.character_id = $2
@@ -3547,8 +3547,9 @@ func (p *postgresStoreBackend) AcquireSessionOwnership(ctx context.Context, sess
 	session := &Session{}
 	var status string
 	var regionID string
+	var positionX, positionZ float64
 	var now time.Time
-	if err := row.Scan(&session.ID, &session.AccountID, &session.CharacterID, &session.AttachToken, &status, &session.AttachExpiresAt, &regionID, &now); err != nil {
+	if err := row.Scan(&session.ID, &session.AccountID, &session.CharacterID, &session.AttachToken, &status, &session.AttachExpiresAt, &regionID, &positionX, &positionZ, &now); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errSessionNotFound
 		}
@@ -3578,7 +3579,7 @@ func (p *postgresStoreBackend) AcquireSessionOwnership(ctx context.Context, sess
 	current := &SessionOwnership{}
 	err = tx.QueryRowContext(
 		ctx,
-		`SELECT character_id, session_id, server_instance_id, fencing_token, region_id,
+		`SELECT character_id, session_id, server_instance_id, fencing_token, region_id, position_x, position_z,
 		        lease_expires_at, acquired_at, renewed_at
 		 FROM gameplay_session_ownerships
 		 WHERE character_id = $1
@@ -3590,6 +3591,8 @@ func (p *postgresStoreBackend) AcquireSessionOwnership(ctx context.Context, sess
 		&current.ServerInstanceID,
 		&current.FencingToken,
 		&current.RegionID,
+		&current.PositionX,
+		&current.PositionZ,
 		&current.LeaseExpiresAt,
 		&current.AcquiredAt,
 		&current.RenewedAt,
@@ -3619,6 +3622,8 @@ func (p *postgresStoreBackend) AcquireSessionOwnership(ctx context.Context, sess
 		ServerInstanceID: serverInstanceID,
 		FencingToken:     nextToken,
 		RegionID:         regionID,
+		PositionX:        positionX,
+		PositionZ:        positionZ,
 		LeaseExpiresAt:   now.Add(leaseDuration),
 		AcquiredAt:       now,
 		RenewedAt:        now,
@@ -3626,14 +3631,16 @@ func (p *postgresStoreBackend) AcquireSessionOwnership(ctx context.Context, sess
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO gameplay_session_ownerships (
-		   character_id, session_id, server_instance_id, fencing_token, region_id,
+		   character_id, session_id, server_instance_id, fencing_token, region_id, position_x, position_z,
 		   lease_expires_at, acquired_at, renewed_at
-		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 ON CONFLICT (character_id) DO UPDATE SET
 		   session_id = EXCLUDED.session_id,
 		   server_instance_id = EXCLUDED.server_instance_id,
 		   fencing_token = EXCLUDED.fencing_token,
 		   region_id = EXCLUDED.region_id,
+		   position_x = EXCLUDED.position_x,
+		   position_z = EXCLUDED.position_z,
 		   lease_expires_at = EXCLUDED.lease_expires_at,
 		   acquired_at = EXCLUDED.acquired_at,
 		   renewed_at = EXCLUDED.renewed_at`,
@@ -3642,6 +3649,8 @@ func (p *postgresStoreBackend) AcquireSessionOwnership(ctx context.Context, sess
 		ownership.ServerInstanceID,
 		ownership.FencingToken,
 		ownership.RegionID,
+		ownership.PositionX,
+		ownership.PositionZ,
 		ownership.LeaseExpiresAt,
 		ownership.AcquiredAt,
 		ownership.RenewedAt,
@@ -3675,7 +3684,7 @@ func (p *postgresStoreBackend) AcquireSessionOwnership(ctx context.Context, sess
 	}, nil
 }
 
-func (p *postgresStoreBackend) RenewSessionOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error) {
+func (p *postgresStoreBackend) RenewSessionOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, position runtimePoint, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error) {
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -3687,20 +3696,24 @@ func (p *postgresStoreBackend) RenewSessionOwnership(ctx context.Context, charac
 		ctx,
 		`UPDATE gameplay_session_ownerships
 		 SET region_id = CASE WHEN $5 = '' THEN region_id ELSE $5 END,
-		     lease_expires_at = NOW() + ($6 * INTERVAL '1 millisecond'),
+		     position_x = $6,
+		     position_z = $7,
+		     lease_expires_at = NOW() + ($8 * INTERVAL '1 millisecond'),
 		     renewed_at = NOW()
 		 WHERE character_id = $1
 		   AND session_id = $2
 		   AND server_instance_id = $3
 		   AND fencing_token = $4
 		   AND lease_expires_at > NOW()
-		 RETURNING character_id, session_id, server_instance_id, fencing_token, region_id,
+		 RETURNING character_id, session_id, server_instance_id, fencing_token, region_id, position_x, position_z,
 		           lease_expires_at, acquired_at, renewed_at`,
 		characterID,
 		sessionID,
 		serverInstanceID,
 		fencingToken,
 		regionID,
+		position.X,
+		position.Z,
 		leaseDuration.Milliseconds(),
 	).Scan(
 		&ownership.CharacterID,
@@ -3708,6 +3721,8 @@ func (p *postgresStoreBackend) RenewSessionOwnership(ctx context.Context, charac
 		&ownership.ServerInstanceID,
 		&ownership.FencingToken,
 		&ownership.RegionID,
+		&ownership.PositionX,
+		&ownership.PositionZ,
 		&ownership.LeaseExpiresAt,
 		&ownership.AcquiredAt,
 		&ownership.RenewedAt,
@@ -3753,6 +3768,64 @@ func (p *postgresStoreBackend) RenewSessionOwnership(ctx context.Context, charac
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
+	}
+	return ownership, nil
+}
+
+func (p *postgresStoreBackend) RefreshSessionOwnershipAnchor(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, position runtimePoint) (*SessionOwnership, error) {
+	ownership := &SessionOwnership{}
+	if err := p.db.QueryRowContext(
+		ctx,
+		`UPDATE gameplay_session_ownerships
+		 SET region_id = CASE WHEN $5 = '' THEN region_id ELSE $5 END,
+		     position_x = $6,
+		     position_z = $7,
+		     renewed_at = NOW()
+		 WHERE character_id = $1
+		   AND session_id = $2
+		   AND server_instance_id = $3
+		   AND fencing_token = $4
+		   AND lease_expires_at > NOW()
+		 RETURNING character_id, session_id, server_instance_id, fencing_token, region_id, position_x, position_z,
+		           lease_expires_at, acquired_at, renewed_at`,
+		characterID,
+		sessionID,
+		serverInstanceID,
+		fencingToken,
+		regionID,
+		position.X,
+		position.Z,
+	).Scan(
+		&ownership.CharacterID,
+		&ownership.SessionID,
+		&ownership.ServerInstanceID,
+		&ownership.FencingToken,
+		&ownership.RegionID,
+		&ownership.PositionX,
+		&ownership.PositionZ,
+		&ownership.LeaseExpiresAt,
+		&ownership.AcquiredAt,
+		&ownership.RenewedAt,
+	); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		var leaseExpiresAt time.Time
+		lookupErr := p.db.QueryRowContext(ctx, `SELECT lease_expires_at FROM gameplay_session_ownerships WHERE character_id = $1`, characterID).Scan(&leaseExpiresAt)
+		if errors.Is(lookupErr, sql.ErrNoRows) {
+			return nil, errOwnershipStale
+		}
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		var now time.Time
+		if err := p.db.QueryRowContext(ctx, `SELECT NOW()`).Scan(&now); err != nil {
+			return nil, err
+		}
+		if !leaseExpiresAt.After(now) {
+			return nil, errOwnershipExpired
+		}
+		return nil, errOwnershipStale
 	}
 	return ownership, nil
 }
@@ -3805,6 +3878,8 @@ func scanSessionOwnership(scanner rowScanner) (*SessionOwnership, error) {
 		&ownership.ServerInstanceID,
 		&ownership.FencingToken,
 		&ownership.RegionID,
+		&ownership.PositionX,
+		&ownership.PositionZ,
 		&ownership.LeaseExpiresAt,
 		&ownership.AcquiredAt,
 		&ownership.RenewedAt,
@@ -3820,7 +3895,7 @@ func scanSessionOwnership(scanner rowScanner) (*SessionOwnership, error) {
 func (p *postgresStoreBackend) GetActiveSessionOwnershipByCharacterID(ctx context.Context, characterID string) (*SessionOwnership, error) {
 	return scanSessionOwnership(p.db.QueryRowContext(
 		ctx,
-		`SELECT ownership.character_id, ownership.session_id, ownership.server_instance_id, ownership.fencing_token, ownership.region_id,
+		`SELECT ownership.character_id, ownership.session_id, ownership.server_instance_id, ownership.fencing_token, ownership.region_id, ownership.position_x, ownership.position_z,
 		        ownership.lease_expires_at, ownership.acquired_at, ownership.renewed_at
 		 FROM gameplay_session_ownerships ownership
 		 JOIN gameplay_sessions session ON session.session_id = ownership.session_id
@@ -3835,7 +3910,7 @@ func (p *postgresStoreBackend) GetActiveSessionOwnershipByCharacterID(ctx contex
 func (p *postgresStoreBackend) ListActiveSessionOwnershipsByRegion(ctx context.Context, regionID string) ([]SessionOwnership, error) {
 	rows, err := p.db.QueryContext(
 		ctx,
-		`SELECT ownership.character_id, ownership.session_id, ownership.server_instance_id, ownership.fencing_token, ownership.region_id,
+		`SELECT ownership.character_id, ownership.session_id, ownership.server_instance_id, ownership.fencing_token, ownership.region_id, ownership.position_x, ownership.position_z,
 		        ownership.lease_expires_at, ownership.acquired_at, ownership.renewed_at
 		 FROM gameplay_session_ownerships ownership
 		 JOIN gameplay_sessions session ON session.session_id = ownership.session_id
@@ -4298,8 +4373,12 @@ func (repo postgresGameplaySessionRepo) AcquireOwnership(ctx context.Context, se
 	return repo.backend.AcquireSessionOwnership(ctx, sessionID, attachToken, serverInstanceID, leaseDuration, attachTokenTTL)
 }
 
-func (repo postgresGameplaySessionRepo) RenewOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error) {
-	return repo.backend.RenewSessionOwnership(ctx, characterID, sessionID, serverInstanceID, fencingToken, regionID, leaseDuration, attachTokenTTL)
+func (repo postgresGameplaySessionRepo) RenewOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, position runtimePoint, leaseDuration time.Duration, attachTokenTTL time.Duration) (*SessionOwnership, error) {
+	return repo.backend.RenewSessionOwnership(ctx, characterID, sessionID, serverInstanceID, fencingToken, regionID, position, leaseDuration, attachTokenTTL)
+}
+
+func (repo postgresGameplaySessionRepo) RefreshOwnershipAnchor(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64, regionID string, position runtimePoint) (*SessionOwnership, error) {
+	return repo.backend.RefreshSessionOwnershipAnchor(ctx, characterID, sessionID, serverInstanceID, fencingToken, regionID, position)
 }
 
 func (repo postgresGameplaySessionRepo) ReleaseOwnership(ctx context.Context, characterID string, sessionID string, serverInstanceID string, fencingToken int64) (bool, error) {
