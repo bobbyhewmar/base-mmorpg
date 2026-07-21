@@ -2992,7 +2992,7 @@ export class Hud {
     const chatFilterButton = target.closest<HTMLElement>('[data-chat-filter]');
     if (chatFilterButton) {
       const filter = chatFilterButton.dataset.chatFilter;
-      if (filter === 'all' || filter === 'region' || filter === 'party' || filter === 'whisper') {
+      if (filter === 'all' || filter === 'region' || filter === 'party' || filter === 'alliance' || filter === 'whisper') {
         this.activeChatFilter = filter;
         this.lastSnapshot = '';
         this.update(this.store.getState());

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createInitialState, createMob, gameTemplates } from '../game/data/templates';
 import type { GameState } from '../game/domain/types';
@@ -150,6 +150,27 @@ describe('hud skill gating', () => {
     expect(chatFilterMatches('alliance', 'party')).toBe(false);
     expect(chatFilterMatches('whisper', 'whisper')).toBe(true);
     expect(chatFilterMatches('whisper', 'region')).toBe(false);
+  });
+
+  it('allows the alliance chat filter button to activate the alliance compose channel', () => {
+    const state = createInitialState();
+    const update = vi.fn();
+    const hud = Object.assign(Object.create(Hud.prototype), {
+      activeChatFilter: 'all',
+      lastSnapshot: 'snapshot',
+      store: { getState: () => state },
+      update,
+    }) as Hud;
+    const button = {
+      dataset: { chatFilter: 'alliance' },
+      closest: () => button,
+    };
+
+    (Hud.prototype as any).handleClick.call(hud, { target: button });
+
+    expect((hud as any).activeChatFilter).toBe('alliance');
+    expect((hud as any).lastSnapshot).toBe('');
+    expect(update).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the party window closed by default and toggles it on demand', () => {
