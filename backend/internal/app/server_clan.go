@@ -208,7 +208,9 @@ func (s *Server) sendClanStateRefresh(ctx context.Context, characterID string) {
 	if attached == nil || attached.runtime == nil {
 		return
 	}
+	s.clanMu.Lock()
 	clan, invites, err := s.loadCharacterClanState(ctx, characterID, time.Now().UTC())
+	s.clanMu.Unlock()
 	if err != nil {
 		s.recordStoreError("clans.load_character_state", err, errRecordNotFound)
 		return

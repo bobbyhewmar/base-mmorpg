@@ -69,6 +69,34 @@ func requireClanDeltaCleared(t *testing.T, messages []map[string]any) {
 	t.Fatalf("expected clan to be cleared, got %+v", self["clan"])
 }
 
+func requireClanInviteCount(t *testing.T, messages []map[string]any, inviteCount int) {
+	t.Helper()
+	delta := findOutboundMessage(messages, "delta")
+	if delta == nil {
+		t.Fatalf("expected delta, got %+v", messages)
+	}
+	self, ok := delta["self"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected delta self payload, got %+v", delta)
+	}
+	switch invites := self["clan_invites"].(type) {
+	case nil:
+		if inviteCount != 0 {
+			t.Fatalf("expected %d clan invites, got nil", inviteCount)
+		}
+	case []CharacterClanInviteSnapshot:
+		if len(invites) != inviteCount {
+			t.Fatalf("expected %d clan invites, got %+v", inviteCount, invites)
+		}
+	case []any:
+		if len(invites) != inviteCount {
+			t.Fatalf("expected %d clan invites, got %+v", inviteCount, invites)
+		}
+	default:
+		t.Fatalf("expected clan_invites payload, got %+v", self["clan_invites"])
+	}
+}
+
 func TestServerClanCreatePersistsLeaderAndRejectsDuplicateOrSecondClan(t *testing.T) {
 	store := newMemoryStore()
 	server := NewServer(":0", "", store)
@@ -581,4 +609,75 @@ func TestServerClanMembershipRehydratesAfterDisconnectAndReconnect(t *testing.T)
 	if len(rehydratedInvites) != 0 {
 		t.Fatalf("expected no stale invites after accepted membership reconnect, got %+v", rehydratedInvites)
 	}
+}
+
+func TestServerClanStateRefreshWaitsForConcurrentInviteMutation(t *testing.T) {
+	store := newMemoryStore()
+	server := NewServer(":0", "", store)
+	leader := stagePartyTestClient(t, server, store, "sess_clan_refresh_leader", &Character{
+		ID:           "char_clan_refresh_leader",
+		AccountID:    "acc_clan_refresh_leader",
+		Name:         "RefreshLeader",
+		BaseClass:    "Fighter",
+		Sex:          "Male",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+		PositionX:    -8,
+		PositionZ:    0,
+	})
+	recruit := stagePartyTestClient(t, server, store, "sess_clan_refresh_recruit", &Character{
+		ID:           "char_clan_refresh_recruit",
+		AccountID:    "acc_clan_refresh_recruit",
+		Name:         "RefreshRecruit",
+		BaseClass:    "Mage",
+		Sex:          "Female",
+		Level:        1,
+		LastRegionID: "dawn_plaza",
+		PositionX:    -8,
+		PositionZ:    0,
+	})
+
+	_ = dispatchPartyCommand(t, server, leader, "cmd_clan_refresh_create", 1, "create_clan", map[string]any{"name": "RefreshClan"})
+	clan, err := store.Clans.GetByCharacterID(context.Background(), leader.session.CharacterID)
+	if err != nil {
+		t.Fatalf("Clans.GetByCharacterID(leader) error = %v", err)
+	}
+	recruit.resetMessages()
+
+	server.clanMu.Lock()
+	done := make(chan struct{})
+	go func() {
+		server.sendClanStateRefresh(context.Background(), recruit.session.CharacterID)
+		close(done)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-done:
+		server.clanMu.Unlock()
+		t.Fatal("expected clan state refresh to wait for concurrent clan mutation lock")
+	default:
+	}
+
+	now := time.Now().UTC()
+	err = store.Clans.CreateInvite(context.Background(), &ClanInvite{
+		ID:                 "clan_invite_refresh_pending",
+		ClanID:             clan.ID,
+		InviterCharacterID: leader.session.CharacterID,
+		InviteeCharacterID: recruit.session.CharacterID,
+		ExpiresAt:          now.Add(clanInviteTTL),
+		CreatedAt:          now,
+	})
+	server.clanMu.Unlock()
+	if err != nil {
+		t.Fatalf("Clans.CreateInvite() error = %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for clan state refresh")
+	}
+
+	requireClanInviteCount(t, recruit.messages, 1)
 }
