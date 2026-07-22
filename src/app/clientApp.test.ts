@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { ApiClientError } from '../online/client';
 import { ClientApp } from './clientApp';
+import { mapPreGameErrorToUserMessage } from './preGameErrorMapper';
 import { initialPreGameContext } from './preGameMachine';
 
 class FakeMouseEvent {
@@ -147,6 +149,57 @@ const installFakeDom = (): FakeElement => {
 };
 
 describe('ClientApp', () => {
+  it('renders login errors without exposing backend reason codes', () => {
+    const app = Object.assign(Object.create(ClientApp.prototype), {
+      state: initialPreGameContext(),
+    }) as any;
+
+    const html = app.renderLoginScreen(
+      `<div class="pregame-error">${mapPreGameErrorToUserMessage(
+        new ApiClientError('Invalid login or password.', 'auth.invalid_credentials', 401),
+        'auth',
+      )}</div>`,
+    );
+
+    expect(html).toContain('Incorrect login or password.');
+    expect(html).not.toContain('auth.invalid_credentials');
+  });
+
+  it('renders character creation errors without exposing backend reason codes', () => {
+    const app = Object.assign(Object.create(ClientApp.prototype), {
+      state: {
+        ...initialPreGameContext(),
+        phase: 'character_create',
+        catalog: {
+          races: [
+            {
+              race: 'Human',
+              enabled: true,
+              base_classes: ['Fighter', 'Mage'],
+              sex_options: ['Male', 'Female'],
+              appearance_options: {
+                hair_styles: [0, 1, 2],
+                hair_color_default: '#6b4e37',
+                skin_types: [0, 1, 2],
+              },
+            },
+          ],
+        },
+      },
+      createNameDraft: 'Arden',
+    }) as any;
+
+    const html = app.renderCharacterCreationScreen(
+      `<div class="pregame-error">${mapPreGameErrorToUserMessage(
+        new ApiClientError('Character name already exists.', 'character.name_unavailable', 409),
+        'character_create',
+      )}</div>`,
+    );
+
+    expect(html).toContain('That character name is not available.');
+    expect(html).not.toContain('character.name_unavailable');
+  });
+
   it('renders character creation with default catalog-backed choices and only gates submit on name input', () => {
     const app = Object.assign(Object.create(ClientApp.prototype), {
       state: {

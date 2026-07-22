@@ -270,6 +270,7 @@ Responsibilities:
 - character-creation preview renders catalog-backed defaults immediately, then updates as the player changes race, class, sex, hairstyle, or skin type
 - character-creation submit is unlocked by a non-empty name once the catalog-backed default template is complete; name availability remains backend-owned
 - explicit backend error surfaces for invalid login, unavailable name, invalid race-class combination, and expired session
+- pre-game auth and character-creation errors must map backend `reason_code` values into friendly safe UI copy; keep `reason_code` available internally for flow, logging, and tests, but never render raw namespaces or technical backend messages to the player
 
 ### Center
 

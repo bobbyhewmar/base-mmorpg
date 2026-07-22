@@ -1,7 +1,7 @@
 import type { BaseClass, CharacterRace, CharacterSex, CharacterSummary, CreateCharacterRequest } from '../online/contracts';
 import { getBaseClassCreationLabel, getBaseClassDefinition } from '../game/data/characterClasses';
 import { gameTemplates, getArchetypeIdForBaseClass } from '../game/data/templates';
-import { ApiClientError, GameplaySessionClient, OnlineApiClient } from '../online/client';
+import { GameplaySessionClient, OnlineApiClient } from '../online/client';
 import { preGameReducer, initialPreGameContext, type PreGameContext } from './preGameMachine';
 import { WorldRuntime } from '../runtime/worldRuntime';
 import { normalizeCanonicalHairColor, resolveCharacterCreationOptions } from './characterCreationOptions';
@@ -10,6 +10,7 @@ import { OnlineReadModel } from '../online/readModel';
 import type { EquipSlot, GameState, HotbarActionId, PlayerHotbarState } from '../game/domain/types';
 import { CharacterLobbyScene } from './characterLobbyScene';
 import { CharacterCreationScene } from './characterCreationScene';
+import { mapPreGameErrorToUserMessage, mapPreGameReasonCodeToUserMessage } from './preGameErrorMapper';
 
 const API_BASE_URL = import.meta.env.VITE_L2BG_API_BASE_URL ?? 'http://localhost:8080';
 
@@ -199,7 +200,7 @@ export class ClientApp {
         });
         this.transition(resolveRegisterSuccessEvent(response, loginValue));
       } catch (error) {
-        this.transition({ type: 'auth_failed', message: this.toUserMessage(error) });
+        this.transition({ type: 'auth_failed', message: this.toUserMessage(error, 'auth') });
       }
       return;
     }
@@ -224,7 +225,7 @@ export class ClientApp {
         });
       } catch (error) {
         this.transition(
-          resolveLoginFailureEvent(error, String(values.login ?? ''), this.toUserMessage(error)),
+          resolveLoginFailureEvent(error, String(values.login ?? ''), this.toUserMessage(error, 'auth')),
         );
       }
       return;
@@ -274,7 +275,7 @@ export class ClientApp {
         this.createNameDraft = '';
         this.transition({ type: 'characters_updated', characters: response.characters });
       } catch (error) {
-        this.transition({ type: 'operation_failed', message: this.toUserMessage(error) });
+        this.transition({ type: 'operation_failed', message: this.toUserMessage(error, 'character_create') });
       }
     }
   }
@@ -557,7 +558,7 @@ export class ClientApp {
         this.sessionClient = null;
       }
       this.clearMountedOnlineState();
-      this.transition({ type: 'operation_failed', message: this.toUserMessage(error) });
+      this.transition({ type: 'operation_failed', message: this.toUserMessage(error, 'world_enter') });
     }
   }
 
@@ -1318,14 +1319,20 @@ export class ClientApp {
     }
     if (!this.onlineReadModel) {
       if (message.kind === 'reject') {
-        this.transition({ type: 'operation_failed', message: message.message });
+        this.transition({
+          type: 'operation_failed',
+          message: mapPreGameReasonCodeToUserMessage(message.reason_code, 'attach'),
+        });
       }
       return;
     }
 
     const result = this.onlineReadModel.applyMessage(message);
     if (message.kind === 'reject' && !message.command_id) {
-      this.transition({ type: 'operation_failed', message: message.message });
+      this.transition({
+        type: 'operation_failed',
+        message: mapPreGameReasonCodeToUserMessage(message.reason_code, 'attach'),
+      });
     }
     if (result.changed) {
       this.refreshOnlineRuntime();
@@ -1365,17 +1372,11 @@ export class ClientApp {
     return this.state.characters.find((character) => character.character_id === this.state.selectedCharacterId) ?? null;
   }
 
-  private toUserMessage(error: unknown): string {
-    if (error instanceof ApiClientError) {
-      if (error.reasonCode === 'character.name_unavailable') {
-        return 'Character name is already reserved.';
-      }
-      return `${error.reasonCode}: ${error.message}`;
-    }
-    if (error instanceof Error) {
-      return error.message;
-    }
-    return 'Unexpected error.';
+  private toUserMessage(
+    error: unknown,
+    intent: 'auth' | 'character_create' | 'world_enter' | 'attach' = 'auth',
+  ): string {
+    return mapPreGameErrorToUserMessage(error, intent);
   }
 
   private render(): void {
