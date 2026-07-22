@@ -1,7 +1,11 @@
 import * as THREE from 'three';
 import type { Object3D } from 'three';
 import type { CharacterSummary } from '../online/contracts';
-import { ensureClassCharacterModel, updateClassCharacterModelAnimation } from '../game/scene/characterModelAssets';
+import {
+  ensureClassCharacterModel,
+  triggerClassCharacterModelLobbyInteraction,
+  updateClassCharacterModelAnimation,
+} from '../game/scene/characterModelAssets';
 
 type AppearanceOptionIndex = 0 | 1 | 2;
 
@@ -29,7 +33,6 @@ type LobbyCharacterVisual = {
   targetPosition: THREE.Vector3;
   startedAtMs: number;
   selected: boolean;
-  interactionStartedAtMs: number | null;
 };
 
 type CharacterVisualOptions = {
@@ -38,7 +41,6 @@ type CharacterVisualOptions = {
 
 const SELECTED_POSITION = new THREE.Vector3(0, 0, -1.45);
 const WALK_DURATION_MS = 1150;
-const INTERACTION_DURATION_MS = 920;
 const ROSTER_POSITIONS = [
   new THREE.Vector3(-7.3, 0, 0.3),
   new THREE.Vector3(-4.4, 0, -0.35),
@@ -101,12 +103,23 @@ const applyRigPartBase = (part: CharacterRigPart): void => {
   part.object.rotation.copy(part.rotation);
 };
 
+export const triggerSelectedLobbyCharacterInteraction = (
+  visual: Pick<LobbyCharacterVisual, 'group' | 'startedAtMs'>,
+  now: number,
+  triggerModelInteraction: (group: THREE.Group) => boolean = (group) => triggerClassCharacterModelLobbyInteraction(group),
+): boolean => {
+  const walkProgress = Math.min(Math.max((now - visual.startedAtMs) / WALK_DURATION_MS, 0), 1);
+  if (walkProgress < 1) {
+    return false;
+  }
+  return triggerModelInteraction(visual.group);
+};
+
 export const animateCharacterVisual = (
   group: THREE.Group,
   timeMs: number,
   options: {
     moving?: boolean;
-    interactionProgress?: number | null;
     phaseOffset?: number;
   } = {},
 ): void => {
@@ -119,7 +132,6 @@ export const animateCharacterVisual = (
   if (!rig) {
     updateClassCharacterModelAnimation(group, modelDeltaMs, {
       moving: options.moving,
-      basicAttacking: options.interactionProgress !== null && options.interactionProgress !== undefined,
     });
     return;
   }
@@ -146,18 +158,8 @@ export const animateCharacterVisual = (
   rig.armLeft.object.rotation.z += 0.08;
   rig.armRight.object.rotation.z -= 0.08;
 
-  if (options.interactionProgress !== null && options.interactionProgress !== undefined) {
-    const wave = Math.sin(options.interactionProgress * Math.PI * 6);
-    const settle = 1 - options.interactionProgress;
-    rig.armLeft.object.rotation.x = -1.05 + wave * 0.22 * settle;
-    rig.armRight.object.rotation.x = -1.05 - wave * 0.22 * settle;
-    rig.armLeft.object.rotation.z = 0.62;
-    rig.armRight.object.rotation.z = -0.62;
-  }
-
   updateClassCharacterModelAnimation(group, modelDeltaMs, {
     moving: options.moving,
-    basicAttacking: options.interactionProgress !== null && options.interactionProgress !== undefined,
   });
 };
 
@@ -536,7 +538,6 @@ export class CharacterLobbyScene {
         targetPosition,
         startedAtMs: now,
         selected,
-        interactionStartedAtMs: null,
       });
       this.scene.add(group);
     });
@@ -560,20 +561,12 @@ export class CharacterLobbyScene {
     if (characterId) {
       const visual = this.visuals.get(characterId);
       if (visual?.selected) {
-        this.triggerSelectedCharacterInteraction(visual, performance.now());
+        triggerSelectedLobbyCharacterInteraction(visual, performance.now());
         return;
       }
       this.onSelectCharacter(characterId);
     }
   };
-
-  private triggerSelectedCharacterInteraction(visual: LobbyCharacterVisual, now: number): void {
-    const walkProgress = Math.min(Math.max((now - visual.startedAtMs) / WALK_DURATION_MS, 0), 1);
-    if (walkProgress < 1) {
-      return;
-    }
-    visual.interactionStartedAtMs = now;
-  }
 
   private resolveCharacterId(object: Object3D | null): string | null {
     let current: Object3D | null = object;
@@ -598,29 +591,12 @@ export class CharacterLobbyScene {
       const lookAt = visual.selected ? this.camera.position : SELECTED_POSITION;
       visual.group.rotation.y = Math.atan2(lookAt.x - visual.group.position.x, lookAt.z - visual.group.position.z);
       const isWalkingToCenter = visual.selected && rawProgress < 1;
-      const interactionProgress =
-        visual.selected && visual.interactionStartedAtMs !== null
-          ? Math.min((now - visual.interactionStartedAtMs) / INTERACTION_DURATION_MS, 1)
-          : null;
       animateCharacterVisual(visual.group, now, {
         moving: isWalkingToCenter,
-        interactionProgress,
         phaseOffset: visual.character.character_id.length * 0.13,
       });
       if (visual.selected && rawProgress < 1) {
         visual.group.position.y = Math.sin(rawProgress * Math.PI * 7) * 0.025;
-      }
-      if (visual.selected && visual.interactionStartedAtMs !== null) {
-        const activeInteractionProgress = Math.min((now - visual.interactionStartedAtMs) / INTERACTION_DURATION_MS, 1);
-        const hop = Math.max(0, Math.sin(activeInteractionProgress * Math.PI * 6));
-        const settle = 1 - easeOutCubic(activeInteractionProgress);
-        visual.group.position.y = hop * (0.34 + settle * 0.1);
-        visual.group.rotation.z = Math.sin(activeInteractionProgress * Math.PI * 6) * 0.045 * settle;
-        if (activeInteractionProgress >= 1) {
-          visual.interactionStartedAtMs = null;
-          visual.group.position.y = 0;
-          visual.group.rotation.z = 0;
-        }
       }
     }
     this.renderer.render(this.scene, this.camera);

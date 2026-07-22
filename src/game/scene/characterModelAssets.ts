@@ -6,6 +6,12 @@ import type { BaseClass, CharacterSex } from '../domain/types';
 
 type ClassCharacterModelActionName = 'idle' | 'walk' | 'run';
 
+type MixerFinishedEvent = {
+  type: 'finished';
+  action: THREE.AnimationAction;
+  direction: number;
+};
+
 type ClassCharacterModelRuntime = {
   key: string;
   container: THREE.Group;
@@ -13,6 +19,9 @@ type ClassCharacterModelRuntime = {
   mixer: THREE.AnimationMixer | null;
   actions: Partial<Record<ClassCharacterModelActionName, THREE.AnimationAction>>;
   currentAction: ClassCharacterModelActionName | null;
+  lobbyInteractionActions: THREE.AnimationAction[];
+  activeLobbyInteractionAction: THREE.AnimationAction | null;
+  handleMixerFinished: ((event: MixerFinishedEvent) => void) | null;
   proceduralRoot?: THREE.Object3D;
 };
 
@@ -24,12 +33,13 @@ export type ClassCharacterModelAppearance = {
   skinType: number;
 };
 
-const MODEL_RUNTIME_KEY = 'classCharacterModelRuntime';
+export const CLASS_CHARACTER_MODEL_RUNTIME_KEY = 'classCharacterModelRuntime';
 const fbxLoader = new FBXLoader();
 const gltfLoader = new GLTFLoader();
 const textureLoader = new THREE.TextureLoader();
 const textureCache = new Map<string, Promise<THREE.Texture>>();
 const animationCache = new Map<string, Promise<THREE.AnimationClip | null>>();
+const animationListCache = new Map<string, Promise<THREE.AnimationClip[]>>();
 
 const appearanceOptionIndex = (value: number): 0 | 1 | 2 => {
   if (value === 0 || value === 1 || value === 2) {
@@ -90,6 +100,58 @@ export const stripBoneScaleTracks = (clip: THREE.AnimationClip): THREE.Animation
   return new THREE.AnimationClip(clip.name, clip.duration, tracks, clip.blendMode);
 };
 
+const normalizeAnimationClipName = (name: string): string =>
+  name
+    .toLowerCase()
+    .replace(/^.*\|/, '')
+    .replace(/[_\-.]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const locomotionAnimationPatterns = [
+  'walk',
+  'run',
+  'jog',
+  'strafe',
+  'sprint',
+  'locomotion',
+  'turn',
+  'rotate',
+  'backpedal',
+  'backward',
+  'back walk',
+  'forward',
+  'fwd',
+  'movement',
+] as const;
+
+const isLocomotionAnimationName = (name: string): boolean => {
+  const normalized = normalizeAnimationClipName(name);
+  return locomotionAnimationPatterns.some((pattern) => normalized.includes(pattern));
+};
+
+export const selectLobbyInteractionClips = (
+  clips: THREE.AnimationClip[],
+  locomotionClipNames: string[],
+): THREE.AnimationClip[] => {
+  const excludedNames = new Set(locomotionClipNames.map((name) => normalizeAnimationClipName(name)).filter(Boolean));
+  return clips.filter((clip) => {
+    const normalized = normalizeAnimationClipName(clip.name);
+    return normalized.length > 0 && !excludedNames.has(normalized) && !isLocomotionAnimationName(clip.name);
+  });
+};
+
+export const pickLobbyInteractionClip = (
+  clips: THREE.AnimationClip[],
+  randomValue: number = Math.random(),
+): THREE.AnimationClip | null => {
+  if (clips.length === 0) {
+    return null;
+  }
+  const normalizedRandom = Number.isFinite(randomValue) ? Math.min(Math.max(randomValue, 0), 0.999999) : 0;
+  return clips[Math.floor(normalizedRandom * clips.length)] ?? clips[0] ?? null;
+};
+
 const loadFbxAnimation = (url: string, preferredName: string): Promise<THREE.AnimationClip | null> => {
   const cacheKey = `fbx:${url}#${preferredName}`;
   const cached = animationCache.get(cacheKey);
@@ -114,6 +176,16 @@ const loadGltfAnimation = (url: string, preferredName: string): Promise<THREE.An
       return clip ? stripBoneScaleTracks(clip) : null;
     });
   animationCache.set(cacheKey, promise);
+  return promise;
+};
+
+const loadGltfAnimations = (url: string): Promise<THREE.AnimationClip[]> => {
+  const cached = animationListCache.get(url);
+  if (cached) {
+    return cached;
+  }
+  const promise = gltfLoader.loadAsync(url).then((asset) => asset.animations.map((clip) => stripBoneScaleTracks(clip)));
+  animationListCache.set(url, promise);
   return promise;
 };
 
@@ -290,14 +362,26 @@ const tintLoadedModelMaterials = (root: THREE.Object3D, tint: string): void => {
 };
 
 const removeExistingRuntime = (parent: THREE.Object3D): void => {
-  const existing = parent.userData[MODEL_RUNTIME_KEY] as ClassCharacterModelRuntime | undefined;
+  const existing = parent.userData[CLASS_CHARACTER_MODEL_RUNTIME_KEY] as ClassCharacterModelRuntime | undefined;
   if (!existing) {
     return;
+  }
+  if (existing.mixer && existing.handleMixerFinished) {
+    existing.mixer.removeEventListener('finished', existing.handleMixerFinished);
   }
   existing.mixer?.stopAllAction();
   existing.container.removeFromParent();
   disposeObjectTree(existing.container);
-  delete parent.userData[MODEL_RUNTIME_KEY];
+  delete parent.userData[CLASS_CHARACTER_MODEL_RUNTIME_KEY];
+};
+
+const clearLobbyInteractionAction = (runtime: ClassCharacterModelRuntime): void => {
+  if (!runtime.activeLobbyInteractionAction) {
+    return;
+  }
+  runtime.activeLobbyInteractionAction.fadeOut(0.12);
+  runtime.activeLobbyInteractionAction.stop();
+  runtime.activeLobbyInteractionAction = null;
 };
 
 const playModelAction = (runtime: ClassCharacterModelRuntime, nextActionName: ClassCharacterModelActionName): void => {
@@ -326,7 +410,7 @@ export const ensureClassCharacterModel = (
   },
 ): void => {
   const key = modelKeyFor(appearance, options.desiredHeight);
-  const existing = parent.userData[MODEL_RUNTIME_KEY] as ClassCharacterModelRuntime | undefined;
+  const existing = parent.userData[CLASS_CHARACTER_MODEL_RUNTIME_KEY] as ClassCharacterModelRuntime | undefined;
   if (existing?.key === key) {
     return;
   }
@@ -348,9 +432,12 @@ export const ensureClassCharacterModel = (
     mixer: null,
     actions: {},
     currentAction: null,
+    lobbyInteractionActions: [],
+    activeLobbyInteractionAction: null,
+    handleMixerFinished: null,
     proceduralRoot: options.proceduralRoot,
   };
-  parent.userData[MODEL_RUNTIME_KEY] = runtime;
+  parent.userData[CLASS_CHARACTER_MODEL_RUNTIME_KEY] = runtime;
 
   const shadowOptions = {
     castShadow: options.castShadow ?? true,
@@ -363,6 +450,7 @@ export const ensureClassCharacterModel = (
     idleClip: THREE.AnimationClip | null;
     walkClip: THREE.AnimationClip | null;
     runClip: THREE.AnimationClip | null;
+    lobbyInteractionClips: THREE.AnimationClip[];
   }>;
 
   if (visual.kind === 'gltf_base_character') {
@@ -378,7 +466,8 @@ export const ensureClassCharacterModel = (
       loadGltfAnimation(visual.animationUrl, visual.idleClipName),
       loadGltfAnimation(visual.animationUrl, visual.walkClipName),
       loadGltfAnimation(visual.animationUrl, visual.runClipName),
-    ]).then(([modelAsset, hairAsset, idleClip, walkClip, runClip]) => {
+      loadGltfAnimations(visual.animationUrl),
+    ]).then(([modelAsset, hairAsset, idleClip, walkClip, runClip, allClips]) => {
       const model = modelAsset.scene;
       prepareLoadedModel(model, shadowOptions);
       applyBaseCharacterSkin(model, skinTint);
@@ -386,7 +475,17 @@ export const ensureClassCharacterModel = (
       attachRiggedHairToBaseSkeleton(model, hairAsset.scene);
       applyHairColor(model, appearance.hairColor);
       disposeObjectTree(hairAsset.scene);
-      return { model, idleClip, walkClip, runClip };
+      return {
+        model,
+        idleClip,
+        walkClip,
+        runClip,
+        lobbyInteractionClips: selectLobbyInteractionClips(allClips, [
+          visual.idleClipName,
+          visual.walkClipName,
+          visual.runClipName,
+        ]),
+      };
     });
   } else {
     assetPromise = Promise.all([
@@ -396,13 +495,13 @@ export const ensureClassCharacterModel = (
       loadFbxAnimation(visual.runAnimationUrl, 'Run'),
     ]).then(([model, texture, idleClip, runClip]) => {
       prepareTexturedFbxModel(model, texture, shadowOptions);
-      return { model, idleClip, walkClip: null, runClip };
+      return { model, idleClip, walkClip: null, runClip, lobbyInteractionClips: [] };
     });
   }
 
   void assetPromise
-    .then(({ model, idleClip, walkClip, runClip }) => {
-      if (parent.userData[MODEL_RUNTIME_KEY] !== runtime) {
+    .then(({ model, idleClip, walkClip, runClip, lobbyInteractionClips }) => {
+      if (parent.userData[CLASS_CHARACTER_MODEL_RUNTIME_KEY] !== runtime) {
         disposeObjectTree(model);
         return;
       }
@@ -410,6 +509,14 @@ export const ensureClassCharacterModel = (
       container.add(model);
       runtime.root = model;
       runtime.mixer = new THREE.AnimationMixer(model);
+      runtime.handleMixerFinished = (event: MixerFinishedEvent) => {
+        if (event.action !== runtime.activeLobbyInteractionAction) {
+          return;
+        }
+        clearLobbyInteractionAction(runtime);
+        playModelAction(runtime, 'idle');
+      };
+      runtime.mixer.addEventListener('finished', runtime.handleMixerFinished);
       if (idleClip) {
         runtime.actions.idle = runtime.mixer.clipAction(idleClip);
       }
@@ -419,6 +526,7 @@ export const ensureClassCharacterModel = (
       if (runClip) {
         runtime.actions.run = runtime.mixer.clipAction(runClip);
       }
+      runtime.lobbyInteractionActions = lobbyInteractionClips.map((clip) => runtime.mixer!.clipAction(clip));
       if (runtime.proceduralRoot) {
         runtime.proceduralRoot.visible = false;
       }
@@ -428,6 +536,41 @@ export const ensureClassCharacterModel = (
     .catch((error: unknown) => {
       console.error('Failed to load canonical character model.', error);
     });
+};
+
+export const triggerClassCharacterModelLobbyInteraction = (
+  parent: THREE.Object3D,
+  randomValue: number = Math.random(),
+): boolean => {
+  const runtime = parent.userData[CLASS_CHARACTER_MODEL_RUNTIME_KEY] as ClassCharacterModelRuntime | undefined;
+  if (!runtime?.mixer || !runtime.root) {
+    return false;
+  }
+
+  const selectedAction = pickLobbyInteractionClip(
+    runtime.lobbyInteractionActions.map((action) => action.getClip()),
+    randomValue,
+  );
+  if (!selectedAction) {
+    clearLobbyInteractionAction(runtime);
+    playModelAction(runtime, 'idle');
+    return false;
+  }
+
+  const action =
+    runtime.lobbyInteractionActions.find((candidate) => candidate.getClip() === selectedAction) ?? runtime.mixer.clipAction(selectedAction);
+
+  clearLobbyInteractionAction(runtime);
+  const previousAction = runtime.currentAction ? runtime.actions[runtime.currentAction] : null;
+  action.reset();
+  action.setLoop(THREE.LoopOnce, 1);
+  action.clampWhenFinished = true;
+  action.fadeIn(0.12);
+  action.play();
+  previousAction?.fadeOut(0.12);
+  runtime.activeLobbyInteractionAction = action;
+  runtime.currentAction = null;
+  return true;
 };
 
 export const updateClassCharacterModelAnimation = (
@@ -441,7 +584,7 @@ export const updateClassCharacterModelAnimation = (
     movementMode?: 'run' | 'walk';
   } = {},
 ): void => {
-  const runtime = parent.userData[MODEL_RUNTIME_KEY] as ClassCharacterModelRuntime | undefined;
+  const runtime = parent.userData[CLASS_CHARACTER_MODEL_RUNTIME_KEY] as ClassCharacterModelRuntime | undefined;
   if (!runtime?.root) {
     return;
   }
@@ -449,11 +592,14 @@ export const updateClassCharacterModelAnimation = (
   runtime.root.rotation.set(0, 0, 0);
   runtime.root.position.y = 0;
   if (options.dead) {
+    clearLobbyInteractionAction(runtime);
     runtime.root.rotation.z = Math.PI * 0.5;
     runtime.root.position.y = 0.56;
     playModelAction(runtime, 'idle');
   } else {
-    playModelAction(runtime, options.moving ? options.movementMode ?? 'run' : 'idle');
+    if (!runtime.activeLobbyInteractionAction) {
+      playModelAction(runtime, options.moving ? options.movementMode ?? 'run' : 'idle');
+    }
     if (options.casting) {
       runtime.root.rotation.x = Math.sin(performance.now() * 0.012) * 0.08;
     }
