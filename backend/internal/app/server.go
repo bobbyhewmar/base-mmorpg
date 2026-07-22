@@ -31,6 +31,7 @@ type Server struct {
 	pvpMu                 sync.Mutex
 	store                 *Store
 	config                ServerConfig
+	socialAuth            *socialAuthService
 	corsOrigins           map[string]struct{}
 	authLimiter           *fixedWindowRateLimiter
 	attachLimiter         *fixedWindowRateLimiter
@@ -157,6 +158,7 @@ func NewServerWithConfig(addr string, publicWSURL string, store *Store, config S
 		mux:                   http.NewServeMux(),
 		store:                 store,
 		config:                config,
+		socialAuth:            newSocialAuthService(config.SocialAuth),
 		corsOrigins:           corsOrigins,
 		authLimiter:           newFixedWindowRateLimiter(config.AuthRateLimit),
 		attachLimiter:         newFixedWindowRateLimiter(config.AttachRateLimit),
@@ -274,6 +276,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/metrics", s.handleMetrics)
 	s.mux.HandleFunc("/v1/auth/register", s.handleRegister)
 	s.mux.HandleFunc("/v1/auth/login", s.handleLogin)
+	s.mux.HandleFunc("/v1/auth/social/google/begin", s.handleSocialBegin)
+	s.mux.HandleFunc("/v1/auth/social/facebook/begin", s.handleSocialBegin)
 	s.mux.HandleFunc("/v1/characters", s.handleCharacters)
 	s.mux.HandleFunc("/v1/characters/catalog", s.handleCharactersCatalog)
 	s.mux.HandleFunc("/v1/world/enter", s.handleWorldEnter)
@@ -396,6 +400,23 @@ func normalizeName(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
 }
 
+func normalizeEmail(email string) string {
+	return strings.TrimSpace(strings.ToLower(email))
+}
+
+func isValidEmail(email string) bool {
+	if email == "" || strings.Contains(email, " ") {
+		return false
+	}
+	at := strings.Index(email, "@")
+	if at <= 0 || at != strings.LastIndex(email, "@") || at >= len(email)-3 {
+		return false
+	}
+	domain := email[at+1:]
+	dot := strings.LastIndex(domain, ".")
+	return dot > 0 && dot < len(domain)-1
+}
+
 type raceDefinition struct {
 	Race             string
 	BaseClasses      []string
@@ -485,6 +506,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	var request struct {
 		Login       string `json:"login"`
+		Email       string `json:"email"`
 		Password    string `json:"password"`
 		DisplayName string `json:"display_name"`
 	}
@@ -502,14 +524,28 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "auth.login_unavailable", "Login is required.")
 		return
 	}
+	email := normalizeEmail(request.Email)
+	if !isValidEmail(email) {
+		writeError(w, http.StatusBadRequest, "auth.invalid_email", "Email is invalid.")
+		return
+	}
 	if len(request.Password) < 8 {
 		writeError(w, http.StatusBadRequest, "auth.password_policy_failed", "Password policy failed.")
+		return
+	}
+	if _, err := s.store.Accounts.GetByEmail(r.Context(), email); err == nil {
+		writeError(w, http.StatusConflict, "auth.email_unavailable", "Email is unavailable.")
+		return
+	} else if err != nil && !errors.Is(err, errRecordNotFound) {
+		s.recordStoreError("accounts.get_by_email", err, errRecordNotFound)
+		writeError(w, http.StatusInternalServerError, "system.persistence_failed", "Unable to load account.")
 		return
 	}
 
 	account := &Account{
 		ID:          randomID("acc"),
 		Login:       login,
+		Email:       email,
 		DisplayName: strings.TrimSpace(request.DisplayName),
 		State:       accountStateActive,
 	}
@@ -524,6 +560,10 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.CreateAccountWithCredential(r.Context(), account, credential); err != nil {
 		if errors.Is(err, errRecordConflict) {
+			if _, emailErr := s.store.Accounts.GetByEmail(r.Context(), email); emailErr == nil {
+				writeError(w, http.StatusConflict, "auth.email_unavailable", "Email is unavailable.")
+				return
+			}
 			writeError(w, http.StatusConflict, "auth.login_unavailable", "Login is unavailable.")
 			return
 		}
@@ -543,6 +583,33 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		"account_id":         account.ID,
 		"registration_state": registrationState,
 		"next_step":          nextStep,
+	})
+}
+
+func (s *Server) handleSocialBegin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "protocol.method_not_allowed", "Method not allowed.")
+		return
+	}
+
+	provider := strings.TrimPrefix(r.URL.Path, "/v1/auth/social/")
+	provider = strings.TrimSuffix(provider, "/begin")
+	result, err := s.socialAuth.Begin(provider)
+	if err != nil {
+		switch {
+		case errors.Is(err, errSocialProviderUnsupported):
+			writeError(w, http.StatusBadRequest, "auth.social_provider_unsupported", "Social provider is unsupported.")
+		case errors.Is(err, errSocialProviderUnavailable):
+			writeError(w, http.StatusServiceUnavailable, "auth.social_not_configured", "Social sign-in is not configured.")
+		default:
+			writeError(w, http.StatusServiceUnavailable, "auth.social_unavailable", "Social sign-in is unavailable.")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"provider":          string(result.Provider),
+		"authorization_url": result.AuthorizationURL,
 	})
 }
 

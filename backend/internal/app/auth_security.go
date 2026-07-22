@@ -40,11 +40,23 @@ type RateLimitConfig struct {
 	Window      time.Duration
 }
 
+type SocialProviderConfig struct {
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
+}
+
+type SocialAuthConfig struct {
+	Google   SocialProviderConfig
+	Facebook SocialProviderConfig
+}
+
 type ServerConfig struct {
 	AllowedOrigins                 []string
 	AccessTokenTTL                 time.Duration
 	AuthRateLimit                  RateLimitConfig
 	AttachRateLimit                RateLimitConfig
+	SocialAuth                     SocialAuthConfig
 	InternalAuditEnabled           bool
 	InternalAuditToken             string
 	ServerInstanceID               string
@@ -165,6 +177,15 @@ func normalizeServerConfig(config ServerConfig) ServerConfig {
 	}
 	config.ServerInstanceID = strings.TrimSpace(config.ServerInstanceID)
 	config.AllowedOrigins = normalizeAllowedOrigins(config.AllowedOrigins)
+	config.SocialAuth.Google = normalizeSocialProviderConfig(config.SocialAuth.Google)
+	config.SocialAuth.Facebook = normalizeSocialProviderConfig(config.SocialAuth.Facebook)
+	return config
+}
+
+func normalizeSocialProviderConfig(config SocialProviderConfig) SocialProviderConfig {
+	config.ClientID = strings.TrimSpace(config.ClientID)
+	config.ClientSecret = strings.TrimSpace(config.ClientSecret)
+	config.RedirectURL = strings.TrimSpace(config.RedirectURL)
 	return config
 }
 

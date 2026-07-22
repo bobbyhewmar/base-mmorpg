@@ -12,6 +12,8 @@ import type {
   RegionContextMessage,
   RegisterRequest,
   RegisterResponse,
+  SocialAuthBeginResponse,
+  SocialAuthProvider,
   WorldEnterRequest,
   WorldEnterResponse,
 } from './contracts';
@@ -49,6 +51,10 @@ export class OnlineApiClient {
 
   async login(request: LoginRequest): Promise<LoginResponse> {
     return this.post<LoginResponse>('/v1/auth/login', request);
+  }
+
+  async beginSocialAuth(provider: SocialAuthProvider): Promise<SocialAuthBeginResponse> {
+    return this.post<SocialAuthBeginResponse>(`/v1/auth/social/${provider}/begin`, {});
   }
 
   async getCharacters(accessToken: string): Promise<CharactersResponse> {

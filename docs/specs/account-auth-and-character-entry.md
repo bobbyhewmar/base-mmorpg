@@ -189,6 +189,8 @@ The backend validates:
 - rate limits
 - verification requirements
 
+The registration surface captures `email` plus a password-confirmation field in the client, but the backend remains the authority for real email legality, uniqueness, and persistence. The principal login identifier remains the existing `login` field in this slice.
+
 On success, the backend persists the account and returns the next required step.
 
 ### Login
@@ -203,6 +205,10 @@ The backend validates:
 - lockout or abuse state
 
 On success, the backend returns authenticated account context and the authoritative character list.
+
+### Social Auth Surface
+
+The pre-game auth screen may show a separate social login/register section for Google and Facebook, but that surface is only a backend-owned boundary. The client must not simulate success locally or embed provider-specific trust decisions. If the provider is not configured, the backend rejects explicitly and the UI shows only a friendly unavailable message.
 
 ### Character List
 

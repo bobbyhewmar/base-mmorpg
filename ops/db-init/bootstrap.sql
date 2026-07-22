@@ -6,11 +6,15 @@ CREATE TABLE IF NOT EXISTS schema_bootstrap (
 CREATE TABLE IF NOT EXISTS accounts (
   account_id TEXT PRIMARY KEY,
   login TEXT NOT NULL UNIQUE,
+  email TEXT NULL,
   display_name TEXT NOT NULL,
   state TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS email TEXT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_email_lower ON accounts(LOWER(email)) WHERE email IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS account_credentials (
   account_id TEXT PRIMARY KEY REFERENCES accounts(account_id) ON DELETE CASCADE,

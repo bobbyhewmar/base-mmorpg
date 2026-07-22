@@ -55,6 +55,14 @@ func nullableTimeValue(value time.Time) any {
 	return value.UTC()
 }
 
+func nullableTrimmedLower(value string) any {
+	normalized := strings.TrimSpace(strings.ToLower(value))
+	if normalized == "" {
+		return nil
+	}
+	return normalized
+}
+
 func scanCharacterItemRow(scanner rowScanner) (CharacterItem, error) {
 	var item CharacterItem
 	var containerKind string
@@ -179,9 +187,10 @@ func (p *postgresStoreBackend) CreateAccountWithCredential(ctx context.Context, 
 
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO accounts (account_id, login, display_name, state) VALUES ($1, $2, $3, $4)`,
+		`INSERT INTO accounts (account_id, login, email, display_name, state) VALUES ($1, $2, $3, $4, $5)`,
 		account.ID,
 		strings.TrimSpace(strings.ToLower(account.Login)),
+		nullableTrimmedLower(account.Email),
 		account.DisplayName,
 		string(account.State),
 	); err != nil {
@@ -204,7 +213,7 @@ func (p *postgresStoreBackend) CreateAccountWithCredential(ctx context.Context, 
 func (p *postgresStoreBackend) GetByLoginWithCredential(ctx context.Context, login string) (*Account, *CredentialRecord, error) {
 	row := p.db.QueryRowContext(
 		ctx,
-		`SELECT a.account_id, a.login, a.display_name, a.state, c.password_hash, c.password_algorithm
+		`SELECT a.account_id, a.login, COALESCE(a.email, ''), a.display_name, a.state, c.password_hash, c.password_algorithm
 		 FROM accounts a
 		 JOIN account_credentials c ON c.account_id = a.account_id
 		 WHERE a.login = $1`,
@@ -214,7 +223,7 @@ func (p *postgresStoreBackend) GetByLoginWithCredential(ctx context.Context, log
 	account := &Account{}
 	credential := &CredentialRecord{}
 	var state string
-	if err := row.Scan(&account.ID, &account.Login, &account.DisplayName, &state, &credential.PasswordHash, &credential.PasswordAlgorithm); err != nil {
+	if err := row.Scan(&account.ID, &account.Login, &account.Email, &account.DisplayName, &state, &credential.PasswordHash, &credential.PasswordAlgorithm); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, errRecordNotFound
 		}
@@ -228,9 +237,10 @@ func (p *postgresStoreBackend) GetByLoginWithCredential(ctx context.Context, log
 func (p *postgresStoreBackend) Create(ctx context.Context, account *Account) error {
 	_, err := p.db.ExecContext(
 		ctx,
-		`INSERT INTO accounts (account_id, login, display_name, state) VALUES ($1, $2, $3, $4)`,
+		`INSERT INTO accounts (account_id, login, email, display_name, state) VALUES ($1, $2, $3, $4, $5)`,
 		account.ID,
 		strings.TrimSpace(strings.ToLower(account.Login)),
+		nullableTrimmedLower(account.Email),
 		account.DisplayName,
 		string(account.State),
 	)
@@ -238,10 +248,10 @@ func (p *postgresStoreBackend) Create(ctx context.Context, account *Account) err
 }
 
 func (p *postgresStoreBackend) GetByID(ctx context.Context, accountID string) (*Account, error) {
-	row := p.db.QueryRowContext(ctx, `SELECT account_id, login, display_name, state FROM accounts WHERE account_id = $1`, accountID)
+	row := p.db.QueryRowContext(ctx, `SELECT account_id, login, COALESCE(email, ''), display_name, state FROM accounts WHERE account_id = $1`, accountID)
 	account := &Account{}
 	var state string
-	if err := row.Scan(&account.ID, &account.Login, &account.DisplayName, &state); err != nil {
+	if err := row.Scan(&account.ID, &account.Login, &account.Email, &account.DisplayName, &state); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errRecordNotFound
 		}
@@ -254,12 +264,30 @@ func (p *postgresStoreBackend) GetByID(ctx context.Context, accountID string) (*
 func (p *postgresStoreBackend) GetByLogin(ctx context.Context, login string) (*Account, error) {
 	row := p.db.QueryRowContext(
 		ctx,
-		`SELECT account_id, login, display_name, state FROM accounts WHERE login = $1`,
+		`SELECT account_id, login, COALESCE(email, ''), display_name, state FROM accounts WHERE login = $1`,
 		strings.TrimSpace(strings.ToLower(login)),
 	)
 	account := &Account{}
 	var state string
-	if err := row.Scan(&account.ID, &account.Login, &account.DisplayName, &state); err != nil {
+	if err := row.Scan(&account.ID, &account.Login, &account.Email, &account.DisplayName, &state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errRecordNotFound
+		}
+		return nil, err
+	}
+	account.State = AccountState(state)
+	return account, nil
+}
+
+func (p *postgresStoreBackend) GetByEmail(ctx context.Context, email string) (*Account, error) {
+	row := p.db.QueryRowContext(
+		ctx,
+		`SELECT account_id, login, COALESCE(email, ''), display_name, state FROM accounts WHERE email = $1`,
+		strings.TrimSpace(strings.ToLower(email)),
+	)
+	account := &Account{}
+	var state string
+	if err := row.Scan(&account.ID, &account.Login, &account.Email, &account.DisplayName, &state); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errRecordNotFound
 		}
@@ -4214,6 +4242,10 @@ func (repo postgresAccountRepo) GetByID(ctx context.Context, accountID string) (
 
 func (repo postgresAccountRepo) GetByLogin(ctx context.Context, login string) (*Account, error) {
 	return repo.backend.GetByLogin(ctx, login)
+}
+
+func (repo postgresAccountRepo) GetByEmail(ctx context.Context, email string) (*Account, error) {
+	return repo.backend.GetByEmail(ctx, email)
 }
 
 func (repo postgresCredentialRepo) Create(ctx context.Context, credential *CredentialRecord) error {

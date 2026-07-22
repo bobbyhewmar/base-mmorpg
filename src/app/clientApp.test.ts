@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ApiClientError } from '../online/client';
 import { ClientApp } from './clientApp';
@@ -149,6 +149,125 @@ const installFakeDom = (): FakeElement => {
 };
 
 describe('ClientApp', () => {
+  it('renders register screen with email, password confirmation, and separate social section', () => {
+    const app = Object.assign(Object.create(ClientApp.prototype), {
+      state: initialPreGameContext(),
+    }) as any;
+
+    const html = app.renderRegisterScreen('');
+
+    expect(html).toContain('name="email"');
+    expect(html).toContain('type="email"');
+    expect(html).toContain('name="password_confirm"');
+    expect(html).toContain('Social Login/Register');
+    expect(html).toContain('data-click-action="begin-social-google"');
+    expect(html).toContain('data-click-action="begin-social-facebook"');
+  });
+
+  it('blocks register submit when password confirmation does not match', async () => {
+    class FakeHtmlFormElement {
+      readonly dataset: Record<string, string>;
+      readonly formValues: Record<string, string>;
+
+      constructor(action: string, formValues: Record<string, string>) {
+        this.dataset = { action };
+        this.formValues = formValues;
+      }
+    }
+
+    const previousHtmlFormElement = globalThis.HTMLFormElement;
+    const previousFormData = globalThis.FormData;
+    const transitions: Array<{ type: string; message?: string }> = [];
+    const register = vi.fn();
+    Object.assign(globalThis, {
+      HTMLFormElement: FakeHtmlFormElement as any,
+      FormData: class {
+        constructor(private readonly form: FakeHtmlFormElement) {}
+        entries(): IterableIterator<[string, string]> {
+          return Object.entries(this.form.formValues)[Symbol.iterator]();
+        }
+      } as any,
+    });
+
+    try {
+      const app = Object.assign(Object.create(ClientApp.prototype), {
+        api: { register },
+        transition: (event: { type: string; message?: string }) => transitions.push(event),
+      }) as any;
+
+      await app.handleSubmit({
+        target: new FakeHtmlFormElement('register', {
+          login: 'tester',
+          email: 'tester@example.com',
+          display_name: 'Tester',
+          password: 'hunter123',
+          password_confirm: 'other123',
+        }),
+        preventDefault: vi.fn(),
+      });
+
+      expect(register).not.toHaveBeenCalled();
+      expect(transitions).toEqual([{ type: 'auth_failed', message: 'Password confirmation does not match.' }]);
+    } finally {
+      Object.assign(globalThis, {
+        HTMLFormElement: previousHtmlFormElement,
+        FormData: previousFormData,
+      });
+    }
+  });
+
+  it('blocks register submit when email is missing', async () => {
+    class FakeHtmlFormElement {
+      readonly dataset: Record<string, string>;
+      readonly formValues: Record<string, string>;
+
+      constructor(action: string, formValues: Record<string, string>) {
+        this.dataset = { action };
+        this.formValues = formValues;
+      }
+    }
+
+    const previousHtmlFormElement = globalThis.HTMLFormElement;
+    const previousFormData = globalThis.FormData;
+    const transitions: Array<{ type: string; message?: string }> = [];
+    const register = vi.fn();
+    Object.assign(globalThis, {
+      HTMLFormElement: FakeHtmlFormElement as any,
+      FormData: class {
+        constructor(private readonly form: FakeHtmlFormElement) {}
+        entries(): IterableIterator<[string, string]> {
+          return Object.entries(this.form.formValues)[Symbol.iterator]();
+        }
+      } as any,
+    });
+
+    try {
+      const app = Object.assign(Object.create(ClientApp.prototype), {
+        api: { register },
+        transition: (event: { type: string; message?: string }) => transitions.push(event),
+      }) as any;
+
+      await app.handleSubmit({
+        target: new FakeHtmlFormElement('register', {
+          login: 'tester',
+          email: '',
+          display_name: 'Tester',
+          password: 'hunter123',
+          password_confirm: 'hunter123',
+        }),
+        preventDefault: vi.fn(),
+      });
+
+      expect(register).not.toHaveBeenCalled();
+      expect(transitions).toEqual([{ type: 'auth_failed', message: 'Enter a valid email address.' }]);
+    } finally {
+      Object.assign(globalThis, {
+        HTMLFormElement: previousHtmlFormElement,
+        FormData: previousFormData,
+      });
+    }
+  });
+
   it('renders login errors without exposing backend reason codes', () => {
     const app = Object.assign(Object.create(ClientApp.prototype), {
       state: initialPreGameContext(),

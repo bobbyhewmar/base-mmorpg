@@ -48,8 +48,10 @@ const bootstrapCharacter = async (page: Page, frontendURL: string, suffix: strin
   await page.goto(frontendURL);
   await page.click('[data-click-action="open-register"]');
   await page.fill('form[data-action="register"] input[name="login"]', login);
+  await page.fill('form[data-action="register"] input[name="email"]', `${suffix}@example.com`);
   await page.fill('form[data-action="register"] input[name="display_name"]', `Multi ${suffix}`);
   await page.fill('form[data-action="register"] input[name="password"]', password);
+  await page.fill('form[data-action="register"] input[name="password_confirm"]', password);
   await page.click('form[data-action="register"] button[type="submit"]');
   await expect(page.locator('form[data-action="login"]')).toBeVisible();
 

@@ -123,6 +123,7 @@ func TestRegisterRateLimitRejectsExcessAttempts(t *testing.T) {
 
 	firstResponse := postJSON(t, httpServer.Client(), httpServer.URL+"/v1/auth/register", map[string]any{
 		"login":        "first@test",
+		"email":        "first@example.com",
 		"password":     "hunter123",
 		"display_name": "First",
 	}, "")
@@ -132,6 +133,7 @@ func TestRegisterRateLimitRejectsExcessAttempts(t *testing.T) {
 
 	secondResponse := postJSON(t, httpServer.Client(), httpServer.URL+"/v1/auth/register", map[string]any{
 		"login":        "second@test",
+		"email":        "second@example.com",
 		"password":     "hunter123",
 		"display_name": "Second",
 	}, "")
@@ -141,6 +143,97 @@ func TestRegisterRateLimitRejectsExcessAttempts(t *testing.T) {
 	apiErr := decodeBody[apiError](t, secondResponse)
 	if apiErr.ReasonCode != "auth.rate_limited" {
 		t.Fatalf("unexpected error payload = %+v", apiErr)
+	}
+}
+
+func TestRegisterRejectsInvalidEmail(t *testing.T) {
+	server := NewServer(":0", "", newMemoryStore())
+	httpServer := httptest.NewServer(server.withCORS(server.mux))
+	defer httpServer.Close()
+
+	response := postJSON(t, httpServer.Client(), httpServer.URL+"/v1/auth/register", map[string]any{
+		"login":        "invalid.email@test",
+		"email":        "not-an-email",
+		"password":     "hunter123",
+		"display_name": "Invalid Email",
+	}, "")
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected invalid email to be rejected, got %d", response.StatusCode)
+	}
+	apiErr := decodeBody[apiError](t, response)
+	if apiErr.ReasonCode != "auth.invalid_email" {
+		t.Fatalf("unexpected error payload = %+v", apiErr)
+	}
+}
+
+func TestRegisterRejectsUnavailableEmail(t *testing.T) {
+	server := NewServer(":0", "", newMemoryStore())
+	httpServer := httptest.NewServer(server.withCORS(server.mux))
+	defer httpServer.Close()
+
+	firstResponse := postJSON(t, httpServer.Client(), httpServer.URL+"/v1/auth/register", map[string]any{
+		"login":        "first.email@test",
+		"email":        "shared@example.com",
+		"password":     "hunter123",
+		"display_name": "First Email",
+	}, "")
+	if firstResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("first register status = %d", firstResponse.StatusCode)
+	}
+
+	secondResponse := postJSON(t, httpServer.Client(), httpServer.URL+"/v1/auth/register", map[string]any{
+		"login":        "second.email@test",
+		"email":        "shared@example.com",
+		"password":     "hunter123",
+		"display_name": "Second Email",
+	}, "")
+	if secondResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected duplicate email to be rejected, got %d", secondResponse.StatusCode)
+	}
+	apiErr := decodeBody[apiError](t, secondResponse)
+	if apiErr.ReasonCode != "auth.email_unavailable" {
+		t.Fatalf("unexpected error payload = %+v", apiErr)
+	}
+}
+
+func TestSocialBeginRejectsUnconfiguredProvider(t *testing.T) {
+	server := NewServer(":0", "", newMemoryStore())
+	httpServer := httptest.NewServer(server.withCORS(server.mux))
+	defer httpServer.Close()
+
+	response := postJSON(t, httpServer.Client(), httpServer.URL+"/v1/auth/social/google/begin", map[string]any{}, "")
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected unconfigured social provider to be unavailable, got %d", response.StatusCode)
+	}
+	apiErr := decodeBody[apiError](t, response)
+	if apiErr.ReasonCode != "auth.social_not_configured" {
+		t.Fatalf("unexpected error payload = %+v", apiErr)
+	}
+}
+
+func TestSocialBeginReturnsAuthorizationURLWhenConfigured(t *testing.T) {
+	server := NewServerWithConfig(":0", "", newMemoryStore(), ServerConfig{
+		SocialAuth: SocialAuthConfig{
+			Google: SocialProviderConfig{
+				ClientID:    "google-client-id",
+				RedirectURL: "https://frontend.example.test/auth/social/google/callback",
+			},
+		},
+	})
+	httpServer := httptest.NewServer(server.withCORS(server.mux))
+	defer httpServer.Close()
+
+	response := postJSON(t, httpServer.Client(), httpServer.URL+"/v1/auth/social/google/begin", map[string]any{}, "")
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected configured social provider to return authorization URL, got %d", response.StatusCode)
+	}
+	payload := decodeBody[map[string]any](t, response)
+	if payload["provider"] != "google" {
+		t.Fatalf("unexpected provider payload = %+v", payload)
+	}
+	authURL, ok := payload["authorization_url"].(string)
+	if !ok || !strings.Contains(authURL, "accounts.google.com") || !strings.Contains(authURL, "client_id=google-client-id") {
+		t.Fatalf("unexpected authorization_url = %+v", payload)
 	}
 }
 

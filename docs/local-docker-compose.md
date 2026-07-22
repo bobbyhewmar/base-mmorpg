@@ -86,6 +86,12 @@ Notes:
 - `L2BG_SESSION_LEASE_DURATION`: durable gameplay ownership lease duration; default `30s`
 - `L2BG_SESSION_LEASE_RENEW_INTERVAL`: idle WebSocket renewal cadence and must be shorter than the lease; default `10s`
 - `L2BG_SESSION_ATTACH_TOKEN_TTL`: rolling attach-credential deadline maintained while ownership renews; default `5m`
+- `L2BG_AUTH_SOCIAL_GOOGLE_CLIENT_ID`: optional Google OAuth client id for backend-managed social auth begin
+- `L2BG_AUTH_SOCIAL_GOOGLE_CLIENT_SECRET`: optional Google OAuth client secret reserved for future callback/token exchange work; do not commit real values
+- `L2BG_AUTH_SOCIAL_GOOGLE_REDIRECT_URL`: optional Google OAuth redirect URL handled by the deployed auth surface
+- `L2BG_AUTH_SOCIAL_FACEBOOK_CLIENT_ID`: optional Facebook OAuth client id for backend-managed social auth begin
+- `L2BG_AUTH_SOCIAL_FACEBOOK_CLIENT_SECRET`: optional Facebook OAuth client secret reserved for future callback/token exchange work; do not commit real values
+- `L2BG_AUTH_SOCIAL_FACEBOOK_REDIRECT_URL`: optional Facebook OAuth redirect URL handled by the deployed auth surface
 - `L2BG_POSTGRES_DB`: PostgreSQL database name created automatically by the PostgreSQL image
 - `L2BG_POSTGRES_USER`: PostgreSQL user
 - `L2BG_POSTGRES_PASSWORD`: PostgreSQL password

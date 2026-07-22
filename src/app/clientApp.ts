@@ -1,4 +1,11 @@
-import type { BaseClass, CharacterRace, CharacterSex, CharacterSummary, CreateCharacterRequest } from '../online/contracts';
+import type {
+  BaseClass,
+  CharacterRace,
+  CharacterSex,
+  CharacterSummary,
+  CreateCharacterRequest,
+  SocialAuthProvider,
+} from '../online/contracts';
 import { getBaseClassCreationLabel, getBaseClassDefinition } from '../game/data/characterClasses';
 import { gameTemplates, getArchetypeIdForBaseClass } from '../game/data/templates';
 import { GameplaySessionClient, OnlineApiClient } from '../online/client';
@@ -78,6 +85,10 @@ declare global {
 
 const readFormValues = (form: HTMLFormElement): FormValues => Object.fromEntries(new FormData(form).entries());
 
+const normalizeEmail = (value: string): string => value.trim().toLowerCase();
+
+const isLikelyEmail = (value: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+
 const escapeHtml = (value: string): string =>
   value
     .replace(/&/g, '&amp;')
@@ -89,7 +100,7 @@ const escapeHtml = (value: string): string =>
 type AuthFieldConfig = {
   label: string;
   name: string;
-  type: 'text' | 'password';
+  type: 'text' | 'password' | 'email';
   autocomplete: string;
 };
 
@@ -138,6 +149,11 @@ type AuthScreenConfig = {
   fields: AuthFieldConfig[];
   actions: GameButtonConfig[];
   sideMenuActive: 'login' | 'register';
+};
+
+type SocialAuthButtonConfig = {
+  label: string;
+  provider: SocialAuthProvider;
 };
 
 export class ClientApp {
@@ -190,12 +206,24 @@ export class ClientApp {
     const values = readFormValues(target);
 
     if (action === 'register') {
+      const email = normalizeEmail(String(values.email ?? ''));
+      const password = String(values.password ?? '');
+      const passwordConfirm = String(values.password_confirm ?? '');
+      if (!email || !isLikelyEmail(email)) {
+        this.transition({ type: 'auth_failed', message: 'Enter a valid email address.' });
+        return;
+      }
+      if (password !== passwordConfirm) {
+        this.transition({ type: 'auth_failed', message: 'Password confirmation does not match.' });
+        return;
+      }
       this.transition({ type: 'auth_pending' });
       try {
         const loginValue = String(values.login ?? '');
         const response = await this.api.register({
           login: loginValue,
-          password: String(values.password ?? ''),
+          email,
+          password,
           display_name: String(values.display_name ?? ''),
         });
         this.transition(resolveRegisterSuccessEvent(response, loginValue));
@@ -383,6 +411,12 @@ export class ClientApp {
       case 'open-recovery':
         this.transition({ type: 'open_recovery' });
         return;
+      case 'begin-social-google':
+        await this.beginSocialAuth('google');
+        return;
+      case 'begin-social-facebook':
+        await this.beginSocialAuth('facebook');
+        return;
       case 'accept-eula':
         this.transition({ type: 'accept_eula' });
         return;
@@ -483,6 +517,15 @@ export class ClientApp {
       return;
     }
     this.transition({ type: 'set_create_appearance', field: option, value });
+  }
+
+  private async beginSocialAuth(provider: SocialAuthProvider): Promise<void> {
+    try {
+      const response = await this.api.beginSocialAuth(provider);
+      window.location.assign(response.authorization_url);
+    } catch (error) {
+      this.transition({ type: 'auth_failed', message: this.toUserMessage(error, 'auth') });
+    }
   }
 
   private cycleValue<T>(values: T[], current: T | null, step: number): T | null {
@@ -1982,8 +2025,10 @@ export class ClientApp {
       error,
       fields: [
         { label: 'ID', name: 'login', type: 'text', autocomplete: 'username' },
+        { label: 'EMAIL', name: 'email', type: 'email', autocomplete: 'email' },
         { label: 'NAME', name: 'display_name', type: 'text', autocomplete: 'nickname' },
         { label: 'PWD', name: 'password', type: 'password', autocomplete: 'new-password' },
+        { label: 'CONFIRM', name: 'password_confirm', type: 'password', autocomplete: 'new-password' },
       ],
       actions: [
         { label: 'Create', type: 'submit' },
@@ -2003,6 +2048,7 @@ export class ClientApp {
           <div class="auth-actions">
             ${config.actions.map((button) => this.renderGameMenuButton(button)).join('')}
           </div>
+          ${this.renderSocialAuthSection()}
         </form>
         ${this.renderAuthSideMenu(config.sideMenuActive)}
       </section>
@@ -2023,6 +2069,32 @@ export class ClientApp {
     const clickAction = button.clickAction ? ` data-click-action="${button.clickAction}"` : '';
     const disabled = button.disabled ? ' disabled aria-disabled="true"' : '';
     return `<button class="game-menu-button" type="${type}"${clickAction}${disabled}>${escapeHtml(button.label)}</button>`;
+  }
+
+  private renderSocialAuthSection(): string {
+    const buttons: SocialAuthButtonConfig[] = [
+      { label: 'Google', provider: 'google' },
+      { label: 'Facebook', provider: 'facebook' },
+    ];
+    return `
+      <div class="auth-social-section" aria-label="Social login and registration">
+        <div class="auth-social-divider" aria-hidden="true">
+          <span></span>
+          <strong>Social Login/Register</strong>
+          <span></span>
+        </div>
+        <div class="auth-social-actions">
+          ${buttons
+            .map((button) =>
+              this.renderGameMenuButton({
+                label: button.label,
+                clickAction: `begin-social-${button.provider}`,
+              }),
+            )
+            .join('')}
+        </div>
+      </div>
+    `;
   }
 
   private renderAuthSideMenu(active: 'login' | 'register'): string {

@@ -16,6 +16,7 @@ const (
 type Account struct {
 	ID          string
 	Login       string
+	Email       string
 	DisplayName string
 	State       AccountState
 }

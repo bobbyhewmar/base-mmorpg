@@ -33,6 +33,14 @@ export const mapPreGameReasonCodeToUserMessage = (
       return 'This account is currently unavailable.';
     case 'auth.rate_limited':
       return 'Too many attempts. Please wait a moment and try again.';
+    case 'auth.invalid_email':
+      return 'Enter a valid email address.';
+    case 'auth.email_unavailable':
+      return 'This email is already in use.';
+    case 'auth.social_provider_unsupported':
+    case 'auth.social_not_configured':
+    case 'auth.social_unavailable':
+      return 'Social sign-in is not available right now.';
     case 'character.name_unavailable':
       return 'That character name is not available.';
     default:

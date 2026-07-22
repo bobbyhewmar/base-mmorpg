@@ -197,8 +197,10 @@ const bootstrapOnlineCharacter = async (
   await page.click('[data-click-action="open-register"]');
 
   await page.fill('form[data-action="register"] input[name="login"]', login);
+  await page.fill('form[data-action="register"] input[name="email"]', `${suffix}@example.com`);
   await page.fill('form[data-action="register"] input[name="display_name"]', `E2E ${suffix}`);
   await page.fill('form[data-action="register"] input[name="password"]', password);
+  await page.fill('form[data-action="register"] input[name="password_confirm"]', password);
   await submitAuthActionWithRetry(
     page,
     'form[data-action="register"] button[type="submit"]',
@@ -347,8 +349,10 @@ test('executa o fluxo online ponta a ponta via browser real e Docker Compose', a
   await page.click('[data-click-action="open-register"]');
 
   await page.fill('form[data-action="register"] input[name="login"]', login);
+  await page.fill('form[data-action="register"] input[name="email"]', `${suffix}@example.com`);
   await page.fill('form[data-action="register"] input[name="display_name"]', `E2E ${suffix}`);
   await page.fill('form[data-action="register"] input[name="password"]', password);
+  await page.fill('form[data-action="register"] input[name="password_confirm"]', password);
   await submitAuthActionWithRetry(
     page,
     'form[data-action="register"] button[type="submit"]',

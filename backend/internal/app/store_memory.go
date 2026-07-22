@@ -14,6 +14,7 @@ type memoryStoreBackend struct {
 	socialTxMu          sync.Mutex
 	accounts            map[string]*Account
 	accountByLogin      map[string]string
+	accountByEmail      map[string]string
 	credentials         map[string]*CredentialRecord
 	accountSessions     map[string]*AccountSession
 	commandRecords      map[string]*GameplayCommandRecord
@@ -81,6 +82,7 @@ func newMemoryStoreBackend() *memoryStoreBackend {
 	return &memoryStoreBackend{
 		accounts:           map[string]*Account{},
 		accountByLogin:     map[string]string{},
+		accountByEmail:     map[string]string{},
 		credentials:        map[string]*CredentialRecord{},
 		accountSessions:    map[string]*AccountSession{},
 		commandRecords:     map[string]*GameplayCommandRecord{},
@@ -160,12 +162,22 @@ func (m *memoryStoreBackend) CreateAccountWithCredential(_ context.Context, acco
 	if _, exists := m.accountByLogin[login]; exists {
 		return errRecordConflict
 	}
+	email := strings.TrimSpace(strings.ToLower(account.Email))
+	if email != "" {
+		if _, exists := m.accountByEmail[email]; exists {
+			return errRecordConflict
+		}
+	}
 
 	accountCopy := *account
 	accountCopy.Login = login
+	accountCopy.Email = email
 	credentialCopy := *credential
 	m.accounts[account.ID] = &accountCopy
 	m.accountByLogin[login] = account.ID
+	if email != "" {
+		m.accountByEmail[email] = account.ID
+	}
 	m.credentials[account.ID] = &credentialCopy
 	return nil
 }
@@ -191,10 +203,20 @@ func (repo memoryAccountRepo) Create(_ context.Context, account *Account) error 
 	if _, exists := repo.backend.accountByLogin[login]; exists {
 		return errRecordConflict
 	}
+	email := strings.TrimSpace(strings.ToLower(account.Email))
+	if email != "" {
+		if _, exists := repo.backend.accountByEmail[email]; exists {
+			return errRecordConflict
+		}
+	}
 	accountCopy := *account
 	accountCopy.Login = login
+	accountCopy.Email = email
 	repo.backend.accounts[account.ID] = &accountCopy
 	repo.backend.accountByLogin[login] = account.ID
+	if email != "" {
+		repo.backend.accountByEmail[email] = account.ID
+	}
 	return nil
 }
 
@@ -215,6 +237,18 @@ func (repo memoryAccountRepo) GetByLogin(_ context.Context, login string) (*Acco
 	defer repo.backend.mu.Unlock()
 
 	accountID, exists := repo.backend.accountByLogin[strings.TrimSpace(strings.ToLower(login))]
+	if !exists {
+		return nil, errRecordNotFound
+	}
+	accountCopy := *repo.backend.accounts[accountID]
+	return &accountCopy, nil
+}
+
+func (repo memoryAccountRepo) GetByEmail(_ context.Context, email string) (*Account, error) {
+	repo.backend.mu.Lock()
+	defer repo.backend.mu.Unlock()
+
+	accountID, exists := repo.backend.accountByEmail[strings.TrimSpace(strings.ToLower(email))]
 	if !exists {
 		return nil, errRecordNotFound
 	}

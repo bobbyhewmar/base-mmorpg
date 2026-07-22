@@ -74,6 +74,7 @@ Create an account and return the next required pre-game step.
 ```json
 {
   "login": "arden@example.com",
+  "email": "arden@player.test",
   "password": "Secret123!",
   "display_name": "Arden"
 }
@@ -102,8 +103,37 @@ Alternative success when verification is not blocking:
 #### Minimum Reason Codes
 
 - `auth.login_unavailable`
+- `auth.invalid_email`
+- `auth.email_unavailable`
 - `auth.password_policy_failed`
 - `auth.rate_limited`
+
+The local login identifier remains `login`; this registration payload expansion does not change the login contract.
+
+### `POST /v1/auth/social/google/begin` and `POST /v1/auth/social/facebook/begin`
+
+#### Purpose
+
+Ask the backend-owned social-auth boundary to begin provider authorization without exposing provider SDK details in the UI.
+
+#### Supported Providers
+
+- `google`
+- `facebook`
+
+#### Success Response Example
+
+```json
+{
+  "provider": "google",
+  "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=..."
+}
+```
+
+#### Minimum Reason Codes
+
+- `auth.social_not_configured`
+- `auth.social_provider_unsupported`
 
 ### `POST /v1/auth/login`
 

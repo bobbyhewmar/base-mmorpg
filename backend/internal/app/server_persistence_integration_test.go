@@ -93,8 +93,10 @@ func decodeBody[T any](t *testing.T, response *http.Response) T {
 func registerAndLogin(t *testing.T, env *persistenceTestEnv, login string) (string, string) {
 	t.Helper()
 
+	emailLocalPart := strings.NewReplacer("@", ".", "+", ".", " ", ".").Replace(login)
 	registerResponse := postJSON(t, env.httpServer.Client(), env.httpServer.URL+"/v1/auth/register", map[string]any{
 		"login":        login,
+		"email":        "acct." + emailLocalPart + "@example.com",
 		"password":     "hunter123",
 		"display_name": "Tester",
 	}, "")
@@ -138,6 +140,7 @@ func TestRegisterPersistsAccountAndCredential(t *testing.T) {
 
 	response := postJSON(t, env.httpServer.Client(), env.httpServer.URL+"/v1/auth/register", map[string]any{
 		"login":        "persist.register@test",
+		"email":        "persist.register@example.com",
 		"password":     "hunter123",
 		"display_name": "Persist Register",
 	}, "")
@@ -158,6 +161,9 @@ func TestRegisterPersistsAccountAndCredential(t *testing.T) {
 
 	if account.Login != "persist.register@test" {
 		t.Fatalf("unexpected persisted login = %s", account.Login)
+	}
+	if account.Email != "persist.register@example.com" {
+		t.Fatalf("unexpected persisted email = %s", account.Email)
 	}
 	if credential.PasswordHash == "" || credential.PasswordAlgorithm != passwordAlgorithmBcryptV1 {
 		t.Fatalf("unexpected persisted credential = %+v", credential)

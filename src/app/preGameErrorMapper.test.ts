@@ -32,6 +32,26 @@ describe('pre-game error mapper', () => {
     expect(message).not.toContain('Failed to fetch');
   });
 
+  it('maps auth.email_unavailable to a friendly registration message', () => {
+    const message = mapPreGameErrorToUserMessage(
+      new ApiClientError('Email is unavailable.', 'auth.email_unavailable', 409),
+      'auth',
+    );
+
+    expect(message).toBe('This email is already in use.');
+    expect(message).not.toContain('auth.email_unavailable');
+  });
+
+  it('maps auth.social_not_configured to a safe social-auth message', () => {
+    const message = mapPreGameErrorToUserMessage(
+      new ApiClientError('Social sign-in is not configured.', 'auth.social_not_configured', 503),
+      'auth',
+    );
+
+    expect(message).toBe('Social sign-in is not available right now.');
+    expect(message).not.toContain('auth.social_not_configured');
+  });
+
   it('maps character.name_unavailable to the shared character-creation copy', () => {
     const message = mapPreGameReasonCodeToUserMessage('character.name_unavailable', 'character_create');
 

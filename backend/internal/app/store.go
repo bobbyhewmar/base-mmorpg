@@ -43,6 +43,7 @@ type AccountRepository interface {
 	Create(ctx context.Context, account *Account) error
 	GetByID(ctx context.Context, accountID string) (*Account, error)
 	GetByLogin(ctx context.Context, login string) (*Account, error)
+	GetByEmail(ctx context.Context, email string) (*Account, error)
 }
 
 type CredentialRepository interface {

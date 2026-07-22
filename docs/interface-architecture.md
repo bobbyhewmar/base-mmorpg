@@ -271,6 +271,7 @@ Responsibilities:
 - character-creation submit is unlocked by a non-empty name once the catalog-backed default template is complete; name availability remains backend-owned
 - explicit backend error surfaces for invalid login, unavailable name, invalid race-class combination, and expired session
 - pre-game auth and character-creation errors must map backend `reason_code` values into friendly safe UI copy; keep `reason_code` available internally for flow, logging, and tests, but never render raw namespaces or technical backend messages to the player
+- the classic auth surface keeps the primary ID/PWD form as the main path; registration may collect account email separately, and any Google/Facebook affordance must live in a visually separate backend-driven social-auth section below the main form, with explicit unavailable feedback when providers are not configured
 
 ### Center
 

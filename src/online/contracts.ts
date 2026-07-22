@@ -19,6 +19,7 @@ export interface ApiErrorResponse {
 
 export interface RegisterRequest {
   login: string;
+  email: string;
   password: string;
   display_name: string;
 }
@@ -39,6 +40,13 @@ export interface LoginResponse {
   access_token: string;
   expires_at_ms: number;
   account_state: AccountState;
+}
+
+export type SocialAuthProvider = 'google' | 'facebook';
+
+export interface SocialAuthBeginResponse {
+  provider: SocialAuthProvider;
+  authorization_url: string;
 }
 
 export interface CharacterSummary {

@@ -30,6 +30,18 @@ func main() {
 	}
 	authRateLimit := rateLimitConfigFromEnv("L2BG_AUTH_RATE_LIMIT")
 	attachRateLimit := rateLimitConfigFromEnv("L2BG_ATTACH_RATE_LIMIT")
+	socialAuth := app.SocialAuthConfig{
+		Google: app.SocialProviderConfig{
+			ClientID:     strings.TrimSpace(os.Getenv("L2BG_AUTH_SOCIAL_GOOGLE_CLIENT_ID")),
+			ClientSecret: strings.TrimSpace(os.Getenv("L2BG_AUTH_SOCIAL_GOOGLE_CLIENT_SECRET")),
+			RedirectURL:  strings.TrimSpace(os.Getenv("L2BG_AUTH_SOCIAL_GOOGLE_REDIRECT_URL")),
+		},
+		Facebook: app.SocialProviderConfig{
+			ClientID:     strings.TrimSpace(os.Getenv("L2BG_AUTH_SOCIAL_FACEBOOK_CLIENT_ID")),
+			ClientSecret: strings.TrimSpace(os.Getenv("L2BG_AUTH_SOCIAL_FACEBOOK_CLIENT_SECRET")),
+			RedirectURL:  strings.TrimSpace(os.Getenv("L2BG_AUTH_SOCIAL_FACEBOOK_REDIRECT_URL")),
+		},
+	}
 	internalAuditEnabled := boolEnv("L2BG_INTERNAL_AUDIT_ENABLED")
 	internalAuditToken := strings.TrimSpace(os.Getenv("L2BG_INTERNAL_AUDIT_TOKEN"))
 	if internalAuditEnabled && internalAuditToken == "" {
@@ -77,6 +89,7 @@ func main() {
 		AccessTokenTTL:               accessTokenTTL,
 		AuthRateLimit:                authRateLimit,
 		AttachRateLimit:              attachRateLimit,
+		SocialAuth:                   socialAuth,
 		InternalAuditEnabled:         internalAuditEnabled,
 		InternalAuditToken:           internalAuditToken,
 		ServerInstanceID:             serverInstanceID,
