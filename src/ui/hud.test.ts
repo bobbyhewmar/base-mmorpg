@@ -248,6 +248,20 @@ describe('hud skill gating', () => {
     expect(flaggedSnapshot).not.toBe(neutralSnapshot);
   });
 
+  it('does not render the Neutral/PvP/PK textual status on the main player frame', () => {
+    const state = createInitialState();
+    state.player.pvpFlagged = true;
+    state.player.pvpFlagUntilMs = Date.now() + 10_000;
+    state.player.karma = 120;
+
+    const snapshot = (Hud.prototype as unknown as HudSnapshotAccessor).createSnapshot(state);
+
+    expect(snapshot).not.toContain('classic-player-combat-row');
+    expect(snapshot).not.toContain('>Neutral<');
+    expect(snapshot).not.toContain('>PvP<');
+    expect(snapshot).not.toContain('>PK<');
+  });
+
   it('keeps the party window closed by default and toggles it on demand', () => {
     const state = createInitialState();
     state.party = {

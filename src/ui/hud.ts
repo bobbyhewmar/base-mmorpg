@@ -1709,7 +1709,6 @@ export class Hud {
     const nearbyWarehouse = getNearbyWarehouse(state);
     const nearbyTradePlayers = getNearbyTradePlayers(state).slice(0, 3);
     const nowMs = Date.now();
-    const playerCombatView = getPlayerCombatHudView(state, nowMs);
     const composeChannel = composeChatChannelForFilter(this.activeChatFilter);
     const composeSendLabel =
       composeChannel === 'party' ? '#' : composeChannel === 'alliance' ? '&' : composeChannel === 'whisper' ? '@' : '~';
@@ -1819,10 +1818,6 @@ export class Hud {
         <div class="classic-player-identity">
           <span>Lv ${state.player.level}</span>
           <strong>${state.player.name}</strong>
-        </div>
-        <div class="classic-player-combat-row">
-          <span class="classic-player-combat-state ${playerCombatView.variant}">${playerCombatView.label}</span>
-          <span class="classic-player-combat-detail">${playerCombatView.detail}</span>
         </div>
         <div class="classic-status-rows">
           <div class="classic-status-row cp">

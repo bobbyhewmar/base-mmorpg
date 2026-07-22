@@ -89,6 +89,7 @@ const CAMERA_TARGET_HEIGHT = 1.05;
 const FLOATING_TEXT_DEFAULT_HEIGHT = 1.95;
 const FLOATING_TEXT_CHARACTER_HEIGHT = 1.25;
 const FLOATING_TEXT_MOB_HEIGHT = 2.15;
+const PLAYER_NAMEPLATE_HEIGHT = 2.35;
 const TARGET_RING_RADIUS = 0.94;
 const DESTINATION_MARKER_RADIUS = 0.55;
 const SHOW_PATH_DEBUG_OVERLAY = false;
@@ -245,6 +246,51 @@ const setMeshColor = (mesh: THREE.Mesh, color: string): void => {
     material.color.set(color);
   }
 };
+
+export const NEUTRAL_NAMEPLATE_COLOR = '#f5f1e8';
+export const PVP_NAMEPLATE_COLOR = '#b882ff';
+export const PK_NAMEPLATE_COLOR = '#ff5f5f';
+
+type AuthoritativeNameplateState = {
+  name: string;
+  karma: number;
+  pvpFlagged: boolean;
+  position: Vec2;
+};
+
+export type PlayerNameplateEntry = {
+  id: string;
+  name: string;
+  color: string;
+  position: Vec2;
+};
+
+export const getPlayerNameplateColor = (state: Pick<AuthoritativeNameplateState, 'karma' | 'pvpFlagged'>): string => {
+  if (state.karma > 0) {
+    return PK_NAMEPLATE_COLOR;
+  }
+  if (state.pvpFlagged) {
+    return PVP_NAMEPLATE_COLOR;
+  }
+  return NEUTRAL_NAMEPLATE_COLOR;
+};
+
+export const getVisiblePlayerNameplates = (
+  state: Pick<GameState, 'player' | 'otherPlayers'>,
+): PlayerNameplateEntry[] => [
+  {
+    id: state.player.id,
+    name: state.player.name,
+    color: getPlayerNameplateColor(state.player),
+    position: state.player.position,
+  },
+  ...Object.values(state.otherPlayers).map((otherPlayer) => ({
+    id: otherPlayer.id,
+    name: otherPlayer.name,
+    color: getPlayerNameplateColor(otherPlayer),
+    position: otherPlayer.position,
+  })),
+];
 
 const createStoneBox = (width: number, height: number, depth: number, color: string): THREE.Mesh => {
   const mesh = new THREE.Mesh(
@@ -1858,28 +1904,30 @@ export class Scene3D {
   }
 
   private updateLabels(state: GameState): void {
-    for (const key of Array.from(this.labelNodes.keys())) {
-      if (state.floatingTexts.some((entry) => entry.id === key)) {
-        continue;
+    const labelEntries = new Map<
+      string,
+      {
+        text: string;
+        color: string;
+        className: string;
+        worldPoint: THREE.Vector3;
+        opacity: number;
+        centered: boolean;
       }
-      const node = this.labelNodes.get(key);
-      if (node) {
-        node.remove();
-      }
-      this.labelNodes.delete(key);
+    >();
+
+    for (const nameplate of getVisiblePlayerNameplates(state)) {
+      labelEntries.set(`nameplate:${nameplate.id}`, {
+        text: nameplate.name,
+        color: nameplate.color,
+        className: 'character-nameplate',
+        worldPoint: toWorld(nameplate.position, PLAYER_NAMEPLATE_HEIGHT),
+        opacity: 1,
+        centered: true,
+      });
     }
 
     for (const entry of state.floatingTexts) {
-      let node = this.labelNodes.get(entry.id);
-      if (!node) {
-        node = document.createElement('div');
-        node.className = 'floating-number';
-        this.labelNodes.set(entry.id, node);
-        this.labelsHost.appendChild(node);
-      }
-      node.textContent = entry.text;
-      node.style.color = entry.color;
-
       let worldPoint = toWorld(entry.position, FLOATING_TEXT_DEFAULT_HEIGHT);
       if (entry.entityId === state.player.id) {
         worldPoint = toWorld(state.player.position, FLOATING_TEXT_CHARACTER_HEIGHT);
@@ -1890,11 +1938,51 @@ export class Scene3D {
       }
       worldPoint.y += (1 - entry.ttlMs / 1100) * 1.8;
 
-      const projected = worldPoint.clone().project(this.camera);
+      labelEntries.set(`floating:${entry.id}`, {
+        text: entry.text,
+        color: entry.color,
+        className: 'floating-number',
+        worldPoint,
+        opacity: Math.min(entry.ttlMs / 250, 1),
+        centered: false,
+      });
+    }
+
+    for (const key of Array.from(this.labelNodes.keys())) {
+      if (labelEntries.has(key)) {
+        continue;
+      }
+      const node = this.labelNodes.get(key);
+      if (node) {
+        node.remove();
+      }
+      this.labelNodes.delete(key);
+    }
+
+    for (const [key, entry] of labelEntries) {
+      let node = this.labelNodes.get(key);
+      if (!node) {
+        node = document.createElement('div');
+        this.labelNodes.set(key, node);
+        this.labelsHost.appendChild(node);
+      }
+      node.className = entry.className;
+      node.textContent = entry.text;
+      node.style.color = entry.color;
+
+      const projected = entry.worldPoint.clone().project(this.camera);
+      const inFrontOfCamera = projected.z >= -1 && projected.z <= 1;
+      if (!inFrontOfCamera) {
+        node.style.transform = 'translate(-9999px, -9999px)';
+        node.style.opacity = '0';
+        continue;
+      }
       const x = ((projected.x + 1) / 2) * this.root.clientWidth;
       const y = ((-projected.y + 1) / 2) * this.root.clientHeight;
-      node.style.transform = `translate(${x}px, ${y}px)`;
-      node.style.opacity = `${Math.min(entry.ttlMs / 250, 1)}`;
+      node.style.transform = entry.centered
+        ? `translate(-50%, -50%) translate(${x}px, ${y}px)`
+        : `translate(${x}px, ${y}px)`;
+      node.style.opacity = `${entry.opacity}`;
     }
   }
 
