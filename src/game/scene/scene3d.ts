@@ -89,7 +89,8 @@ const CAMERA_TARGET_HEIGHT = 1.05;
 const FLOATING_TEXT_DEFAULT_HEIGHT = 1.95;
 const FLOATING_TEXT_CHARACTER_HEIGHT = 1.25;
 const FLOATING_TEXT_MOB_HEIGHT = 2.15;
-const PLAYER_NAMEPLATE_HEIGHT = 2.35;
+// Tuned for the current reduced player mesh scale so the label stays closer to the head.
+const PLAYER_NAMEPLATE_HEIGHT = 1.78;
 const TARGET_RING_RADIUS = 0.94;
 const DESTINATION_MARKER_RADIUS = 0.55;
 const SHOW_PATH_DEBUG_OVERLAY = false;
