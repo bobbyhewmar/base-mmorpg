@@ -90,7 +90,8 @@ const FLOATING_TEXT_DEFAULT_HEIGHT = 1.95;
 const FLOATING_TEXT_CHARACTER_HEIGHT = 1.25;
 const FLOATING_TEXT_MOB_HEIGHT = 2.15;
 // Tuned for the current reduced player mesh scale so the label stays closer to the head.
-const PLAYER_NAMEPLATE_HEIGHT = 1.78;
+const PLAYER_NAMEPLATE_HEIGHT = 1.42;
+const PLAYER_NAMEPLATE_SCREEN_OFFSET_Y = -4;
 const TARGET_RING_RADIUS = 0.94;
 const DESTINATION_MARKER_RADIUS = 0.55;
 const SHOW_PATH_DEBUG_OVERLAY = false;
@@ -1913,18 +1914,25 @@ export class Scene3D {
         className: string;
         worldPoint: THREE.Vector3;
         opacity: number;
-        centered: boolean;
+        anchorTransform: string;
       }
     >();
+
+    const resolvePlayerLabelWorldPoint = (id: string, fallbackPosition: Vec2, height: number): THREE.Vector3 => {
+      const group = id === state.player.id ? this.player.group : this.otherPlayerVisuals.get(id)?.group;
+      const worldPoint = group ? group.getWorldPosition(new THREE.Vector3()) : toWorld(fallbackPosition);
+      worldPoint.y += height;
+      return worldPoint;
+    };
 
     for (const nameplate of getVisiblePlayerNameplates(state)) {
       labelEntries.set(`nameplate:${nameplate.id}`, {
         text: nameplate.name,
         color: nameplate.color,
         className: 'character-nameplate',
-        worldPoint: toWorld(nameplate.position, PLAYER_NAMEPLATE_HEIGHT),
+        worldPoint: resolvePlayerLabelWorldPoint(nameplate.id, nameplate.position, PLAYER_NAMEPLATE_HEIGHT),
         opacity: 1,
-        centered: true,
+        anchorTransform: 'translate(-50%, -100%)',
       });
     }
 
@@ -1945,7 +1953,7 @@ export class Scene3D {
         className: 'floating-number',
         worldPoint,
         opacity: Math.min(entry.ttlMs / 250, 1),
-        centered: false,
+        anchorTransform: '',
       });
     }
 
@@ -1978,10 +1986,12 @@ export class Scene3D {
         node.style.opacity = '0';
         continue;
       }
-      const x = ((projected.x + 1) / 2) * this.root.clientWidth;
-      const y = ((-projected.y + 1) / 2) * this.root.clientHeight;
-      node.style.transform = entry.centered
-        ? `translate(-50%, -50%) translate(${x}px, ${y}px)`
+      const x = Math.round(((projected.x + 1) / 2) * this.root.clientWidth);
+      const y =
+        Math.round(((-projected.y + 1) / 2) * this.root.clientHeight) +
+        (entry.className === 'character-nameplate' ? PLAYER_NAMEPLATE_SCREEN_OFFSET_Y : 0);
+      node.style.transform = entry.anchorTransform
+        ? `${entry.anchorTransform} translate(${x}px, ${y}px)`
         : `translate(${x}px, ${y}px)`;
       node.style.opacity = `${entry.opacity}`;
     }
