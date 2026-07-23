@@ -350,7 +350,12 @@ button {
 }
 
 .pregame-brand-mark--server-select {
-  top: 16px;
+  top: 8px;
+  width: min(280px, calc(100vw - 64px));
+}
+
+.pregame-brand-mark--server-select img {
+  width: min(100%, 260px);
 }
 
 .auth-panel,
@@ -582,7 +587,7 @@ button {
 
 .classic-server-stack {
   position: absolute;
-  top: 124px;
+  top: 156px;
   left: 50%;
   z-index: 2;
   display: grid;
@@ -4255,6 +4260,11 @@ button {
 
   .pregame-brand-mark img {
     width: 100%;
+  }
+
+  .pregame-brand-mark--server-select {
+    top: 8px;
+    width: min(220px, calc(100vw - 32px));
   }
 
   .auth-side-menu {
