@@ -18,6 +18,7 @@ import type { EquipSlot, GameState, HotbarActionId, PlayerHotbarState } from '..
 import { CharacterLobbyScene } from './characterLobbyScene';
 import { CharacterCreationScene } from './characterCreationScene';
 import { mapPreGameErrorToUserMessage, mapPreGameReasonCodeToUserMessage } from './preGameErrorMapper';
+import pregameLogoUrl from '../assets/logo.webp';
 
 const API_BASE_URL = import.meta.env.VITE_L2BG_API_BASE_URL ?? 'http://localhost:8080';
 
@@ -155,6 +156,8 @@ type SocialAuthButtonConfig = {
   label: string;
   provider: SocialAuthProvider;
 };
+
+type PregameLogoVariant = 'auth' | 'eula' | 'server-select';
 
 export class ClientApp {
   private state = initialPreGameContext();
@@ -1558,6 +1561,7 @@ export class ClientApp {
   private renderEulaScreen(error: string): string {
     return `
       <section class="pregame-screen classic-prelogin-screen eula-screen" aria-label="User agreement">
+        ${this.renderPregameLogo('eula')}
         <article class="classic-eula-window">
           <div class="classic-scroll-rail" aria-hidden="true"><span></span><i></i></div>
           <div class="classic-eula-content">
@@ -1593,6 +1597,7 @@ export class ClientApp {
     const selectedWorldId = this.state.selectedWorldId ?? GAME_WORLDS[0]?.id ?? '';
     return `
       <section class="pregame-screen classic-prelogin-screen server-select-screen" aria-label="Server selection">
+        ${this.renderPregameLogo('server-select')}
         <div class="classic-server-stack">
           <section class="classic-server-window" aria-label="World list">
             <div class="classic-server-table">
@@ -2041,6 +2046,7 @@ export class ClientApp {
   private renderAuthScreen(config: AuthScreenConfig): string {
     return `
       <section class="pregame-screen auth-screen" aria-label="${escapeHtml(config.screenLabel)}">
+        ${this.renderPregameLogo('auth')}
         <form class="auth-panel auth-panel--${config.variant}" data-action="${config.action}">
           <div class="auth-panel-title">${escapeHtml(config.title)}</div>
           ${config.error}
@@ -2093,6 +2099,14 @@ export class ClientApp {
             )
             .join('')}
         </div>
+      </div>
+    `;
+  }
+
+  private renderPregameLogo(variant: PregameLogoVariant): string {
+    return `
+      <div class="pregame-brand-mark pregame-brand-mark--${variant}" aria-hidden="true">
+        <img src="${pregameLogoUrl}" alt="L2BG" />
       </div>
     `;
   }

@@ -156,6 +156,8 @@ describe('ClientApp', () => {
 
     const html = app.renderRegisterScreen('');
 
+    expect(html).toContain('pregame-brand-mark pregame-brand-mark--auth');
+    expect(html).toContain('alt="L2BG"');
     expect(html).toContain('name="email"');
     expect(html).toContain('type="email"');
     expect(html).toContain('name="password_confirm"');
@@ -282,6 +284,23 @@ describe('ClientApp', () => {
 
     expect(html).toContain('Incorrect login or password.');
     expect(html).not.toContain('auth.invalid_credentials');
+  });
+
+  it('renders the logo through agreement and server selection screens', () => {
+    const app = Object.assign(Object.create(ClientApp.prototype), {
+      state: {
+        ...initialPreGameContext(),
+        selectedWorldId: 'detona-500x',
+      },
+    }) as any;
+
+    const eulaHtml = app.renderEulaScreen('');
+    const serverHtml = app.renderServerSelectScreen('');
+
+    expect(eulaHtml).toContain('pregame-brand-mark pregame-brand-mark--eula');
+    expect(serverHtml).toContain('pregame-brand-mark pregame-brand-mark--server-select');
+    expect(eulaHtml).toContain('logo.webp');
+    expect(serverHtml).toContain('logo.webp');
   });
 
   it('renders character creation errors without exposing backend reason codes', () => {

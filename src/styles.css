@@ -323,6 +323,36 @@ button {
   padding: 0;
 }
 
+.pregame-brand-mark {
+  position: absolute;
+  left: 50%;
+  z-index: 1;
+  width: min(340px, calc(100vw - 64px));
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.pregame-brand-mark img {
+  display: block;
+  width: min(100%, 320px);
+  height: auto;
+  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.42));
+}
+
+.pregame-brand-mark--auth {
+  top: 52px;
+}
+
+.pregame-brand-mark--eula {
+  top: 18px;
+}
+
+.pregame-brand-mark--server-select {
+  top: 16px;
+}
+
 .auth-panel,
 .auth-side-menu {
   background: var(--game-panel-bg);
@@ -4216,6 +4246,15 @@ button {
 
   .auth-panel {
     top: 40%;
+  }
+
+  .pregame-brand-mark {
+    top: 18px;
+    width: min(260px, calc(100vw - 32px));
+  }
+
+  .pregame-brand-mark img {
+    width: 100%;
   }
 
   .auth-side-menu {
