@@ -86,7 +86,11 @@ const loadTexture = (url: string): Promise<THREE.Texture> => {
   return promise;
 };
 
-export const rewriteGltfExternalResourceUris = (source: string, resources: Record<string, string>): string => {
+export const rewriteGltfExternalResourceUris = (
+  source: string,
+  resources: Record<string, string>,
+  options?: { baseUrl?: string },
+): string => {
   const document = JSON.parse(source) as {
     images?: Array<{ uri?: string }>;
     buffers?: Array<{ uri?: string }>;
@@ -101,11 +105,12 @@ export const rewriteGltfExternalResourceUris = (source: string, resources: Recor
     if (!resolvedUrl) {
       throw new Error(`Missing external GLTF resource for "${uri}".`);
     }
+    const rewrittenUrl = options?.baseUrl ? new URL(resolvedUrl, options.baseUrl).toString() : resolvedUrl;
     const target = directMatch ? uri : uri.split('/').pop() ?? uri;
     for (const list of [document.images, document.buffers]) {
       list?.forEach((entry) => {
         if (entry.uri === uri || entry.uri === target) {
-          entry.uri = resolvedUrl;
+          entry.uri = rewrittenUrl;
         }
       });
     }
@@ -123,16 +128,13 @@ const loadCanonicalGltf = (url: string): Promise<GLTF> => {
   const catalogEntry = getCanonicalGltfAssetCatalogEntry(url);
   const promise = catalogEntry
     ? (async () => {
-        const blobUrl = URL.createObjectURL(
-          new Blob([rewriteGltfExternalResourceUris(catalogEntry.source, catalogEntry.resources)], {
-            type: 'model/gltf+json',
-          }),
-        );
-        try {
-          return await gltfLoader.loadAsync(blobUrl);
-        } finally {
-          URL.revokeObjectURL(blobUrl);
-        }
+        const runtimeBaseUrl = globalThis.location?.origin ? `${globalThis.location.origin}/` : undefined;
+        const rewrittenSource = rewriteGltfExternalResourceUris(catalogEntry.source, catalogEntry.resources, {
+          baseUrl: runtimeBaseUrl,
+        });
+        return await new Promise<GLTF>((resolve, reject) => {
+          gltfLoader.parse(rewrittenSource, '', resolve, reject);
+        });
       })()
     : gltfLoader.loadAsync(url);
   canonicalGltfCache.set(url, promise);
