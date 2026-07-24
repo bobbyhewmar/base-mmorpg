@@ -1,4 +1,9 @@
 import type { BaseClass, CharacterSex } from '../domain/types';
+import {
+  type GltfAssetCatalogEntry,
+  registerCatalogedGltfAsset,
+  resolveGlobAssetUrl,
+} from '../scene/gltfExternalAssets';
 
 export const BASE_CLASSES = ['Fighter', 'Mage'] as const;
 
@@ -31,11 +36,6 @@ export type CharacterClassDefinition = {
       };
 };
 
-export type CanonicalGltfAssetCatalogEntry = {
-  source: string;
-  resources: Record<string, string>;
-};
-
 const universalBaseAssets = import.meta.glob('../../assets/characters/universal-base/{animations,base,hair}/**/*', {
   query: '?url',
   import: 'default',
@@ -46,51 +46,25 @@ const universalBaseRawGltfAssets = import.meta.glob('../../assets/characters/uni
   import: 'default',
   eager: true,
 }) as Record<string, string>;
-const canonicalGltfAssetCatalog = new Map<string, CanonicalGltfAssetCatalogEntry>();
+const canonicalGltfAssetCatalog = new Map<string, GltfAssetCatalogEntry>();
+const UNIVERSAL_BASE_ROOT = '../../assets/characters/universal-base';
 
 const universalBaseAsset = (path: string): string => {
-  const normalizedPath = path.replace(/\\/g, '/');
-  const key = `../../assets/characters/universal-base/${normalizedPath}`;
-  const assetUrl = universalBaseAssets[key];
-  if (!assetUrl) {
-    throw new Error(`Missing canonical Universal Base Character asset: ${normalizedPath}`);
-  }
-  return assetUrl;
-};
-
-const canonicalGltfResourcesFor = (normalizedPath: string): Record<string, string> => {
-  const lastSlashIndex = normalizedPath.lastIndexOf('/');
-  const directory = lastSlashIndex >= 0 ? normalizedPath.slice(0, lastSlashIndex) : '';
-  const directoryKeyPrefix = `../../assets/characters/universal-base/${directory ? `${directory}/` : ''}`;
-  const resources: Record<string, string> = {};
-  for (const [assetKey, assetUrl] of Object.entries(universalBaseAssets)) {
-    if (!assetKey.startsWith(directoryKeyPrefix) || assetKey.endsWith('.gltf')) {
-      continue;
-    }
-    const relativeName = assetKey.slice(directoryKeyPrefix.length);
-    if (relativeName.includes('/')) {
-      continue;
-    }
-    resources[relativeName] = assetUrl;
-  }
-  return resources;
+  return resolveGlobAssetUrl(universalBaseAssets, UNIVERSAL_BASE_ROOT, path, 'canonical Universal Base Character asset');
 };
 
 const registerCanonicalGltfAsset = (path: string): string => {
-  const normalizedPath = path.replace(/\\/g, '/');
-  const assetUrl = universalBaseAsset(normalizedPath);
-  const rawKey = `../../assets/characters/universal-base/${normalizedPath}`;
-  const rawSource = universalBaseRawGltfAssets[rawKey];
-  if (rawSource) {
-    canonicalGltfAssetCatalog.set(assetUrl, {
-      source: rawSource,
-      resources: canonicalGltfResourcesFor(normalizedPath),
-    });
-  }
-  return assetUrl;
+  return registerCatalogedGltfAsset(
+    universalBaseAssets,
+    universalBaseRawGltfAssets,
+    UNIVERSAL_BASE_ROOT,
+    path,
+    'canonical Universal Base Character asset',
+    canonicalGltfAssetCatalog,
+  );
 };
 
-export const getCanonicalGltfAssetCatalogEntry = (url: string): CanonicalGltfAssetCatalogEntry | null =>
+export const getCanonicalGltfAssetCatalogEntry = (url: string): GltfAssetCatalogEntry | null =>
   canonicalGltfAssetCatalog.get(url) ?? null;
 
 const universalAnimationUrl = universalBaseAsset('animations/UAL1_Standard.glb');

@@ -13,6 +13,12 @@ import type {
   GameState,
   Vec2,
 } from '../domain/types';
+import {
+  type GltfAssetCatalogEntry,
+  loadCatalogedGltf,
+  registerCatalogedGltfAsset,
+  resolveGlobAssetUrl,
+} from './gltfExternalAssets';
 
 type MobVisual = {
   group: THREE.Group;
@@ -309,15 +315,27 @@ const medievalMapAssetUrls = import.meta.glob('../../assets/maps/medieval-villag
   import: 'default',
   eager: true,
 }) as Record<string, string>;
+const medievalMapRawGltfAssets = import.meta.glob('../../assets/maps/medieval-village-megakit/**/*.gltf', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>;
+const medievalMapGltfCatalog = new Map<string, GltfAssetCatalogEntry>();
+const MEDIEVAL_MAP_ROOT = '../../assets/maps/medieval-village-megakit';
 
 const medievalMapAssetUrl = (fileName: string): string => {
-  const normalizedFileName = fileName.replace(/\\/g, '/');
-  const key = `../../assets/maps/medieval-village-megakit/${normalizedFileName}`;
-  const assetUrl = medievalMapAssetUrls[key];
-  if (!assetUrl) {
-    throw new Error(`Missing canonical Medieval Village MegaKit asset: ${normalizedFileName}`);
-  }
-  return assetUrl;
+  return resolveGlobAssetUrl(medievalMapAssetUrls, MEDIEVAL_MAP_ROOT, fileName, 'canonical Medieval Village MegaKit asset');
+};
+
+const medievalMapCatalogedGltfAsset = (fileName: string): string => {
+  return registerCatalogedGltfAsset(
+    medievalMapAssetUrls,
+    medievalMapRawGltfAssets,
+    MEDIEVAL_MAP_ROOT,
+    fileName,
+    'canonical Medieval Village MegaKit asset',
+    medievalMapGltfCatalog,
+  );
 };
 
 const retroMapAssetUrl = (fileName: string): string =>
@@ -325,12 +343,12 @@ const retroMapAssetUrl = (fileName: string): string =>
 
 const MEDIEVAL_MAP_ASSETS = {
   terrainNoise: medievalMapAssetUrl('T_Noise_Terrain.png'),
-  vine1: medievalMapAssetUrl('Prop_Vine1.gltf'),
-  vine2: medievalMapAssetUrl('Prop_Vine2.gltf'),
-  vine4: medievalMapAssetUrl('Prop_Vine4.gltf'),
-  vine5: medievalMapAssetUrl('Prop_Vine5.gltf'),
-  vine6: medievalMapAssetUrl('Prop_Vine6.gltf'),
-  vine9: medievalMapAssetUrl('Prop_Vine9.gltf'),
+  vine1: medievalMapCatalogedGltfAsset('Prop_Vine1.gltf'),
+  vine2: medievalMapCatalogedGltfAsset('Prop_Vine2.gltf'),
+  vine4: medievalMapCatalogedGltfAsset('Prop_Vine4.gltf'),
+  vine5: medievalMapCatalogedGltfAsset('Prop_Vine5.gltf'),
+  vine6: medievalMapCatalogedGltfAsset('Prop_Vine6.gltf'),
+  vine9: medievalMapCatalogedGltfAsset('Prop_Vine9.gltf'),
 } as const;
 
 type MedievalMapAssetId = Exclude<keyof typeof MEDIEVAL_MAP_ASSETS, 'terrainNoise'>;
@@ -417,7 +435,7 @@ const loadMedievalMapTemplate = (asset: MedievalMapAssetId): Promise<THREE.Group
     return cached;
   }
 
-  const loading = medievalMapLoader.loadAsync(MEDIEVAL_MAP_ASSETS[asset]).then((gltf) => {
+  const loading = loadCatalogedGltf(medievalMapLoader, MEDIEVAL_MAP_ASSETS[asset], (url) => medievalMapGltfCatalog.get(url) ?? null).then((gltf) => {
     const template = gltf.scene;
     configureRetroMapObject(template);
     return template;

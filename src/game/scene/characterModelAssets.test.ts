@@ -3,12 +3,12 @@ import * as THREE from 'three';
 import {
   CLASS_CHARACTER_MODEL_RUNTIME_KEY,
   pickLobbyInteractionClip,
-  rewriteGltfExternalResourceUris,
   selectAnimationClip,
   selectLobbyInteractionClips,
   stripBoneScaleTracks,
   triggerClassCharacterModelLobbyInteraction,
 } from './characterModelAssets';
+import { rewriteGltfExternalResourceUris } from './gltfExternalAssets';
 
 describe('character model assets', () => {
   it('selects the named animation instead of the first targeting pose clip', () => {
@@ -60,6 +60,27 @@ describe('character model assets', () => {
       asset: { version: '2.0' },
       images: [{ uri: '/assets/T_Hair_1_BaseColor.123.png' }],
       buffers: [{ uri: '/assets/Hair_Buzzed.456.bin' }],
+    });
+  });
+
+  it('absolutizes bundled gltf resource urls against the runtime origin', () => {
+    const rewritten = rewriteGltfExternalResourceUris(
+      JSON.stringify({
+        asset: { version: '2.0' },
+        images: [{ uri: 'T_VineLeaf_png.png' }],
+        buffers: [{ uri: 'Prop_Vine1.bin' }],
+      }),
+      {
+        'T_VineLeaf_png.png': '/assets/T_VineLeaf_png.123.png',
+        'Prop_Vine1.bin': '/assets/Prop_Vine1.456.bin',
+      },
+      { baseUrl: 'https://crownlegacy.online/' },
+    );
+
+    expect(JSON.parse(rewritten)).toEqual({
+      asset: { version: '2.0' },
+      images: [{ uri: 'https://crownlegacy.online/assets/T_VineLeaf_png.123.png' }],
+      buffers: [{ uri: 'https://crownlegacy.online/assets/Prop_Vine1.456.bin' }],
     });
   });
 

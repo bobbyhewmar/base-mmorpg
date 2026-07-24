@@ -3,6 +3,7 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { getBaseClassDefinition, getCanonicalGltfAssetCatalogEntry } from '../data/characterClasses';
 import type { BaseClass, CharacterSex } from '../domain/types';
+import { loadCatalogedGltf } from './gltfExternalAssets';
 
 type ClassCharacterModelActionName = 'idle' | 'walk' | 'run';
 
@@ -86,57 +87,12 @@ const loadTexture = (url: string): Promise<THREE.Texture> => {
   return promise;
 };
 
-export const rewriteGltfExternalResourceUris = (
-  source: string,
-  resources: Record<string, string>,
-  options?: { baseUrl?: string },
-): string => {
-  const document = JSON.parse(source) as {
-    images?: Array<{ uri?: string }>;
-    buffers?: Array<{ uri?: string }>;
-  };
-  const rewriteUri = (uri: string | undefined): void => {
-    if (!uri || uri.startsWith('data:')) {
-      return;
-    }
-    const directMatch = resources[uri];
-    const basenameMatch = resources[uri.split('/').pop() ?? ''];
-    const resolvedUrl = directMatch ?? basenameMatch;
-    if (!resolvedUrl) {
-      throw new Error(`Missing external GLTF resource for "${uri}".`);
-    }
-    const rewrittenUrl = options?.baseUrl ? new URL(resolvedUrl, options.baseUrl).toString() : resolvedUrl;
-    const target = directMatch ? uri : uri.split('/').pop() ?? uri;
-    for (const list of [document.images, document.buffers]) {
-      list?.forEach((entry) => {
-        if (entry.uri === uri || entry.uri === target) {
-          entry.uri = rewrittenUrl;
-        }
-      });
-    }
-  };
-  document.images?.forEach((entry) => rewriteUri(entry.uri));
-  document.buffers?.forEach((entry) => rewriteUri(entry.uri));
-  return JSON.stringify(document);
-};
-
 const loadCanonicalGltf = (url: string): Promise<GLTF> => {
   const cached = canonicalGltfCache.get(url);
   if (cached) {
     return cached;
   }
-  const catalogEntry = getCanonicalGltfAssetCatalogEntry(url);
-  const promise = catalogEntry
-    ? (async () => {
-        const runtimeBaseUrl = globalThis.location?.origin ? `${globalThis.location.origin}/` : undefined;
-        const rewrittenSource = rewriteGltfExternalResourceUris(catalogEntry.source, catalogEntry.resources, {
-          baseUrl: runtimeBaseUrl,
-        });
-        return await new Promise<GLTF>((resolve, reject) => {
-          gltfLoader.parse(rewrittenSource, '', resolve, reject);
-        });
-      })()
-    : gltfLoader.loadAsync(url);
+  const promise = loadCatalogedGltf(gltfLoader, url, getCanonicalGltfAssetCatalogEntry);
   canonicalGltfCache.set(url, promise);
   return promise;
 };
