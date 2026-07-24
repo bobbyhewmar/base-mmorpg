@@ -84,6 +84,30 @@ describe('character model assets', () => {
     });
   });
 
+  it('normalizes exported *_png.png gltf uris to sibling bundled textures when needed', () => {
+    const rewritten = rewriteGltfExternalResourceUris(
+      JSON.stringify({
+        asset: { version: '2.0' },
+        images: [
+          { uri: 'T_Hair_1_Normal_png.png' },
+          { uri: 'T_Eye_Normal_png.png' },
+        ],
+      }),
+      {
+        'T_Hair_1_Normal.png': '/assets/T_Hair_1_Normal.123.png',
+        'T_Eye_Normal.png': '/assets/T_Eye_Normal.456.png',
+      },
+    );
+
+    expect(JSON.parse(rewritten)).toEqual({
+      asset: { version: '2.0' },
+      images: [
+        { uri: '/assets/T_Hair_1_Normal.123.png' },
+        { uri: '/assets/T_Eye_Normal.456.png' },
+      ],
+    });
+  });
+
   it('throws when a canonical gltf resource is missing from the bundled catalog', () => {
     expect(() =>
       rewriteGltfExternalResourceUris(

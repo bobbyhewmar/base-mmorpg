@@ -65,7 +65,25 @@ export const registerCatalogedGltfAsset = (
 
 const resolveCatalogResourceUrl = (uri: string, resources: Record<string, string>): string | null => {
   const basename = uri.split('/').pop() ?? uri;
-  const candidates = [uri, basename, uri.toLowerCase(), basename.toLowerCase()];
+  const withoutMimeSuffix = (value: string): string | null => {
+    const normalized = value.replace(/\\/g, '/');
+    return normalized.replace(/_([a-z0-9]+)\.([a-z0-9]+)$/i, (_match, embeddedExtension: string, actualExtension: string) => {
+      if (embeddedExtension.toLowerCase() !== actualExtension.toLowerCase()) {
+        return _match;
+      }
+      return `.${actualExtension}`;
+    });
+  };
+  const candidates = [uri, basename];
+  const normalizedUri = withoutMimeSuffix(uri);
+  const normalizedBasename = withoutMimeSuffix(basename);
+  if (normalizedUri && normalizedUri !== uri) {
+    candidates.push(normalizedUri);
+  }
+  if (normalizedBasename && normalizedBasename !== basename) {
+    candidates.push(normalizedBasename);
+  }
+  candidates.push(...candidates.map((candidate) => candidate.toLowerCase()));
   for (const candidate of candidates) {
     if (resources[candidate]) {
       return resources[candidate];
