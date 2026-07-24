@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { getBaseClassDefinition } from '../data/characterClasses';
+import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { getBaseClassDefinition, getCanonicalGltfAssetCatalogEntry } from '../data/characterClasses';
 import type { BaseClass, CharacterSex } from '../domain/types';
 
 type ClassCharacterModelActionName = 'idle' | 'walk' | 'run';
@@ -40,6 +40,7 @@ const textureLoader = new THREE.TextureLoader();
 const textureCache = new Map<string, Promise<THREE.Texture>>();
 const animationCache = new Map<string, Promise<THREE.AnimationClip | null>>();
 const animationListCache = new Map<string, Promise<THREE.AnimationClip[]>>();
+const canonicalGltfCache = new Map<string, Promise<GLTF>>();
 
 const appearanceOptionIndex = (value: number): 0 | 1 | 2 => {
   if (value === 0 || value === 1 || value === 2) {
@@ -82,6 +83,59 @@ const loadTexture = (url: string): Promise<THREE.Texture> => {
     return texture;
   });
   textureCache.set(url, promise);
+  return promise;
+};
+
+export const rewriteGltfExternalResourceUris = (source: string, resources: Record<string, string>): string => {
+  const document = JSON.parse(source) as {
+    images?: Array<{ uri?: string }>;
+    buffers?: Array<{ uri?: string }>;
+  };
+  const rewriteUri = (uri: string | undefined): void => {
+    if (!uri || uri.startsWith('data:')) {
+      return;
+    }
+    const directMatch = resources[uri];
+    const basenameMatch = resources[uri.split('/').pop() ?? ''];
+    const resolvedUrl = directMatch ?? basenameMatch;
+    if (!resolvedUrl) {
+      throw new Error(`Missing external GLTF resource for "${uri}".`);
+    }
+    const target = directMatch ? uri : uri.split('/').pop() ?? uri;
+    for (const list of [document.images, document.buffers]) {
+      list?.forEach((entry) => {
+        if (entry.uri === uri || entry.uri === target) {
+          entry.uri = resolvedUrl;
+        }
+      });
+    }
+  };
+  document.images?.forEach((entry) => rewriteUri(entry.uri));
+  document.buffers?.forEach((entry) => rewriteUri(entry.uri));
+  return JSON.stringify(document);
+};
+
+const loadCanonicalGltf = (url: string): Promise<GLTF> => {
+  const cached = canonicalGltfCache.get(url);
+  if (cached) {
+    return cached;
+  }
+  const catalogEntry = getCanonicalGltfAssetCatalogEntry(url);
+  const promise = catalogEntry
+    ? (async () => {
+        const blobUrl = URL.createObjectURL(
+          new Blob([rewriteGltfExternalResourceUris(catalogEntry.source, catalogEntry.resources)], {
+            type: 'model/gltf+json',
+          }),
+        );
+        try {
+          return await gltfLoader.loadAsync(blobUrl);
+        } finally {
+          URL.revokeObjectURL(blobUrl);
+        }
+      })()
+    : gltfLoader.loadAsync(url);
+  canonicalGltfCache.set(url, promise);
   return promise;
 };
 
@@ -461,8 +515,8 @@ export const ensureClassCharacterModel = (
       throw new Error(`Missing canonical hair asset for ${appearance.sex} hairstyle ${appearance.hairStyle}.`);
     }
     assetPromise = Promise.all([
-      gltfLoader.loadAsync(visual.modelUrls[appearance.sex]),
-      gltfLoader.loadAsync(hairUrl),
+      loadCanonicalGltf(visual.modelUrls[appearance.sex]),
+      loadCanonicalGltf(hairUrl),
       loadGltfAnimation(visual.animationUrl, visual.idleClipName),
       loadGltfAnimation(visual.animationUrl, visual.walkClipName),
       loadGltfAnimation(visual.animationUrl, visual.runClipName),

@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   CLASS_CHARACTER_MODEL_RUNTIME_KEY,
   pickLobbyInteractionClip,
+  rewriteGltfExternalResourceUris,
   selectAnimationClip,
   selectLobbyInteractionClips,
   stripBoneScaleTracks,
@@ -40,6 +41,38 @@ describe('character model assets', () => {
     const sanitized = stripBoneScaleTracks(clip);
 
     expect(sanitized.tracks.map((track) => track.name)).toEqual(['pelvis.position', 'pelvis.quaternion']);
+  });
+
+  it('rewrites external gltf image and buffer uris to bundled asset urls', () => {
+    const rewritten = rewriteGltfExternalResourceUris(
+      JSON.stringify({
+        asset: { version: '2.0' },
+        images: [{ uri: 'T_Hair_1_BaseColor.png' }],
+        buffers: [{ uri: 'Hair_Buzzed.bin' }],
+      }),
+      {
+        'T_Hair_1_BaseColor.png': '/assets/T_Hair_1_BaseColor.123.png',
+        'Hair_Buzzed.bin': '/assets/Hair_Buzzed.456.bin',
+      },
+    );
+
+    expect(JSON.parse(rewritten)).toEqual({
+      asset: { version: '2.0' },
+      images: [{ uri: '/assets/T_Hair_1_BaseColor.123.png' }],
+      buffers: [{ uri: '/assets/Hair_Buzzed.456.bin' }],
+    });
+  });
+
+  it('throws when a canonical gltf resource is missing from the bundled catalog', () => {
+    expect(() =>
+      rewriteGltfExternalResourceUris(
+        JSON.stringify({
+          asset: { version: '2.0' },
+          images: [{ uri: 'missing-texture.png' }],
+        }),
+        {},
+      ),
+    ).toThrow('Missing external GLTF resource for "missing-texture.png".');
   });
 
   it('filters lobby interaction clips without including locomotion equivalents', () => {

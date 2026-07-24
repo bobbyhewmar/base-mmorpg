@@ -31,11 +31,22 @@ export type CharacterClassDefinition = {
       };
 };
 
+export type CanonicalGltfAssetCatalogEntry = {
+  source: string;
+  resources: Record<string, string>;
+};
+
 const universalBaseAssets = import.meta.glob('../../assets/characters/universal-base/{animations,base,hair}/**/*', {
   query: '?url',
   import: 'default',
   eager: true,
 }) as Record<string, string>;
+const universalBaseRawGltfAssets = import.meta.glob('../../assets/characters/universal-base/{base,hair}/**/*.gltf', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>;
+const canonicalGltfAssetCatalog = new Map<string, CanonicalGltfAssetCatalogEntry>();
 
 const universalBaseAsset = (path: string): string => {
   const normalizedPath = path.replace(/\\/g, '/');
@@ -46,21 +57,57 @@ const universalBaseAsset = (path: string): string => {
   }
   return assetUrl;
 };
+
+const canonicalGltfResourcesFor = (normalizedPath: string): Record<string, string> => {
+  const lastSlashIndex = normalizedPath.lastIndexOf('/');
+  const directory = lastSlashIndex >= 0 ? normalizedPath.slice(0, lastSlashIndex) : '';
+  const directoryKeyPrefix = `../../assets/characters/universal-base/${directory ? `${directory}/` : ''}`;
+  const resources: Record<string, string> = {};
+  for (const [assetKey, assetUrl] of Object.entries(universalBaseAssets)) {
+    if (!assetKey.startsWith(directoryKeyPrefix) || assetKey.endsWith('.gltf')) {
+      continue;
+    }
+    const relativeName = assetKey.slice(directoryKeyPrefix.length);
+    if (relativeName.includes('/')) {
+      continue;
+    }
+    resources[relativeName] = assetUrl;
+  }
+  return resources;
+};
+
+const registerCanonicalGltfAsset = (path: string): string => {
+  const normalizedPath = path.replace(/\\/g, '/');
+  const assetUrl = universalBaseAsset(normalizedPath);
+  const rawKey = `../../assets/characters/universal-base/${normalizedPath}`;
+  const rawSource = universalBaseRawGltfAssets[rawKey];
+  if (rawSource) {
+    canonicalGltfAssetCatalog.set(assetUrl, {
+      source: rawSource,
+      resources: canonicalGltfResourcesFor(normalizedPath),
+    });
+  }
+  return assetUrl;
+};
+
+export const getCanonicalGltfAssetCatalogEntry = (url: string): CanonicalGltfAssetCatalogEntry | null =>
+  canonicalGltfAssetCatalog.get(url) ?? null;
+
 const universalAnimationUrl = universalBaseAsset('animations/UAL1_Standard.glb');
 const humanBaseModelUrls: Record<CharacterSex, string> = {
-  Male: universalBaseAsset('base/godot-ue/Superhero_Male_FullBody.gltf'),
-  Female: universalBaseAsset('base/godot-ue/Superhero_Female_FullBody.gltf'),
+  Male: registerCanonicalGltfAsset('base/godot-ue/Superhero_Male_FullBody.gltf'),
+  Female: registerCanonicalGltfAsset('base/godot-ue/Superhero_Female_FullBody.gltf'),
 };
 const humanHairModelUrls: Record<CharacterSex, string[]> = {
   Male: [
-    universalBaseAsset('hair/rigged-gltf/Hair_Buzzed.gltf'),
-    universalBaseAsset('hair/rigged-gltf/Hair_SimpleParted.gltf'),
-    universalBaseAsset('hair/rigged-gltf/Hair_Beard.gltf'),
+    registerCanonicalGltfAsset('hair/rigged-gltf/Hair_Buzzed.gltf'),
+    registerCanonicalGltfAsset('hair/rigged-gltf/Hair_SimpleParted.gltf'),
+    registerCanonicalGltfAsset('hair/rigged-gltf/Hair_Beard.gltf'),
   ],
   Female: [
-    universalBaseAsset('hair/rigged-gltf/Hair_BuzzedFemale.gltf'),
-    universalBaseAsset('hair/rigged-gltf/Hair_Buns.gltf'),
-    universalBaseAsset('hair/rigged-gltf/Hair_Long.gltf'),
+    registerCanonicalGltfAsset('hair/rigged-gltf/Hair_BuzzedFemale.gltf'),
+    registerCanonicalGltfAsset('hair/rigged-gltf/Hair_Buns.gltf'),
+    registerCanonicalGltfAsset('hair/rigged-gltf/Hair_Long.gltf'),
   ],
 };
 const humanSkinTextureUrls: Record<CharacterSex, string[]> = {
