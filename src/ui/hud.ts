@@ -115,6 +115,19 @@ type HudDragState = {
   height: number;
 };
 
+type ChatTabDescriptor =
+  | {
+      id: ChatLogFilter;
+      label: string;
+      type: 'filter';
+    }
+  | {
+      id: 'trade';
+      label: string;
+      type: 'static';
+      disabled: true;
+    };
+
 const MINIMAP_WORLD_SIZE = 1024;
 const MINIMAP_HALF_WORLD_SIZE = MINIMAP_WORLD_SIZE / 2;
 const THREE_RAD_TO_DEG = 180 / Math.PI;
@@ -198,6 +211,15 @@ const SKILL_BOOK_GRID_SLOT_COUNT = 48;
 const INVENTORY_GRID_SLOT_COUNT = 30;
 const INVENTORY_CAPACITY = 80;
 const FUTURE_WEIGHT_PERCENT = '1.90%';
+const CHAT_TAB_WINDOW_SIZE = 4;
+const CHAT_TAB_DESCRIPTORS: ChatTabDescriptor[] = [
+  { id: 'all', label: 'All', type: 'filter' },
+  { id: 'region', label: 'Region', type: 'filter' },
+  { id: 'party', label: '#Party', type: 'filter' },
+  { id: 'alliance', label: '&Alliance', type: 'filter' },
+  { id: 'whisper', label: '@Whisper', type: 'filter' },
+  { id: 'trade', label: '+Trade', type: 'static', disabled: true },
+];
 const CHARACTER_PANEL_NAV: Array<{
   id: CharacterPanelId;
   label: string;
@@ -692,6 +714,24 @@ const escapeHudText = (value: string): string =>
 
 const composeChatChannelForFilter = (filter: ChatLogFilter): ChatComposeChannel =>
   filter === 'party' || filter === 'alliance' || filter === 'whisper' ? filter : 'region';
+
+const getMaxChatTabOffset = (): number => Math.max(0, CHAT_TAB_DESCRIPTORS.length - CHAT_TAB_WINDOW_SIZE);
+
+const clampChatTabOffset = (offset: number): number => clampNumber(offset, 0, getMaxChatTabOffset());
+
+const getChatTabOffsetForFilter = (filter: ChatLogFilter, currentOffset: number): number => {
+  const filterIndex = CHAT_TAB_DESCRIPTORS.findIndex((tab) => tab.type === 'filter' && tab.id === filter);
+  if (filterIndex < 0) {
+    return clampChatTabOffset(currentOffset);
+  }
+  if (filterIndex < currentOffset) {
+    return clampChatTabOffset(filterIndex);
+  }
+  if (filterIndex >= currentOffset + CHAT_TAB_WINDOW_SIZE) {
+    return clampChatTabOffset(filterIndex - CHAT_TAB_WINDOW_SIZE + 1);
+  }
+  return clampChatTabOffset(currentOffset);
+};
 
 export const chatFilterMatches = (filter: ChatLogFilter, channel: GameState['logs'][number]['channel']): boolean => {
   if (filter === 'all') {
@@ -1540,6 +1580,7 @@ export class Hud {
   private partyWindowOpen = false;
   private clanInfoOpen = false;
   private activeChatFilter: ChatLogFilter = 'all';
+  private chatTabOffset = 0;
   private chatDraft = '';
   private whisperTargetDraft = '';
   private clanNameDraft = '';
@@ -1710,6 +1751,11 @@ export class Hud {
     const nearbyTradePlayers = getNearbyTradePlayers(state).slice(0, 3);
     const nowMs = Date.now();
     const composeChannel = composeChatChannelForFilter(this.activeChatFilter);
+    const chatTabOffset = getChatTabOffsetForFilter(this.activeChatFilter, this.chatTabOffset);
+    this.chatTabOffset = chatTabOffset;
+    const visibleChatTabs = CHAT_TAB_DESCRIPTORS.slice(chatTabOffset, chatTabOffset + CHAT_TAB_WINDOW_SIZE);
+    const canScrollChatTabsPrev = chatTabOffset > 0;
+    const canScrollChatTabsNext = chatTabOffset < getMaxChatTabOffset();
     const composeSendLabel =
       composeChannel === 'party' ? '#' : composeChannel === 'alliance' ? '&' : composeChannel === 'whisper' ? '@' : '~';
     const composePlaceholder =
@@ -1968,12 +2014,31 @@ export class Hud {
             .join('')}
         </div>
         <div class="chat-tabs" aria-label="Chat channels">
-          <button type="button" data-chat-filter="all" class="${this.activeChatFilter === 'all' ? 'active' : ''}">All</button>
-          <button type="button" data-chat-filter="region" class="${this.activeChatFilter === 'region' ? 'active' : ''}">Region</button>
-          <button type="button" data-chat-filter="party" class="${this.activeChatFilter === 'party' ? 'active' : ''}">#Party</button>
-          <button type="button" data-chat-filter="alliance" class="${this.activeChatFilter === 'alliance' ? 'active' : ''}">&amp;Alliance</button>
-          <button type="button" data-chat-filter="whisper" class="${this.activeChatFilter === 'whisper' ? 'active' : ''}">@Whisper</button>
-          <button type="button" class="disabled" disabled aria-disabled="true">+Trade</button>
+          <button
+            type="button"
+            class="chat-tabs-nav${canScrollChatTabsPrev ? '' : ' disabled'}"
+            data-chat-tabs-nav="prev"
+            ${canScrollChatTabsPrev ? '' : 'disabled aria-disabled="true"'}
+            aria-label="Show previous chat channels"
+          >&lsaquo;</button>
+          <div class="chat-tabs-viewport">
+            <div class="chat-tabs-track">
+              ${visibleChatTabs
+                .map((tab) =>
+                  tab.type === 'filter'
+                    ? `<button type="button" data-chat-filter="${tab.id}" class="${this.activeChatFilter === tab.id ? 'active' : ''}">${escapeHudText(tab.label)}</button>`
+                    : `<button type="button" class="disabled" disabled aria-disabled="true">${escapeHudText(tab.label)}</button>`,
+                )
+                .join('')}
+            </div>
+          </div>
+          <button
+            type="button"
+            class="chat-tabs-nav${canScrollChatTabsNext ? '' : ' disabled'}"
+            data-chat-tabs-nav="next"
+            ${canScrollChatTabsNext ? '' : 'disabled aria-disabled="true"'}
+            aria-label="Show more chat channels"
+          >&rsaquo;</button>
         </div>
         ${
           this.onSendChatMessage
@@ -2905,6 +2970,7 @@ export class Hud {
       visibleHotbarRowCount: this.visibleHotbarRowCount,
       activeCharacterPanel: this.activeCharacterPanel,
       activeChatFilter: this.activeChatFilter,
+      chatTabOffset: this.chatTabOffset,
       chatDraft: this.chatDraft,
       whisperTargetDraft: this.whisperTargetDraft,
       clanNameDraft: this.clanNameDraft,
@@ -3050,9 +3116,23 @@ export class Hud {
       const filter = chatFilterButton.dataset.chatFilter;
       if (filter === 'all' || filter === 'region' || filter === 'party' || filter === 'alliance' || filter === 'whisper') {
         this.activeChatFilter = filter;
+        this.chatTabOffset = getChatTabOffsetForFilter(filter, this.chatTabOffset);
         this.lastSnapshot = '';
         this.update(this.store.getState());
       }
+      return;
+    }
+
+    const chatTabsNavButton = target.closest<HTMLElement>('[data-chat-tabs-nav]');
+    if (chatTabsNavButton) {
+      const direction = chatTabsNavButton.dataset.chatTabsNav;
+      if (direction === 'prev') {
+        this.chatTabOffset = clampChatTabOffset(this.chatTabOffset - 1);
+      } else if (direction === 'next') {
+        this.chatTabOffset = clampChatTabOffset(this.chatTabOffset + 1);
+      }
+      this.lastSnapshot = '';
+      this.update(this.store.getState());
       return;
     }
 

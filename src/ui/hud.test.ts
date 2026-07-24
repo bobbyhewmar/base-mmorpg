@@ -174,6 +174,50 @@ describe('hud skill gating', () => {
     expect(update).toHaveBeenCalledTimes(1);
   });
 
+  it('scrolls the chat channel tabs forward when the next arrow is clicked', () => {
+    const state = createInitialState();
+    const update = vi.fn();
+    const hud = Object.assign(Object.create(Hud.prototype), {
+      activeChatFilter: 'all',
+      chatTabOffset: 0,
+      lastSnapshot: 'snapshot',
+      store: { getState: () => state },
+      update,
+    }) as Hud;
+    const button = {
+      dataset: { chatTabsNav: 'next' },
+      closest: (selector: string) => (selector === '[data-chat-tabs-nav]' ? button : null),
+    };
+
+    (Hud.prototype as any).handleClick.call(hud, { target: button });
+
+    expect((hud as any).chatTabOffset).toBe(1);
+    expect((hud as any).lastSnapshot).toBe('');
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the selected whisper tab visible when activating it', () => {
+    const state = createInitialState();
+    const update = vi.fn();
+    const hud = Object.assign(Object.create(Hud.prototype), {
+      activeChatFilter: 'all',
+      chatTabOffset: 0,
+      lastSnapshot: 'snapshot',
+      store: { getState: () => state },
+      update,
+    }) as Hud;
+    const button = {
+      dataset: { chatFilter: 'whisper' },
+      closest: (selector: string) => (selector === '[data-chat-filter]' ? button : null),
+    };
+
+    (Hud.prototype as any).handleClick.call(hud, { target: button });
+
+    expect((hud as any).activeChatFilter).toBe('whisper');
+    expect((hud as any).chatTabOffset).toBe(1);
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
   it('projects the player PvP status only from authoritative self state', () => {
     const state = createInitialState();
 
