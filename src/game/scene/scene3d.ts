@@ -90,8 +90,8 @@ const FLOATING_TEXT_DEFAULT_HEIGHT = 1.95;
 const FLOATING_TEXT_CHARACTER_HEIGHT = 1.25;
 const FLOATING_TEXT_MOB_HEIGHT = 2.15;
 // Tuned for the current reduced player mesh scale so the label stays closer to the head.
-const PLAYER_NAMEPLATE_HEIGHT = 1.42;
-const PLAYER_NAMEPLATE_SCREEN_OFFSET_Y = -4;
+const PLAYER_NAMEPLATE_HEAD_OFFSET = 0.06;
+const PLAYER_NAMEPLATE_SCREEN_OFFSET_Y = -2;
 const TARGET_RING_RADIUS = 0.94;
 const DESTINATION_MARKER_RADIUS = 0.55;
 const SHOW_PATH_DEBUG_OVERLAY = false;
@@ -1918,10 +1918,16 @@ export class Scene3D {
       }
     >();
 
-    const resolvePlayerLabelWorldPoint = (id: string, fallbackPosition: Vec2, height: number): THREE.Vector3 => {
-      const group = id === state.player.id ? this.player.group : this.otherPlayerVisuals.get(id)?.group;
-      const worldPoint = group ? group.getWorldPosition(new THREE.Vector3()) : toWorld(fallbackPosition);
-      worldPoint.y += height;
+    const resolvePlayerLabelWorldPoint = (id: string, fallbackPosition: Vec2): THREE.Vector3 => {
+      const visual = id === state.player.id ? this.player : this.otherPlayerVisuals.get(id);
+      if (!visual) {
+        return toWorld(fallbackPosition, FLOATING_TEXT_CHARACTER_HEIGHT);
+      }
+      const headCenter = visual.head.getWorldPosition(new THREE.Vector3());
+      const headRadius = visual.head.geometry.boundingSphere?.radius ?? 0.45;
+      const headTopOffset = headRadius * visual.group.scale.y + PLAYER_NAMEPLATE_HEAD_OFFSET;
+      const worldPoint = headCenter;
+      worldPoint.y += headTopOffset;
       return worldPoint;
     };
 
@@ -1930,7 +1936,7 @@ export class Scene3D {
         text: nameplate.name,
         color: nameplate.color,
         className: 'character-nameplate',
-        worldPoint: resolvePlayerLabelWorldPoint(nameplate.id, nameplate.position, PLAYER_NAMEPLATE_HEIGHT),
+        worldPoint: resolvePlayerLabelWorldPoint(nameplate.id, nameplate.position),
         opacity: 1,
         anchorTransform: 'translate(-50%, -100%)',
       });
